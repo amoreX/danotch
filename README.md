@@ -2,37 +2,39 @@
 
 macOS notch status viewer for delegated agent tasks. Lives in the MacBook notch, expands on hover to show time/weather/date and real-time subagent task progress.
 
-## Requirements
+## Structure
 
-- macOS 14+ (with notch for best experience, floating mode on other Macs)
-- Swift 6+ (Command Line Tools or Xcode)
+```
+app/       — macOS Swift app (notch overlay)
+backend/   — Node.js Express backend
+```
 
 ## Quick Start
 
+### App (macOS notch overlay)
+
 ```bash
-# Build and run
+cd app
 swift run Danotch
 ```
 
-The app hides in the notch with compact info (time + task count). Hover over the notch area to expand it.
+Hover over the notch area to expand. Mock data loads automatically for development.
 
-## Build Release
+### Backend
 
 ```bash
+cd backend
+npm install
+npm run dev
+```
+
+### Build Release
+
+```bash
+cd app
 ./build.sh
-```
-
-Creates a release binary and `Danotch.app` bundle (ad-hoc signed). Run with:
-
-```bash
 open Danotch.app
-# or
-.build/release/Danotch
 ```
-
-## Development
-
-The app launches with hardcoded mock tasks for immediate UI testing. To send live events, connect a WebSocket client to `ws://localhost:7778/ws` (see protocol below).
 
 ## How It Works
 
@@ -45,17 +47,12 @@ The app launches with hardcoded mock tasks for immediate UI testing. To send liv
 - **Mouse leaves**: 400ms grace period, then collapses back to compact
 - **Swipe left**: On task list, swipe gesture (60px threshold) navigates back to overview
 
-### WebSocket Server
+### WebSocket Protocol
 
-Runs on `ws://localhost:7778/ws` with a health check at `/health`. Accepts JSON messages:
+The app runs a WebSocket server on `ws://localhost:7778/ws` (with `/health` endpoint). Accepts JSON messages:
 
 ```json
-{
-  "type": "subagent_event",
-  "session_id": "abc-123",
-  "event_type": "status|progress|done",
-  "data": { ... }
-}
+{"type": "subagent_event", "session_id": "abc-123", "event_type": "status|progress|done", "data": {...}}
 ```
 
 | event_type | Purpose | data fields |
@@ -65,23 +62,6 @@ Runs on `ws://localhost:7778/ws` with a health check at `/health`. Accepts JSON 
 | `done` | Task finished | `status`, `result`, `error` |
 
 Also supports `task_summary` type for bulk sync.
-
-## Architecture
-
-```
-Sources/
-├── DanotchApp.swift         # App entry, AppDelegate (accessory app, no dock icon)
-├── NotchWindow.swift        # NSPanel window controller, mouse tracking, screen detection
-├── NotchViewModel.swift     # State management, event processing, timers, mock data
-├── Models.swift             # SubagentTask, TaskStatus, WeatherInfo
-├── Theme.swift              # Design tokens (Nothing-inspired): colors, typography, spacing
-├── WebSocketServer.swift    # Swifter WS server on :7778
-└── Views/
-    ├── NotchShellView.swift   # Root view: notch shape, hover, expand/collapse
-    ├── NotchContentView.swift # Content state machine + compact wing views
-    ├── AgentChatView.swift    # Individual task detail with chat history
-    └── DotGridView.swift      # Animated dot grid background effect
-```
 
 ### Design
 

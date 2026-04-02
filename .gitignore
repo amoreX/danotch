@@ -1,8 +1,13 @@
-.build/
-.swiftpm/
-Danotch.app/
-node_modules/
+# Swift / Xcode
+app/.build/
+app/.swiftpm/
+app/Danotch.app/
 *.xcodeproj
 xcuserdata/
 DerivedData/
+
+# Node
+backend/node_modules/
+
+# OS
 .DS_Store

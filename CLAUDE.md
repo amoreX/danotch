@@ -2,18 +2,36 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Monorepo Structure
+
+```
+app/       — macOS Swift app (notch overlay)
+backend/   — Node.js Express backend (placeholder)
+```
+
 ## Build & Run
 
+### App
+
 ```bash
+cd app
 swift run Danotch          # Build and run (debug)
 swift build                # Build only (debug)
 swift build -c release     # Build release
 ./build.sh                 # Build release + create Danotch.app bundle (ad-hoc signed)
 ```
 
-No unit tests. Mock data is loaded at ViewModel init for demo/development.
+### Backend
 
-## Architecture
+```bash
+cd backend
+npm install
+npm run dev                # Starts on :3001
+```
+
+No unit tests in either package. App loads mock data at ViewModel init for development.
+
+## App Architecture
 
 **macOS accessory app** (no dock icon) that overlays the MacBook notch area. MVVM with SwiftUI reactive bindings. State is ephemeral — nothing persists across sessions.
 
@@ -63,4 +81,6 @@ Panel floats at `level = .mainMenu + 3`, joins all Spaces, non-activating, trans
 
 ## Dependencies
 
-Single external: **Swifter** (1.5.0) for HTTP/WebSocket. Swift 6.0 toolchain, macOS 14+, Swift 5 language mode.
+**App**: Swifter (1.5.0) for HTTP/WebSocket. Swift 6.0 toolchain, macOS 14+, Swift 5 language mode.
+
+**Backend**: Express (4.x).
