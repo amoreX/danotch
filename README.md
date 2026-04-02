@@ -1,18 +1,15 @@
 # Danotch
 
-macOS notch status viewer for Danotch delegated tasks. Lives in the MacBook notch, expands on hover to show time/weather/date and real-time subagent task progress.
+macOS notch status viewer for delegated agent tasks. Lives in the MacBook notch, expands on hover to show time/weather/date and real-time subagent task progress.
 
 ## Requirements
 
 - macOS 14+ (with notch for best experience, floating mode on other Macs)
 - Swift 6+ (Command Line Tools or Xcode)
-- Node.js 18+ (for test script only)
 
 ## Quick Start
 
 ```bash
-cd danotch
-
 # Build and run
 swift run Danotch
 ```
@@ -25,7 +22,7 @@ The app hides in the notch with compact info (time + task count). Hover over the
 ./build.sh
 ```
 
-Creates a release binary and `Danotch.app` bundle. Run with:
+Creates a release binary and `Danotch.app` bundle (ad-hoc signed). Run with:
 
 ```bash
 open Danotch.app
@@ -33,34 +30,24 @@ open Danotch.app
 .build/release/Danotch
 ```
 
-## Test with Mock Events
+## Development
 
-The app launches with 3 hardcoded sample tasks for immediate UI testing. To simulate live events from the backend:
-
-```bash
-# In a second terminal
-cd danotch
-npm install ws
-node test.js
-```
-
-This sends a sequence of 3 parallel tasks (Gmail search, Notion page creation, Linear ticket update) that spawn, progress through tool calls, and complete over ~12 seconds.
+The app launches with hardcoded mock tasks for immediate UI testing. To send live events, connect a WebSocket client to `ws://localhost:7778/ws` (see protocol below).
 
 ## How It Works
 
 ### Notch Interaction
 
 - **Compact mode**: Time (left of notch) and task count (right of notch) shown as wings
-- **Hover**: Black pill expands down from notch revealing full panel with two columns:
-  - Left: current time, date, weather
-  - Right: active/completed task counts, "View all" button
-- **Click "View all"**: Animated transition to task list with status, tools, duration
-- **Click a task**: Detailed view with result/error/streaming text
-- **Mouse leaves**: 350ms grace period, then collapses back to compact
+- **Hover**: Black pill expands down from notch revealing full panel with time, date, weather, and task summary
+- **Click "View all"**: Animated transition to task list with status, tools, and duration
+- **Click a task**: Detailed agent chat view with tool call history and streaming text
+- **Mouse leaves**: 400ms grace period, then collapses back to compact
+- **Swipe left**: On task list, swipe gesture (60px threshold) navigates back to overview
 
 ### WebSocket Server
 
-Runs on `ws://localhost:7778/ws`. Accepts JSON messages matching the Danotch backend's `subagent_event` format:
+Runs on `ws://localhost:7778/ws` with a health check at `/health`. Accepts JSON messages:
 
 ```json
 {
@@ -83,20 +70,19 @@ Also supports `task_summary` type for bulk sync.
 
 ```
 Sources/
-├── DanotchApp.swift        # App entry, AppDelegate
-├── NotchWindow.swift           # NSPanel window controller, screen extensions
-├── NotchViewModel.swift       # State management, event processing, mock data
-├── Models.swift               # SubagentTask, TaskStatus, WeatherInfo
-├── WebSocketServer.swift      # Swifter WS server on :7778
+├── DanotchApp.swift         # App entry, AppDelegate (accessory app, no dock icon)
+├── NotchWindow.swift        # NSPanel window controller, mouse tracking, screen detection
+├── NotchViewModel.swift     # State management, event processing, timers, mock data
+├── Models.swift             # SubagentTask, TaskStatus, WeatherInfo
+├── Theme.swift              # Design tokens (Nothing-inspired): colors, typography, spacing
+├── WebSocketServer.swift    # Swifter WS server on :7778
 └── Views/
     ├── NotchShellView.swift   # Root view: notch shape, hover, expand/collapse
-    ├── NotchContentView.swift # Content state machine + compact views
-    ├── OverviewPanel.swift    # Time/weather + task summary
-    ├── TaskListPanel.swift    # Task list with status indicators
-    └── TaskDetailPanel.swift  # Individual task details
+    ├── NotchContentView.swift # Content state machine + compact wing views
+    ├── AgentChatView.swift    # Individual task detail with chat history
+    └── DotGridView.swift      # Animated dot grid background effect
 ```
 
-## Wiring to Danotch Desktop (future)
+### Design
 
-Forward subagent events from the Electron app to the notch's WebSocket server. In `useChatServiceHandlers.ts`, when processing `subagent_event` messages, also send them to `ws://localhost:7778/ws`.
-# danotch
+Nothing-inspired dark aesthetic: pure black surfaces, monospace display fonts, 8px spacing grid, and status-mapped accent colors (yellow for running, green for completed, red for awaiting approval).
