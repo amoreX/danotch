@@ -9,7 +9,6 @@ class NotchViewModel: ObservableObject {
     @Published var viewState: NotchViewState = .overview
     @Published var isExpanded = false
     @Published var shimmerStep: Int = 0
-    @Published var showSettings = false
     var mouseInContent = false
 
     private var clockTimer: Timer?
@@ -95,6 +94,10 @@ class NotchViewModel: ObservableObject {
         case .taskList, .agentChat: return true
         default: return false
         }
+    }
+
+    var isStatsOrSettings: Bool {
+        viewState == .stats || viewState == .settings
     }
 
     // MARK: - Event Processing

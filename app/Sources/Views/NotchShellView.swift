@@ -12,7 +12,13 @@ struct NotchShellView: View {
 
     private var shapeWidth: CGFloat {
         if !expanded { return notchW }
-        return viewModel.isInTaskOrChat ? 540 : 520
+        switch viewModel.viewState {
+        case .taskList, .agentChat: return 540
+        case .processList: return 540
+        case .stats: return 520
+        case .settings: return 520
+        case .overview: return 520
+        }
     }
 
     private var shapeHeight: CGFloat {
@@ -21,6 +27,9 @@ struct NotchShellView: View {
         case .overview: return notchH + 210
         case .taskList: return notchH + 260
         case .agentChat: return notchH + 320
+        case .stats: return notchH + 290
+        case .processList: return notchH + 320
+        case .settings: return notchH + 210
         }
     }
 
@@ -42,20 +51,11 @@ struct NotchShellView: View {
                 expandedTopBar
                     .transition(.opacity)
 
-                if viewModel.showSettings {
-                    SettingsPanel(viewModel: viewModel)
-                        .padding(.top, notchH + 1)
-                        .padding(.horizontal, DN.spaceMD)
-                        .padding(.bottom, DN.spaceSM)
-                        .frame(width: shapeWidth, alignment: .top)
-                        .transition(.opacity)
-                } else {
-                    NotchContentView(viewModel: viewModel)
-                        .padding(.top, notchH + 1)
-                        .padding(.horizontal, DN.spaceMD)
-                        .padding(.bottom, DN.spaceSM)
-                        .frame(width: shapeWidth, alignment: .top)
-                }
+                expandedContent
+                    .padding(.top, notchH + 1)
+                    .padding(.horizontal, DN.spaceMD)
+                    .padding(.bottom, DN.spaceSM)
+                    .frame(width: shapeWidth, alignment: .top)
             }
         }
         .frame(width: shapeWidth, height: shapeHeight)
@@ -74,7 +74,6 @@ struct NotchShellView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.easeOut(duration: 0.35), value: expanded)
         .animation(.easeOut(duration: DN.transitionDuration), value: viewModel.viewState)
-        .animation(.easeOut(duration: 0.25), value: viewModel.showSettings)
     }
 
     private var notchShape: some View {
@@ -96,6 +95,22 @@ struct NotchShellView: View {
             )
             .stroke(expanded ? DN.border : .clear, lineWidth: 1)
         )
+    }
+
+    // MARK: - Expanded Content
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        switch viewModel.viewState {
+        case .overview, .taskList, .agentChat:
+            NotchContentView(viewModel: viewModel)
+        case .stats:
+            StatsPanel(viewModel: viewModel)
+        case .processList:
+            ProcessListPanel(viewModel: viewModel)
+        case .settings:
+            SettingsPanel(viewModel: viewModel)
+        }
     }
 
     // MARK: - Top Bar
@@ -125,18 +140,24 @@ struct NotchShellView: View {
 
             Color.clear.frame(width: notchW + DN.spaceMD)
 
-            HStack(spacing: DN.spaceSM) {
-                Button(action: {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        viewModel.showSettings.toggle()
+            HStack(spacing: DN.spaceMD) {
+                tabButton(
+                    label: "STATS",
+                    isActive: viewModel.viewState == .stats || viewModel.viewState == .processList
+                ) {
+                    withAnimation(DN.transition) {
+                        viewModel.viewState = .stats
                     }
-                }) {
-                    Text("SET")
-                        .font(DN.label(9))
-                        .tracking(0.8)
-                        .foregroundColor(viewModel.showSettings ? DN.textDisplay : DN.textDisabled)
                 }
-                .buttonStyle(.plain)
+
+                tabButton(
+                    label: "SET",
+                    isActive: viewModel.viewState == .settings
+                ) {
+                    withAnimation(DN.transition) {
+                        viewModel.viewState = .settings
+                    }
+                }
 
                 BatteryView()
             }
@@ -168,6 +189,7 @@ struct BatteryView: View {
             Text("\(level)%")
                 .font(DN.mono(9))
                 .foregroundColor(DN.textSecondary)
+                .fixedSize()
 
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 2)

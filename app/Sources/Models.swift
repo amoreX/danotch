@@ -86,12 +86,18 @@ enum NotchViewState: Equatable {
     case overview
     case taskList
     case agentChat(String)
+    case stats
+    case processList
+    case settings
 
     static func == (lhs: NotchViewState, rhs: NotchViewState) -> Bool {
         switch (lhs, rhs) {
         case (.overview, .overview): return true
         case (.taskList, .taskList): return true
         case (.agentChat(let a), .agentChat(let b)): return a == b
+        case (.stats, .stats): return true
+        case (.processList, .processList): return true
+        case (.settings, .settings): return true
         default: return false
         }
     }

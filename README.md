@@ -41,9 +41,11 @@ open Danotch.app
 ### Notch Interaction
 
 - **Compact mode**: Time (left of notch) and task count (right of notch) shown as wings
-- **Hover**: Black pill expands down from notch revealing full panel with time, date, weather, and task summary
-- **Click "View all"**: Animated transition to task list with status, tools, and duration
-- **Click a task**: Detailed agent chat view with tool call history and streaming text
+- **Hover**: Black pill expands down from notch with four tabs: Home, Agents, Stats, Settings
+- **Home**: Time, date, calendar, and active task summary
+- **Agents**: Task list with status indicators; click a task for detailed chat view
+- **Stats**: Live system monitoring — CPU usage, RAM, and network speed with sparkline graphs
+- **Settings**: App configuration
 - **Mouse leaves**: 400ms grace period, then collapses back to compact
 - **Swipe left**: On task list, swipe gesture (60px threshold) navigates back to overview
 

@@ -138,6 +138,8 @@ struct NotchContentView: View {
             agentsColumn
         case .agentChat(let taskId):
             AgentChatView(viewModel: viewModel, taskId: taskId)
+        case .stats, .processList, .settings:
+            EmptyView()
         }
     }
 
