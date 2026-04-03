@@ -11,22 +11,6 @@ struct NotchContentView: View {
         isExpanded ? 0 : 185
     }
 
-    private var approvalTasks: [SubagentTask] {
-        Array(viewModel.tasks.filter { $0.status == .awaitingApproval }.prefix(2))
-    }
-
-    private var approvalIds: Set<String> {
-        Set(approvalTasks.map { $0.id })
-    }
-
-    private var rightColumnTasks: [SubagentTask] {
-        viewModel.tasks.filter { !approvalIds.contains($0.id) && $0.status != .completed }
-    }
-
-    private var completedTasks: [SubagentTask] {
-        viewModel.tasks.filter { $0.status == .completed }
-    }
-
     var body: some View {
         HStack(spacing: 0) {
             leftColumn
@@ -49,7 +33,6 @@ struct NotchContentView: View {
 
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: DN.spaceXS) {
-            // Primary: Time — the hero moment
             HStack(alignment: .firstTextBaseline, spacing: DN.space2xs) {
                 Text(viewModel.timeString)
                     .font(DN.display(32))
@@ -62,7 +45,6 @@ struct NotchContentView: View {
                     .foregroundColor(DN.textDisabled)
             }
 
-            // Secondary: Date
             Text(viewModel.dateString.uppercased())
                 .font(DN.label(9))
                 .tracking(1.2)
@@ -70,51 +52,9 @@ struct NotchContentView: View {
 
             Spacer().frame(height: DN.spaceXS)
 
-            if approvalTasks.isEmpty {
-                MiniCalendarView(compact: false)
-            } else {
-                MiniCalendarView(compact: true)
-                Spacer().frame(height: DN.spaceXS)
-                approvalCards
-            }
+            MiniCalendarView(compact: false)
         }
         .padding(.trailing, DN.spaceSM)
-    }
-
-    // MARK: - Approval cards
-
-    private var approvalCards: some View {
-        VStack(spacing: DN.spaceXS) {
-            ForEach(approvalTasks) { task in
-                Button(action: {
-                    withAnimation(DN.transition) {
-                        viewModel.viewState = .agentChat(task.id)
-                    }
-                }) {
-                    HStack(spacing: DN.spaceXS) {
-                        // Red dot — the accent interrupt
-                        Circle()
-                            .fill(DN.accent)
-                            .frame(width: 5, height: 5)
-
-                        Text(task.description ?? task.task)
-                            .font(DN.body(10, weight: .medium))
-                            .foregroundColor(DN.textPrimary)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, DN.spaceSM)
-                    .padding(.vertical, DN.spaceXS)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(DN.accent.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(DN.accent.opacity(0.2), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-        }
     }
 
     // MARK: - Divider
@@ -147,7 +87,6 @@ struct NotchContentView: View {
 
     private var overviewRightColumn: some View {
         VStack(alignment: .leading, spacing: DN.spaceSM) {
-            // Header: label + counts
             HStack(spacing: 0) {
                 Text("AGENTS")
                     .font(DN.label(9))
@@ -156,62 +95,43 @@ struct NotchContentView: View {
 
                 Spacer()
 
-                statusCounts
+                agentStatusCounts
             }
 
-            // Active tasks
-            VStack(spacing: DN.spaceXS) {
-                ForEach(rightColumnTasks) { task in
-                    AgentRow(
-                        task: task,
-                        isCompact: true,
-                        activityText: viewModel.activityText(for: task)
-                    ) {
-                        withAnimation(DN.transition) {
-                            viewModel.viewState = .taskList
-                        }
-                    }
-                }
-            }
-
-            // Completed
-            if !completedTasks.isEmpty {
-                Rectangle()
-                    .fill(DN.border)
-                    .frame(height: 1)
-
-                Text("COMPLETED")
-                    .font(DN.label(8))
-                    .tracking(1.2)
-                    .foregroundColor(DN.textDisabled)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: DN.spaceSM) {
-                        ForEach(completedTasks) { task in
-                            HStack(spacing: DN.spaceXS) {
-                                Text("\u{2713}")
-                                    .font(DN.mono(9, weight: .bold))
-                                    .foregroundColor(DN.success)
-                                Text(task.description ?? task.task)
-                                    .font(DN.body(10, weight: .medium))
-                                    .foregroundColor(DN.textSecondary)
-                                    .lineLimit(1)
-                                Text(task.durationString)
-                                    .font(DN.mono(9))
-                                    .foregroundColor(DN.textDisabled)
+            if viewModel.agentMonitor.agents.isEmpty {
+                emptyAgentState
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: DN.spaceSM) {
+                        ForEach(viewModel.agentMonitor.groupedAgents) { group in
+                            AgentGroupView(group: group, isCompact: true) { agent in
+                                viewModel.agentMonitor.activateAgent(agent)
                             }
-                            .padding(.horizontal, DN.spaceSM)
-                            .padding(.vertical, DN.spaceXS)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(DN.border, lineWidth: 1)
-                            )
                         }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Empty state
+
+    private var emptyAgentState: some View {
+        VStack(spacing: DN.spaceSM) {
+            Spacer().frame(height: DN.spaceSM)
+            Text("NO AGENTS DETECTED")
+                .font(DN.label(9))
+                .tracking(0.8)
+                .foregroundColor(DN.textDisabled)
+
+            Text("Start Claude Code, Cursor, or Codex\nto see them here")
+                .font(DN.body(10))
+                .foregroundColor(DN.textDisabled.opacity(0.7))
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Full agents column
@@ -226,19 +146,17 @@ struct NotchContentView: View {
 
                 Spacer()
 
-                statusCounts
+                agentStatusCounts
             }
 
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: DN.spaceXS) {
-                    ForEach(viewModel.tasks) { task in
-                        AgentRow(
-                            task: task,
-                            isCompact: false,
-                            activityText: viewModel.activityText(for: task)
-                        ) {
-                            withAnimation(DN.transition) {
-                                viewModel.viewState = .agentChat(task.id)
+            if viewModel.agentMonitor.agents.isEmpty && viewModel.tasks.isEmpty {
+                emptyAgentState
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: DN.spaceSM) {
+                        ForEach(viewModel.agentMonitor.groupedAgents) { group in
+                            AgentGroupView(group: group, isCompact: false) { agent in
+                                viewModel.agentMonitor.activateAgent(agent)
                             }
                         }
                     }
@@ -250,37 +168,243 @@ struct NotchContentView: View {
 
     // MARK: - Status Counts
 
-    private var statusCounts: some View {
+    private var agentStatusCounts: some View {
         HStack(spacing: DN.spaceSM) {
-            if viewModel.delegatedCount > 0 {
+            let running = viewModel.agentMonitor.agents.filter { $0.status == .running }.count
+            let total = viewModel.agentMonitor.agents.count
+
+            if total > 0 {
                 HStack(spacing: 3) {
-                    Circle().fill(DN.warning).frame(width: 4, height: 4)
-                    Text("\(viewModel.delegatedCount)")
+                    Circle().fill(running > 0 ? DN.warning : DN.textDisabled).frame(width: 4, height: 4)
+                    Text("\(running)")
                         .font(DN.mono(10, weight: .medium))
-                        .foregroundColor(DN.warning)
-                }
-            }
-            if viewModel.approvalCount > 0 {
-                HStack(spacing: 3) {
-                    Circle().fill(DN.accent).frame(width: 4, height: 4)
-                    Text("\(viewModel.approvalCount)")
+                        .foregroundColor(running > 0 ? DN.warning : DN.textDisabled)
+
+                    Text("/")
+                        .font(DN.mono(9))
+                        .foregroundColor(DN.textDisabled)
+
+                    Text("\(total)")
                         .font(DN.mono(10, weight: .medium))
-                        .foregroundColor(DN.accent)
-                }
-            }
-            if viewModel.finishedCount > 0 {
-                HStack(spacing: 3) {
-                    Circle().fill(DN.success).frame(width: 4, height: 4)
-                    Text("\(viewModel.finishedCount)")
-                        .font(DN.mono(10, weight: .medium))
-                        .foregroundColor(DN.success)
+                        .foregroundColor(DN.textDisabled)
                 }
             }
         }
     }
 }
 
-// MARK: - Agent Row
+// MARK: - Agent Group View
+
+struct AgentGroupView: View {
+    let group: AgentGroup
+    let isCompact: Bool
+    let onTapAgent: (DetectedAgent) -> Void
+
+    @State private var isExpanded: Bool = true
+
+    private var canCollapse: Bool { group.agents.count > 1 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Group header — tappable to toggle if multiple agents
+            Button(action: {
+                guard canCollapse else { return }
+                withAnimation(.easeOut(duration: DN.microDuration)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: DN.spaceSM) {
+                    Image(systemName: group.type.icon)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(group.type.brandColor)
+                        .frame(width: 14)
+
+                    Text(group.type.rawValue.uppercased())
+                        .font(DN.label(9))
+                        .tracking(1.0)
+                        .foregroundColor(group.type.brandColor)
+
+                    if group.agents.count > 1 {
+                        Text("\(group.agents.count)")
+                            .font(DN.mono(9, weight: .medium))
+                            .foregroundColor(group.type.brandColor.opacity(0.6))
+                    }
+
+                    Spacer()
+
+                    if group.runningCount > 0 {
+                        HStack(spacing: 3) {
+                            Circle().fill(DN.warning).frame(width: 4, height: 4)
+                            Text("\(group.runningCount) ACTIVE")
+                                .font(DN.label(7))
+                                .tracking(0.6)
+                                .foregroundColor(DN.warning)
+                        }
+                    }
+
+                    if canCollapse {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(DN.textDisabled)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                }
+                .padding(.horizontal, DN.spaceSM)
+                .padding(.vertical, DN.spaceXS + 1)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Agent rows — collapsible
+            if isExpanded {
+                VStack(spacing: 1) {
+                    ForEach(group.agents) { agent in
+                        AgentSessionRow(agent: agent, isCompact: isCompact) {
+                            onTapAgent(agent)
+                        }
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(DN.surface.opacity(0.4))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DN.border, lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Agent Session Row (individual session within a group)
+
+struct AgentSessionRow: View {
+    let agent: DetectedAgent
+    let isCompact: Bool
+    let onTap: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: DN.spaceSM) {
+                    // Project name or display name
+                    Text(agent.displayName)
+                        .font(DN.body(11, weight: .medium))
+                        .foregroundColor(DN.textPrimary)
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    // Elapsed
+                    Text(agent.elapsed)
+                        .font(DN.mono(9))
+                        .foregroundColor(DN.textDisabled)
+                }
+
+                // Live state indicator
+                if agent.liveState != .idle && agent.liveState != .waitingForUser {
+                    LiveStateView(state: agent.liveState, detail: agent.liveDetail)
+                        .padding(.top, 1)
+                }
+
+                // Last prompt
+                if let prompt = agent.lastPrompt, !prompt.isEmpty {
+                    Text(prompt)
+                        .font(DN.body(10))
+                        .foregroundColor(agent.liveState == .waitingForUser || agent.liveState == .idle ? DN.textDisabled : DN.textSecondary)
+                        .lineLimit(isCompact ? 1 : 2)
+                }
+
+                // Resource usage on hover or expanded
+                if isHovering || !isCompact {
+                    HStack(spacing: DN.spaceSM) {
+                        HStack(spacing: 2) {
+                            Text("CPU")
+                                .font(DN.label(7))
+                                .tracking(0.4)
+                                .foregroundColor(DN.textDisabled)
+                            Text(String(format: "%.1f%%", agent.cpu))
+                                .font(DN.mono(9))
+                                .foregroundColor(agent.cpu > 1.0 ? DN.warning : DN.textSecondary)
+                        }
+
+                        HStack(spacing: 2) {
+                            Text("MEM")
+                                .font(DN.label(7))
+                                .tracking(0.4)
+                                .foregroundColor(DN.textDisabled)
+                            Text(String(format: "%.0fMB", agent.memMB))
+                                .font(DN.mono(9))
+                                .foregroundColor(DN.textSecondary)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.top, 1)
+                    .transition(.opacity)
+                }
+            }
+            .padding(.horizontal, DN.spaceSM)
+            .padding(.vertical, DN.spaceXS + 1)
+            .background(isHovering ? DN.surface : .clear)
+            .animation(.easeOut(duration: DN.microDuration), value: isHovering)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+    }
+}
+
+// MARK: - Live State View
+
+struct LiveStateView: View {
+    let state: AgentLiveState
+    let detail: String?
+    @State private var pulse = false
+
+    init(state: AgentLiveState, detail: String? = nil) {
+        self.state = state
+        self.detail = detail
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: DN.spaceXS) {
+                Circle()
+                    .fill(state.color)
+                    .frame(width: 4, height: 4)
+                    .opacity(pulse ? 1.0 : 0.4)
+
+                Image(systemName: state.icon)
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(state.color)
+
+                Text(state.label)
+                    .font(DN.label(8))
+                    .tracking(0.6)
+                    .foregroundColor(state.color)
+            }
+
+            if let detail = detail, !detail.isEmpty {
+                Text(detail)
+                    .font(DN.mono(9))
+                    .foregroundColor(state.color.opacity(0.6))
+                    .lineLimit(1)
+                    .padding(.leading, 12)
+            }
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                pulse = true
+            }
+        }
+    }
+}
+
+// MARK: - Agent Row (for WebSocket tasks)
 
 struct AgentRow: View {
     let task: SubagentTask
@@ -294,7 +418,6 @@ struct AgentRow: View {
         Button(action: onTap) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: DN.spaceSM) {
-                    // Status indicator — red dot for approvals, colored dot otherwise
                     Circle()
                         .fill(DN.statusColor(task.status))
                         .frame(width: 6, height: 6)
@@ -335,7 +458,7 @@ struct AgentRow: View {
     }
 }
 
-// MARK: - Activity Text (replaces shimmer with mechanical pulse)
+// MARK: - Activity Text
 
 struct ActivityText: View {
     let text: String
@@ -344,7 +467,6 @@ struct ActivityText: View {
 
     var body: some View {
         HStack(spacing: DN.spaceXS) {
-            // Segmented spinner — 3 dots cycling
             HStack(spacing: 2) {
                 ForEach(0..<3) { i in
                     Circle()
@@ -368,7 +490,6 @@ struct ActivityText: View {
 
     private func dotOpacity(_ index: Int) -> Double {
         let base = phase ? 1.0 : 0.3
-        // Stagger: each dot is slightly offset
         switch index {
         case 0: return phase ? 1.0 : 0.3
         case 1: return 0.6
@@ -418,8 +539,6 @@ struct MiniCalendarView: View {
         }
     }
 
-    // MARK: - Compact (horizontal strip)
-
     private var compactCalendar: some View {
         VStack(spacing: 3) {
             Text(monthName)
@@ -459,11 +578,8 @@ struct MiniCalendarView: View {
         }
     }
 
-    // MARK: - Full grid
-
     private var fullCalendar: some View {
         VStack(spacing: 0) {
-            // Header
             HStack {
                 Text(monthName)
                     .font(DN.label(8))
@@ -476,7 +592,6 @@ struct MiniCalendarView: View {
             }
             .padding(.bottom, 6)
 
-            // Weekday header
             HStack(spacing: 0) {
                 ForEach(daysOfWeek, id: \.self) { day in
                     Text(day)
@@ -493,7 +608,6 @@ struct MiniCalendarView: View {
                 .frame(height: 1)
                 .padding(.vertical, 3)
 
-            // Day grid
             let rows = buildCalendarDays()
             VStack(spacing: 2) {
                 ForEach(0..<rows.count, id: \.self) { rowIdx in

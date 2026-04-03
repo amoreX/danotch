@@ -211,9 +211,11 @@ class SystemStatsMonitor: ObservableObject {
         process.standardError = FileHandle.nullDevice
 
         do { try process.run() } catch { return [] }
+
+        // Read before wait to avoid pipe buffer deadlock
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
 
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         guard let output = String(data: data, encoding: .utf8) else { return [] }
 
         var results: [ProcessInfo_] = []

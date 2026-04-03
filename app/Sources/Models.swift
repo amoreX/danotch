@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 enum TaskStatus: String, Codable {
     case pending
@@ -80,6 +81,144 @@ struct WeatherInfo {
     var temp: Int
     var condition: String
     var icon: String
+}
+
+// MARK: - Agent Monitoring
+
+enum AgentType: String, CaseIterable {
+    case claudeCode = "Claude Code"
+    case cursor = "Cursor"
+    case codex = "Codex"
+    case windsurf = "Windsurf"
+
+    var icon: String {
+        switch self {
+        case .claudeCode: return "terminal"
+        case .cursor: return "cursorarrow.rays"
+        case .codex: return "cpu"
+        case .windsurf: return "wind"
+        }
+    }
+
+    var brandColor: Color {
+        switch self {
+        case .claudeCode: return Color(hex: 0xD97757) // Claude orange
+        case .cursor: return Color(hex: 0x00B4D8) // Cursor blue
+        case .codex: return Color(hex: 0x10A37F) // OpenAI green
+        case .windsurf: return Color(hex: 0x00C896) // Windsurf teal
+        }
+    }
+}
+
+enum AgentStatus: String {
+    case running
+    case idle
+
+    var label: String {
+        switch self {
+        case .running: return "RUNNING"
+        case .idle: return "IDLE"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .running: return DN.warning
+        case .idle: return DN.textDisabled
+        }
+    }
+}
+
+enum AgentLiveState: Equatable {
+    case idle
+    case thinking
+    case toolUse(String) // tool name
+    case responding
+    case waitingForUser
+
+    var label: String {
+        switch self {
+        case .idle: return "IDLE"
+        case .thinking: return "THINKING"
+        case .toolUse(let tool): return toolDisplayName(tool)
+        case .responding: return "RESPONDING"
+        case .waitingForUser: return "WAITING"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .idle: return DN.textDisabled
+        case .thinking: return DN.warning
+        case .toolUse: return Color(hex: 0xD97757)
+        case .responding: return DN.success
+        case .waitingForUser: return DN.textSecondary
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .idle: return "circle"
+        case .thinking: return "brain"
+        case .toolUse: return "hammer"
+        case .responding: return "text.cursor"
+        case .waitingForUser: return "person"
+        }
+    }
+
+    private func toolDisplayName(_ name: String) -> String {
+        switch name {
+        case "Bash": return "RUNNING COMMAND"
+        case "Read": return "READING FILE"
+        case "Write": return "WRITING FILE"
+        case "Edit": return "EDITING FILE"
+        case "Grep": return "SEARCHING"
+        case "Glob": return "FINDING FILES"
+        case "Agent": return "RUNNING AGENT"
+        case "WebSearch": return "WEB SEARCH"
+        case "WebFetch": return "FETCHING URL"
+        default: return name.uppercased()
+        }
+    }
+}
+
+struct DetectedAgent: Identifiable {
+    let id: String // unique key: type + pid
+    let type: AgentType
+    let pid: Int32
+    let status: AgentStatus
+    let cpu: Double
+    let memMB: Double
+    let elapsed: String // e.g. "10:23"
+    let workingDirectory: String? // cwd if detectable
+    let sessionInfo: String? // e.g. session id or project name
+    let appPath: String? // path to the app bundle for activation
+    let lastPrompt: String? // last user message from conversation
+    let lastActivityTime: Date? // timestamp of last user message in conversation
+    let liveState: AgentLiveState // current activity
+    let liveDetail: String? // extra context: tool command, file path, response snippet
+
+    var displayName: String {
+        if let session = sessionInfo, !session.isEmpty {
+            return session
+        }
+        return type.rawValue
+    }
+
+    var projectName: String? {
+        guard let cwd = workingDirectory else { return nil }
+        return cwd.components(separatedBy: "/").last
+    }
+}
+
+struct AgentGroup: Identifiable {
+    let id: String
+    let type: AgentType
+    let agents: [DetectedAgent]
+
+    var runningCount: Int { agents.filter { $0.status == .running }.count }
+    var totalCpu: Double { agents.reduce(0) { $0 + $1.cpu } }
+    var totalMem: Double { agents.reduce(0) { $0 + $1.memMB } }
 }
 
 enum NotchViewState: Equatable {
