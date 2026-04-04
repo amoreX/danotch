@@ -6,8 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 app/       — macOS Swift app (notch overlay)
-backend/   — Node.js Express backend (placeholder)
-docs/      — Planning docs (PLAN.md)
+backend/   — Node.js Express backend (Supabase + Claude API)
+docs/      — Planning docs (PLAN.md, SCHEMA.md)
 ```
 
 ## Build & Run
@@ -34,17 +34,21 @@ No unit tests in either package.
 
 ## App Architecture
 
-**macOS accessory app** (no dock icon) that overlays the MacBook notch area. MVVM with SwiftUI reactive bindings. State is ephemeral — nothing persists across sessions.
+**macOS accessory app** (no dock icon) that overlays the MacBook notch area. MVVM with SwiftUI reactive bindings. Auth session persisted to `~/.danotch/auth.json`, settings to `~/.danotch/settings.json`. Chat threads/messages persisted to Supabase.
 
 ### Core Flow
 
-`DanotchApp` (AppDelegate) → `NotchWindowController` (NSPanel) → SwiftUI views observing `NotchViewModel` ← `WebSocketServer` (port 7778) + `AgentMonitor` (process scanning)
+`DanotchApp` (AppDelegate) → checks `AuthManager.isAuthenticated` → if no: shows `OnboardingView` (centered borderless window) → signup/login → on success: closes window, starts notch. If yes: `NotchWindowController` (NSPanel) → SwiftUI views observing `NotchViewModel` ← `WebSocketServer` (port 7778) + `AgentMonitor` (process scanning)
 
 ### Key Components
 
 - **NotchWindowController** (`NotchWindow.swift`): Custom `DanotchPanel` (NSPanel subclass, `canBecomeKey: true`) positioned over the physical notch at `level = .mainMenu + 3`. Three event monitors handle hover-to-expand (with 400ms collapse delay), swipe-back gesture (60px scroll threshold), and mouse tracking. Global keyboard shortcut (⌘+Shift+Space) drops down the notch and focuses the chat input. Escape collapses. Panel won't auto-collapse while chat input is focused (`isChatInputActive`). On expand, calls `restoreOrResetView()` (respects `restoreLastView` setting). Detects notch dimensions via `NSScreen` safe area insets with fallbacks for non-notch Macs. Panel width: 520px (overview) / 540px (task/chat/stats). Window frame: 580x400.
 
-- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor`, `NotchSettings`, `NowPlayingMonitor`, and `SystemStatsMonitor` (shared instance used by both StatsPanel and ProcessListPanel). Forwards nested ObservableObjects via Combine. Runs clock timer (1s) and shimmer cycle timer (4s) for activity text rotation. `activityText()` prioritizes streaming text snippet (last 60 chars) over cycling activity steps. New tasks get shuffled goofy loading phrases (`goofyLoadingPhrases`) as activity steps. Has `sendChat(message:)` that POSTs to backend `/api/chat` and optimistically creates a task (navigates to chat if `openChatOnSend`). Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
+- **AuthManager** (`AuthManager.swift`): Singleton (`AuthManager.shared`) managing auth state. `signup(email, password, fullName)` and `login(email, password)` call backend `/auth/signup` and `/auth/login`. Session (access_token, refresh_token, userId, email, fullName) persisted to `~/.danotch/auth.json`. Exposes `userName`, `accessToken`, `isAuthenticated`. `logout()` clears file and state.
+
+- **OnboardingView** (`Views/OnboardingView.swift`): Two-step onboarding flow shown in a centered borderless NSWindow (no close/min/max buttons, dark theme). Step 1: "DANOTCH / WELCOME TO THE NOTCH" + START button. Step 2: Signup form (name, email, password) or login form with toggle. On success calls `onComplete` closure which starts the notch. AppDelegate creates the window via `NSWindow` with `titlebarAppearsTransparent`, hidden standard buttons, `isMovableByWindowBackground`. Temporarily sets activation policy to `.regular` for focus, reverts to `.accessory` after.
+
+- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor`, `NotchSettings`, `NowPlayingMonitor`, and `SystemStatsMonitor` (shared instance used by both StatsPanel and ProcessListPanel). Has `authManager` reference set by AppDelegate after auth. Forwards nested ObservableObjects via Combine. Runs clock timer (1s) and shimmer cycle timer (4s) for activity text rotation. `activityText()` prioritizes streaming text snippet (last 60 chars) over cycling activity steps. New tasks get shuffled goofy loading phrases (`goofyLoadingPhrases`) as activity steps. Has `sendChat(message:)` that POSTs to backend `/api/chat` with Bearer token and `thread_id`, optimistically creates a task (navigates to chat if `openChatOnSend`), captures `thread_id` from response for follow-ups. Thread history: `loadThreadHistory()` fetches `GET /api/threads`, `loadThread(threadId)` fetches messages and creates a SubagentTask from them. Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
 
 - **AgentMonitor** (`AgentMonitor.swift`): Standalone `ObservableObject` that scans for AI agent processes every 3s. Currently only displays Claude Code sessions (filtered because Cursor/Codex/Windsurf don't expose prompt data). Enriches each session with project name (from `~/.claude/sessions/{pid}.json` cwd), last user prompt (from conversation JSONL in `~/.claude/projects/`), and working directory (via `lsof`). Can activate the terminal app for a session via `NSWorkspace`. Provides `groupedAgents` computed property for grouped display.
 
@@ -81,21 +85,26 @@ Top bar has four tabs: `[ HOME ]  AGENTS  |  STATS  [ ⚙ ]` plus battery indica
 ### View Hierarchy
 
 ```
+OnboardingView (centered borderless NSWindow, shown on first launch / logged out)
+├── welcomeStep ("DANOTCH / WELCOME TO THE NOTCH" + START button)
+└── authStep (signup: name+email+password, login: email+password, toggle between)
+
 NotchShellView (root: notch shape, top bar tabs, dot grid background)
 ├── DotGridView (animated dot matrix, configurable color + opacity via settings)
 ├── expandedTopBar (HOME / AGENTS / STATS / ⚙ tabs + BatteryView if enabled)
 └── expandedContent (routes by viewState)
     ├── NotchContentView (overview + taskList + agentChat routing)
-    │   ├── leftColumn (time, date, MiniCalendarView per calendarMode, NowPlayingView per showMusic)
+    │   ├── leftColumn ("Hi, {name}" greeting, time, date, calendar, NowPlayingView)
     │   ├── dividerBar
     │   └── mainColumn → overviewRightColumn | agentsColumn | AgentChatView
     │       ├── AgentGroupView (collapsible, passes showLiveState + compactRows from settings)
     │       ├── AgentSessionRow (project name, live state if enabled, last prompt, elapsed, CPU/MEM on hover)
     │       ├── LiveStateView (pulsing dot + icon + label + detail for active tool/thinking/responding states)
     │       ├── NowPlayingView (Apple Music/Spotify polling, positioned by calendarMode)
-    │       ├── chatInputBar (TextField + submit button, sends to backend POST /api/chat)
+    │       ├── chatInputBar (TextField + submit button, sends to backend POST /api/chat with auth)
     │       ├── tasksSection (grouped user tasks from chat, clickable → AgentChatView)
-    │       └── AgentRow (WebSocket task rows with status dot, activity text)
+    │       ├── AgentRow (WebSocket task rows with status dot, activity text)
+    │       └── threadHistory (HISTORY section: past threads from Supabase, threadRow with relative dates)
     ├── StatsPanel (bento grid: ArcGaugeCell, SparklineGraph, network rows, disk ring)
     ├── ProcessListPanel (sorted process table with ProcessIconView, kill actions)
     └── SettingsPanel (scrollable sections: Chat, Display, Agents)
@@ -105,10 +114,6 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
         ├── SettingsSliderRow (slider with percentage label)
         └── SettingsColorRow (color dot presets)
 ```
-
-### Settings
-
-`NotchSettings` (`ObservableObject`, owned by ViewModel) stores all toggle state. No persistence yet — resets on relaunch. The `SettingsPanel` renders toggles in three sections with custom capsule switches (green/gray).
 
 **Behavior:**
 - `tapAgentNavigates` (default: true) — tapping an agent row opens its detail page
@@ -196,7 +201,7 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 - **AgentGroup**: id, type, agents array — with computed `runningCount`, `totalCpu`, `totalMem`
 - **AgentType**: claudeCode, cursor, codex, windsurf — each with `icon`, `brandColor`, `rawValue` display name
 - **AgentStatus**: running (warning color), idle (disabled color)
-- **SubagentTask**: id, task, description, status, toolCallsCount, streamingText, chatHistory — used for WebSocket-driven tasks from the backend
+- **SubagentTask**: id, task, description, status, toolCallsCount, streamingText, chatHistory, threadId — used for WebSocket-driven tasks and loaded DB threads. `threadId` links to Supabase thread for follow-up messages
 - **TaskStatus**: pending, running, completed, failed, cancelled, awaitingApproval
 
 ### Settings (`NotchSettings`)
@@ -272,43 +277,74 @@ Settings UI components: `SettingsToggleRow` (capsule toggle), `SettingsPickerRow
 
 ## Backend Architecture
 
-TypeScript ESM service (`"type": "module"`). Run with `npm run dev` (tsx watch).
+TypeScript ESM service (`"type": "module"`). Run with `npm run dev` (tsx watch). Uses Supabase for auth + persistence.
 
 ### Structure
 
 ```
 backend/src/
-├── index.ts          — Express on :3001, connects NotchBridge
+├── index.ts          — Express on :3001, request logging middleware, connects NotchBridge
 ├── config.ts         — All config: port, model, max turns, permission mode (env-overridable)
 ├── prompts.ts        — System prompts: CHAT_SYSTEM_PROMPT (plain text/markdown only) + AGENT_SYSTEM_PROMPT (tool-aware)
 ├── types.ts          — Task, ChatMessage, WebSocket event types
+├── lib/
+│   └── supabase.ts   — Supabase service-role client (bypasses RLS)
+├── middleware/
+│   └── auth.ts       — requireAuth (via supabase.auth.getUser), extractUserId (optional auth)
 ├── agent/
-│   └── runner.ts     — Two modes: runChat() (Anthropic API) + runAgent() (Claude Agent SDK)
+│   └── runner.ts     — Two modes: runChat() + runAgent(), DB persistence, thread management
 ├── events/
 │   └── notch.ts      — WebSocket client to notch app :7778, auto-reconnect every 3s
 └── routes/
-    └── tasks.ts      — REST endpoints
+    ├── auth.ts       — Signup (admin.createUser + auto-login), login, refresh, /me
+    └── tasks.ts      — Chat/agent endpoints (auth optional), thread CRUD (auth required)
 ```
+
+### Auth
+
+- **Signup** (`POST /auth/signup`): Uses `supabase.auth.admin.createUser()` with `email_confirm: true` (auto-confirms, no email verification). Then `signInWithPassword()` to get session tokens. Creates `user_profiles` row + 4 `connected_apps` rows (gmail, googlecalendar, googledocs, linear — all `active: false`).
+- **Login** (`POST /auth/login`): `signInWithPassword()`, returns tokens + profile.
+- **Token verification**: `supabase.auth.getUser(token)` — works with both HS256 and ES256 JWTs (Supabase may use either depending on project config).
+- **Auth middleware**: `requireAuth` blocks unauthenticated requests. `extractUserId` is non-blocking optional extraction for chat/agent endpoints (they work with or without auth).
 
 ### Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health` | Health check + notch connection status |
-| `POST` | `/api/chat` | Simple Claude conversation (no tools) |
-| `POST` | `/api/agent` | Claude Agent SDK — has tools: Bash, Read, Edit, Grep, Glob, etc. |
-| `GET` | `/api/tasks` | List all tasks |
-| `GET` | `/api/tasks/:id` | Get specific task |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Health check + notch connection status |
+| `POST` | `/auth/signup` | No | Create account (email+password) |
+| `POST` | `/auth/login` | No | Sign in |
+| `POST` | `/auth/refresh` | No | Refresh JWT tokens |
+| `GET` | `/auth/me` | Yes | Current user profile |
+| `POST` | `/api/chat` | Optional | Claude conversation (no tools), persists to DB if authed |
+| `POST` | `/api/agent` | Optional | Claude Agent SDK (tools), persists to DB if authed |
+| `GET` | `/api/tasks` | No | List in-memory tasks |
+| `GET` | `/api/tasks/:id` | No | Get specific in-memory task |
+| `GET` | `/api/threads` | Yes | List conversation threads from DB |
+| `GET` | `/api/threads/:id` | Yes | Get thread messages from DB |
+| `DELETE` | `/api/threads/:id` | Yes | Delete thread + messages |
 
 ### Agent Runner
 
 Two execution modes in `runner.ts`:
 
-- **`runChat(message, notch, sessionId?)`** — Direct Anthropic API call with streaming. No tools. Good for quick Q&A. Uses `CHAT_SYSTEM_PROMPT` (enforces plain text/markdown responses, no XML/HTML). Streams tokens to notch via WebSocket progress events.
+- **`runChat(message, notch, { sessionId?, userId?, threadId? })`** — Direct Anthropic API call with streaming. No tools. Uses `CHAT_SYSTEM_PROMPT`. When `userId` is present: creates/reuses thread in Supabase, saves user message (awaited), saves assistant response with metadata (fire-and-forget via `dbSave()`). On error: saves failed message with partial content + error details.
 
-- **`runAgent(message, notch, { sessionId?, cwd? })`** — Uses `@anthropic-ai/claude-agent-sdk` `query()` function. Full Claude Code capabilities (Bash, Read, Write, Edit, Grep, Glob). Uses `AGENT_SYSTEM_PROMPT`. Iterates the async generator for `SDKMessage` events (assistant messages, tool use, stream events, results). Streams all progress to notch.
+- **`runAgent(message, notch, { sessionId?, cwd?, userId?, threadId? })`** — Uses `@anthropic-ai/claude-agent-sdk` `query()` function. Full Claude Code capabilities. Uses `AGENT_SYSTEM_PROMPT`. Same DB persistence pattern as chat. Accumulates `toolsUsed` array, saved in metadata on completion or error.
 
-Both modes store tasks in-memory (`Map<string, Task>`) and push status/progress/done events through `NotchBridge` to the app's existing WebSocket protocol.
+**DB persistence pattern**: User message save is `await`ed (must be in DB before streaming). Assistant message save is fire-and-forget (`dbSave()` wraps in `.catch()` — never blocks streaming). On errors, partial content + tools_used + error message are all saved with `status: "failed"` and `partial: true` in metadata.
+
+**Message metadata in DB**:
+- Success: `{ status: "completed", model, input_tokens, output_tokens, tools_used }`
+- Failure: `{ status: "failed", error, model, partial, tools_used }`
+
+Both modes also store tasks in-memory (`Map<string, Task>`) and push status/progress/done events through `NotchBridge` to the app's existing WebSocket protocol.
+
+**Thread queries**: `getThreads(userId)`, `getThreadMessages(userId, threadId)`, `deleteThread(userId, threadId)` — all scoped by userId.
+
+### Request Logging
+
+All requests logged with timestamp, method, path, and auth status. Route handlers log detailed info (message preview, userId, threadId, result status).
 
 ### Config (`config.ts`)
 
@@ -319,9 +355,10 @@ All settings env-overridable:
 - `CLAUDE_API_MODEL` — direct API model (default: claude-sonnet-4-20250514)
 - `MAX_TURNS` — agent max turns (default: 10)
 - `MAX_TOKENS` — API max tokens (default: 4096)
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET` — Supabase credentials (in `.env`, gitignored)
 
 ## Dependencies
 
 **App**: Swifter (1.5.0) for HTTP/WebSocket. Swift 6.0 toolchain, macOS 14+, Swift 5 language mode.
 
-**Backend**: Express (4.x), `@anthropic-ai/sdk`, `@anthropic-ai/claude-agent-sdk`, ws, uuid. TypeScript with tsx for dev.
+**Backend**: Express (4.x), `@anthropic-ai/sdk`, `@anthropic-ai/claude-agent-sdk`, `@supabase/supabase-js`, `jsonwebtoken`, ws, uuid. TypeScript with tsx for dev.

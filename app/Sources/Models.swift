@@ -41,6 +41,7 @@ struct SubagentTask: Identifiable {
     var activitySteps: [String]
     var draftCard: DraftCard?
     var chatHistory: [ChatMessage]
+    var threadId: String?
 
     var isActive: Bool {
         status == .running || status == .pending || status == .awaitingApproval

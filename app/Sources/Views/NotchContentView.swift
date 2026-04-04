@@ -35,6 +35,13 @@ struct NotchContentView: View {
 
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: DN.spaceXS) {
+            // User greeting
+            if let name = viewModel.authManager?.userName, !name.isEmpty {
+                Text("Hi, \(name)")
+                    .font(DN.body(11, weight: .medium))
+                    .foregroundColor(DN.textDisabled)
+            }
+
             // Time + date
             HStack(alignment: .firstTextBaseline, spacing: DN.space2xs) {
                 Text(viewModel.timeString)
@@ -176,10 +183,6 @@ struct NotchContentView: View {
                 Spacer()
 
                 HStack(spacing: DN.spaceXS) {
-                    IconActionButton(icon: "clock.arrow.circlepath", label: "HISTORY") {
-                        // TODO: hook up history view
-                    }
-
                     IconActionButton(icon: "plus", label: "NEW") {
                         withAnimation(DN.transition) {
                             viewModel.viewState = .overview
@@ -189,38 +192,128 @@ struct NotchContentView: View {
                 }
             }
 
-            if viewModel.tasks.isEmpty {
-                VStack(spacing: DN.spaceSM) {
-                    Spacer().frame(height: DN.spaceLG)
-                    Text("NO CONVERSATIONS")
-                        .font(DN.label(9))
-                        .tracking(0.8)
-                        .foregroundColor(DN.textDisabled)
-                    Text("Start a chat from the HOME tab")
-                        .font(DN.body(10))
-                        .foregroundColor(DN.textDisabled.opacity(0.7))
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-            } else {
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: DN.spaceXS) {
-                        ForEach(viewModel.tasks) { task in
-                            AgentRow(
-                                task: task,
-                                isCompact: false,
-                                activityText: viewModel.activityText(for: task)
-                            ) {
-                                withAnimation(DN.transition) {
-                                    viewModel.viewState = .agentChat(task.id)
-                                }
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: DN.spaceXS) {
+                    // Active / recent in-memory tasks
+                    ForEach(viewModel.tasks) { task in
+                        AgentRow(
+                            task: task,
+                            isCompact: false,
+                            activityText: viewModel.activityText(for: task)
+                        ) {
+                            withAnimation(DN.transition) {
+                                viewModel.viewState = .agentChat(task.id)
                             }
                         }
+                    }
+
+                    // Past threads from DB
+                    if !viewModel.threadHistory.isEmpty {
+                        let loadedThreadIds = Set(viewModel.tasks.compactMap { $0.threadId })
+
+                        let unloaded = viewModel.threadHistory.filter { !loadedThreadIds.contains($0.id) }
+                        if !unloaded.isEmpty {
+                            Divider()
+                                .background(DN.border)
+                                .padding(.vertical, DN.spaceXS)
+
+                            Text("HISTORY")
+                                .font(DN.label(8))
+                                .tracking(1.2)
+                                .foregroundColor(DN.textDisabled)
+                                .padding(.leading, 4)
+
+                            ForEach(unloaded) { thread in
+                                threadRow(thread)
+                            }
+                        }
+                    }
+
+                    if viewModel.tasks.isEmpty && viewModel.threadHistory.isEmpty {
+                        VStack(spacing: DN.spaceSM) {
+                            Spacer().frame(height: DN.spaceLG)
+                            Text("NO CONVERSATIONS")
+                                .font(DN.label(9))
+                                .tracking(0.8)
+                                .foregroundColor(DN.textDisabled)
+                            Text("Start a chat from the HOME tab")
+                                .font(DN.body(10))
+                                .foregroundColor(DN.textDisabled.opacity(0.7))
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear {
+            viewModel.loadThreadHistory()
+        }
+    }
+
+    // MARK: - Thread History Row
+
+    private func threadRow(_ thread: NotchViewModel.ThreadSummary) -> some View {
+        Button(action: {
+            viewModel.loadThread(thread.id)
+        }) {
+            HStack(spacing: DN.spaceSM) {
+                Image(systemName: "bubble.left")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(DN.textDisabled)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(thread.title ?? "Conversation")
+                        .font(DN.body(11))
+                        .foregroundColor(DN.textPrimary)
+                        .lineLimit(1)
+
+                    Text(formatThreadDate(thread.updatedAt))
+                        .font(DN.mono(8))
+                        .foregroundColor(DN.textDisabled)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(DN.textDisabled)
+            }
+            .padding(.horizontal, DN.spaceSM)
+            .padding(.vertical, DN.spaceXS + 2)
+            .background(DN.surface.opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DN.border, lineWidth: 0.5)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func formatThreadDate(_ iso: String) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let date = formatter.date(from: iso) else {
+            // Try without fractional seconds
+            formatter.formatOptions = [.withInternetDateTime]
+            guard let date = formatter.date(from: iso) else { return iso }
+            return relativeDate(date)
+        }
+        return relativeDate(date)
+    }
+
+    private func relativeDate(_ date: Date) -> String {
+        let interval = Date().timeIntervalSince(date)
+        if interval < 60 { return "just now" }
+        if interval < 3600 { return "\(Int(interval / 60))m ago" }
+        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
+        let days = Int(interval / 86400)
+        if days == 1 { return "yesterday" }
+        if days < 7 { return "\(days)d ago" }
+        let df = DateFormatter()
+        df.dateFormat = "MMM d"
+        return df.string(from: date)
     }
 
     // MARK: - Chat Input Bar

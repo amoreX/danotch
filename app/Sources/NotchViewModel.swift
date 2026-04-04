@@ -135,6 +135,8 @@ class NotchViewModel: ObservableObject {
     var mouseInContent = false
     var lastViewBeforeCollapse: NotchViewState = .overview
 
+    var authManager: AuthManager?
+
     @Published var settings = NotchSettings()
     @Published var agentMonitor = AgentMonitor()
     @Published var nowPlaying = NowPlayingMonitor()
@@ -232,6 +234,151 @@ class NotchViewModel: ObservableObject {
 
     func taskById(_ id: String) -> SubagentTask? {
         tasks.first { $0.id == id }
+    }
+
+    // MARK: - Thread History
+
+    struct ThreadSummary: Identifiable {
+        let id: String
+        let title: String?
+        let updatedAt: String
+    }
+
+    @Published var threadHistory: [ThreadSummary] = []
+    @Published var isLoadingHistory = false
+
+    func loadThreadHistory() {
+        guard let token = authManager?.accessToken else {
+            print("[Danotch] loadThreadHistory: no auth token")
+            return
+        }
+        isLoadingHistory = true
+        print("[Danotch] loadThreadHistory: fetching...")
+
+        var request = URLRequest(url: URL(string: "http://localhost:3001/api/threads")!)
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoadingHistory = false
+
+                if let error {
+                    print("[Danotch] loadThreadHistory error: \(error.localizedDescription)")
+                    return
+                }
+
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard let data else {
+                    print("[Danotch] loadThreadHistory: no data, status=\(statusCode)")
+                    return
+                }
+
+                if statusCode != 200 {
+                    let body = String(data: data, encoding: .utf8) ?? ""
+                    print("[Danotch] loadThreadHistory: status=\(statusCode) body=\(body)")
+                    return
+                }
+
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let threads = json["threads"] as? [[String: Any]] else {
+                    let body = String(data: data, encoding: .utf8) ?? ""
+                    print("[Danotch] loadThreadHistory: parse failed, body=\(body)")
+                    return
+                }
+
+                self.threadHistory = threads.compactMap { t in
+                    guard let id = t["id"] as? String else { return nil }
+                    return ThreadSummary(
+                        id: id,
+                        title: t["title"] as? String,
+                        updatedAt: t["updated_at"] as? String ?? ""
+                    )
+                }
+                print("[Danotch] loadThreadHistory: loaded \(self.threadHistory.count) threads")
+            }
+        }.resume()
+    }
+
+    func loadThread(_ threadId: String) {
+        guard let token = authManager?.accessToken else { return }
+
+        // If already loaded in tasks, just navigate
+        if tasks.contains(where: { $0.threadId == threadId || $0.id == threadId }) {
+            let taskId = tasks.first(where: { $0.threadId == threadId || $0.id == threadId })!.id
+            withAnimation(DN.transition) { viewState = .agentChat(taskId) }
+            return
+        }
+
+        var request = URLRequest(url: URL(string: "http://localhost:3001/api/threads/\(threadId)")!)
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+            DispatchQueue.main.async {
+                guard let self,
+                      let data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let messages = json["messages"] as? [[String: Any]] else { return }
+
+                let chatHistory: [ChatMessage] = messages.compactMap { m in
+                    guard let id = m["id"] as? String,
+                          let role = m["role"] as? String,
+                          let content = m["content"] as? String else { return nil }
+
+                    let metadata = m["metadata"] as? [String: Any]
+                    let displayRole: String
+                    if role == "assistant" {
+                        // Check if this was a failed/partial message
+                        let status = metadata?["status"] as? String
+                        displayRole = status == "failed" ? "agent" : "agent"
+                    } else {
+                        displayRole = role
+                    }
+
+                    return ChatMessage(
+                        id: id,
+                        role: displayRole,
+                        content: content,
+                        toolName: nil,
+                        draftCard: nil,
+                        timestamp: Date()
+                    )
+                }
+
+                guard !chatHistory.isEmpty else { return }
+
+                // Find title from first user message
+                let firstUserMsg = chatHistory.first(where: { $0.role == "user" })?.content ?? "Conversation"
+                let taskId = UUID().uuidString
+
+                let status: TaskStatus = {
+                    if let lastAssistant = messages.last(where: { ($0["role"] as? String) == "assistant" }),
+                       let metadata = lastAssistant["metadata"] as? [String: Any],
+                       let s = metadata["status"] as? String, s == "failed" {
+                        return .failed
+                    }
+                    return .completed
+                }()
+
+                let task = SubagentTask(
+                    id: taskId,
+                    task: firstUserMsg,
+                    description: String(firstUserMsg.prefix(60)),
+                    status: status,
+                    toolCallsCount: 0,
+                    streamingText: "",
+                    createdAt: Date(),
+                    activitySteps: [],
+                    chatHistory: chatHistory,
+                    threadId: threadId
+                )
+
+                withAnimation(.snappy(duration: 0.3)) {
+                    self.tasks.insert(task, at: 0)
+                    self.viewState = .agentChat(taskId)
+                }
+            }
+        }.resume()
     }
 
     func resetView() {
@@ -517,18 +664,32 @@ class NotchViewModel: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = ["message": message, "session_id": sid]
+        if let token = authManager?.accessToken {
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        var body: [String: Any] = ["message": message, "session_id": sid]
+        // Include thread_id for follow-ups if we have one stored
+        if let threadId = tasks.first(where: { $0.id == sid })?.threadId {
+            body["thread_id"] = threadId
+        }
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request) { [weak self] _, _, error in
-            if let error = error {
-                DispatchQueue.main.async {
-                    guard let self = self,
-                          let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            DispatchQueue.main.async {
+                guard let self = self,
+                      let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
+                if let error = error {
                     withAnimation(.snappy(duration: 0.3)) {
                         self.tasks[idx].status = .failed
                         self.tasks[idx].error = error.localizedDescription
                     }
+                    return
+                }
+                // Capture thread_id from response for follow-ups
+                if let data = data,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let threadId = json["thread_id"] as? String {
+                    self.tasks[idx].threadId = threadId
                 }
             }
             // Success is handled by WebSocket events updating the task
