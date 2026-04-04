@@ -24,7 +24,7 @@ struct NotchShellView: View {
     private var shapeHeight: CGFloat {
         if !expanded { return notchH }
         switch viewModel.viewState {
-        case .overview: return notchH + 210
+        case .overview: return notchH + 260
         case .taskList: return notchH + 260
         case .agentChat: return notchH + 320
         case .stats: return notchH + 290

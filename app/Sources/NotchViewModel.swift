@@ -9,6 +9,9 @@ class NotchViewModel: ObservableObject {
     @Published var viewState: NotchViewState = .overview
     @Published var isExpanded = false
     @Published var shimmerStep: Int = 0
+    @Published var shouldFocusChatInput = false
+    @Published var isChatInputActive = false
+    @Published var collapsedGroups: Set<String> = [] // agent group IDs that are collapsed
     var mouseInContent = false
 
     @Published var agentMonitor = AgentMonitor()
@@ -210,5 +213,55 @@ class NotchViewModel: ObservableObject {
             ))
         }
         withAnimation(.snappy(duration: 0.3)) { tasks = newTasks }
+    }
+
+    // MARK: - Chat
+
+    func sendChat(message: String) {
+        let sessionId = UUID().uuidString
+
+        // Optimistically create a task so it shows immediately
+        let task = SubagentTask(
+            id: sessionId,
+            task: message,
+            description: String(message.prefix(60)),
+            status: .running,
+            toolCallsCount: 0,
+            streamingText: "",
+            createdAt: Date(),
+            activitySteps: ["Sending to Claude..."],
+            chatHistory: [
+                ChatMessage(
+                    id: UUID().uuidString, role: "user", content: message,
+                    toolName: nil, draftCard: nil, timestamp: Date()
+                )
+            ]
+        )
+        withAnimation(.snappy(duration: 0.3)) {
+            tasks.insert(task, at: 0)
+            viewState = .taskList
+        }
+
+        // POST to backend
+        guard let url = URL(string: "http://localhost:3001/api/chat") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["message": message, "session_id": sessionId]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { [weak self] _, _, error in
+            if let error = error {
+                DispatchQueue.main.async {
+                    guard let self = self,
+                          let idx = self.tasks.firstIndex(where: { $0.id == sessionId }) else { return }
+                    withAnimation(.snappy(duration: 0.3)) {
+                        self.tasks[idx].status = .failed
+                        self.tasks[idx].error = error.localizedDescription
+                    }
+                }
+            }
+            // Success is handled by WebSocket events updating the task
+        }.resume()
     }
 }

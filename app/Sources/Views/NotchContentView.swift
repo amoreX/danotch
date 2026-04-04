@@ -2,6 +2,8 @@ import SwiftUI
 
 struct NotchContentView: View {
     @ObservedObject var viewModel: NotchViewModel
+    @State private var chatInputText: String = ""
+    @FocusState private var isChatInputFocused: Bool
 
     private var isExpanded: Bool {
         viewModel.viewState != .overview
@@ -98,21 +100,35 @@ struct NotchContentView: View {
                 agentStatusCounts
             }
 
-            if viewModel.agentMonitor.agents.isEmpty {
+            if viewModel.agentMonitor.agents.isEmpty && viewModel.tasks.isEmpty {
                 emptyAgentState
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: DN.spaceSM) {
                         ForEach(viewModel.agentMonitor.groupedAgents) { group in
-                            AgentGroupView(group: group, isCompact: true) { agent in
+                            AgentGroupView(group: group, isCompact: true, collapsedGroups: $viewModel.collapsedGroups) { agent in
                                 viewModel.agentMonitor.activateAgent(agent)
                             }
+                        }
+
+                        // User tasks from chat
+                        if !viewModel.tasks.isEmpty {
+                            tasksSection(compact: true)
                         }
                     }
                 }
             }
+
+            Spacer(minLength: 0)
+            chatInputBar
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: viewModel.shouldFocusChatInput) { _, shouldFocus in
+            if shouldFocus {
+                isChatInputFocused = true
+                viewModel.shouldFocusChatInput = false
+            }
+        }
     }
 
     // MARK: - Empty state
@@ -155,9 +171,13 @@ struct NotchContentView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: DN.spaceSM) {
                         ForEach(viewModel.agentMonitor.groupedAgents) { group in
-                            AgentGroupView(group: group, isCompact: false) { agent in
+                            AgentGroupView(group: group, isCompact: false, collapsedGroups: $viewModel.collapsedGroups) { agent in
                                 viewModel.agentMonitor.activateAgent(agent)
                             }
+                        }
+
+                        if !viewModel.tasks.isEmpty {
+                            tasksSection(compact: false)
                         }
                     }
                 }
@@ -166,30 +186,115 @@ struct NotchContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Status Counts
+    // MARK: - Chat Input Bar
 
-    private var agentStatusCounts: some View {
+    private var chatInputBar: some View {
         HStack(spacing: DN.spaceSM) {
-            let running = viewModel.agentMonitor.agents.filter { $0.status == .running }.count
-            let total = viewModel.agentMonitor.agents.count
+            TextField("", text: $chatInputText, prompt: Text("ASK ANYTHING...")
+                .font(DN.label(9))
+                .foregroundColor(DN.textDisabled)
+            )
+            .textFieldStyle(.plain)
+            .font(DN.body(11))
+            .foregroundColor(DN.textPrimary)
+            .focused($isChatInputFocused)
+            .onChange(of: isChatInputFocused) { _, focused in
+                viewModel.isChatInputActive = focused
+            }
+            .onSubmit { submitChat() }
 
-            if total > 0 {
-                HStack(spacing: 3) {
-                    Circle().fill(running > 0 ? DN.warning : DN.textDisabled).frame(width: 4, height: 4)
-                    Text("\(running)")
-                        .font(DN.mono(10, weight: .medium))
-                        .foregroundColor(running > 0 ? DN.warning : DN.textDisabled)
+            Button(action: { submitChat() }) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(chatInputText.isEmpty ? DN.textDisabled : DN.textDisplay)
+                    .frame(width: 20, height: 20)
+                    .overlay(
+                        Circle().stroke(
+                            chatInputText.isEmpty ? DN.borderVisible : DN.textDisplay,
+                            lineWidth: 1
+                        )
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(chatInputText.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .padding(.horizontal, DN.spaceSM + DN.spaceXS)
+        .padding(.vertical, DN.spaceSM)
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(isChatInputFocused ? DN.borderVisible : DN.border, lineWidth: 1)
+        )
+    }
 
-                    Text("/")
-                        .font(DN.mono(9))
-                        .foregroundColor(DN.textDisabled)
+    private func submitChat() {
+        let text = chatInputText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        chatInputText = ""
+        isChatInputFocused = false
+        viewModel.sendChat(message: text)
+    }
 
-                    Text("\(total)")
-                        .font(DN.mono(10, weight: .medium))
-                        .foregroundColor(DN.textDisabled)
+    // MARK: - Tasks Section
+
+    private func tasksSection(compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: DN.spaceSM) {
+                Image(systemName: "bubble.left.and.text.bubble.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DN.textSecondary)
+                    .frame(width: 14)
+
+                Text("TASKS")
+                    .font(DN.label(9))
+                    .tracking(1.0)
+                    .foregroundColor(DN.textSecondary)
+
+                Text("\(viewModel.tasks.count)")
+                    .font(DN.mono(9, weight: .medium))
+                    .foregroundColor(DN.textDisabled)
+
+                Spacer()
+
+                let active = viewModel.tasks.filter { $0.isActive }.count
+                if active > 0 {
+                    HStack(spacing: 3) {
+                        Circle().fill(DN.warning).frame(width: 4, height: 4)
+                        Text("\(active) ACTIVE")
+                            .font(DN.label(7))
+                            .tracking(0.6)
+                            .foregroundColor(DN.warning)
+                    }
+                }
+            }
+            .padding(.horizontal, DN.spaceSM)
+            .padding(.vertical, DN.spaceXS + 1)
+
+            VStack(spacing: 1) {
+                ForEach(viewModel.tasks) { task in
+                    AgentRow(
+                        task: task,
+                        isCompact: compact,
+                        activityText: viewModel.activityText(for: task)
+                    ) {
+                        withAnimation(DN.transition) {
+                            viewModel.viewState = .agentChat(task.id)
+                        }
+                    }
                 }
             }
         }
+        .background(DN.surface.opacity(0.4))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DN.border, lineWidth: 1)
+        )
+    }
+
+    // MARK: - Status Counts
+
+    private var agentStatusCounts: some View {
+        EmptyView()
     }
 }
 
@@ -198,10 +303,10 @@ struct NotchContentView: View {
 struct AgentGroupView: View {
     let group: AgentGroup
     let isCompact: Bool
+    @Binding var collapsedGroups: Set<String>
     let onTapAgent: (DetectedAgent) -> Void
 
-    @State private var isExpanded: Bool = true
-
+    private var isGroupExpanded: Bool { !collapsedGroups.contains(group.id) }
     private var canCollapse: Bool { group.agents.count > 1 }
 
     var body: some View {
@@ -210,7 +315,11 @@ struct AgentGroupView: View {
             Button(action: {
                 guard canCollapse else { return }
                 withAnimation(.easeOut(duration: DN.microDuration)) {
-                    isExpanded.toggle()
+                    if collapsedGroups.contains(group.id) {
+                        collapsedGroups.remove(group.id)
+                    } else {
+                        collapsedGroups.insert(group.id)
+                    }
                 }
             }) {
                 HStack(spacing: DN.spaceSM) {
@@ -246,7 +355,7 @@ struct AgentGroupView: View {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 8, weight: .bold))
                             .foregroundColor(DN.textDisabled)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .rotationEffect(.degrees(isGroupExpanded ? 90 : 0))
                     }
                 }
                 .padding(.horizontal, DN.spaceSM)
@@ -256,7 +365,7 @@ struct AgentGroupView: View {
             .buttonStyle(.plain)
 
             // Agent rows — collapsible
-            if isExpanded {
+            if isGroupExpanded {
                 VStack(spacing: 1) {
                     ForEach(group.agents) { agent in
                         AgentSessionRow(agent: agent, isCompact: isCompact) {

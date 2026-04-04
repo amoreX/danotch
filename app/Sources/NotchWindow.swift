@@ -34,7 +34,8 @@ class DanotchPanel: NSPanel {
         ]
     }
 
-    override var canBecomeKey: Bool { false }
+    // Must be true for TextField to receive keyboard input
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }
 
@@ -44,6 +45,8 @@ class NotchWindowController: NSObject {
     var globalMonitor: Any?
     var localMonitor: Any?
     var scrollMonitor: Any?
+    var keyboardMonitor: Any?
+    var localKeyboardMonitor: Any?
     var collapseTimer: Timer?
     var swipeAccumulator: CGFloat = 0
 
@@ -80,6 +83,7 @@ class NotchWindowController: NSObject {
         panel.orderFrontRegardless()
 
         startMouseTracking()
+        startKeyboardShortcut()
 
         NotificationCenter.default.addObserver(
             self,
@@ -101,6 +105,46 @@ class NotchWindowController: NSObject {
     @objc private func screenChanged() {
         guard let screen = NSScreen.main else { return }
         positionPanel(on: screen)
+    }
+
+    // MARK: - Global Keyboard Shortcut (Cmd+Shift+Space)
+
+    private func startKeyboardShortcut() {
+        // Global monitor: fires when app is NOT key
+        keyboardMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 49 {
+                self?.handleGlobalShortcut()
+            }
+        }
+        // Local monitor: fires when app IS key (panel has focus)
+        localKeyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 49 {
+                self?.handleGlobalShortcut()
+                return nil // consume the event
+            }
+            // Escape to collapse
+            if event.keyCode == 53 && self?.viewModel.isExpanded == true {
+                self?.collapse()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func handleGlobalShortcut() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if self.viewModel.isExpanded {
+                self.collapse()
+            } else {
+                self.expand()
+                self.viewModel.viewState = .overview
+                self.viewModel.shouldFocusChatInput = true
+                // Make panel key so TextField can receive input
+                self.panel.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
     }
 
     // MARK: - Global Mouse Tracking
@@ -167,7 +211,10 @@ class NotchWindowController: NSObject {
                 expand()
             }
         } else if viewModel.isExpanded {
-            scheduleCollapse()
+            // Don't auto-collapse if chat input is focused
+            if !viewModel.isChatInputActive {
+                scheduleCollapse()
+            }
         }
     }
 
@@ -178,21 +225,28 @@ class NotchWindowController: NSObject {
         }
     }
 
+    private func collapse() {
+        withAnimation(.snappy(duration: 0.3)) {
+            viewModel.isExpanded = false
+            viewModel.isChatInputActive = false
+            viewModel.resetView()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            guard let self = self else { return }
+            if !self.viewModel.isExpanded {
+                self.panel.ignoresMouseEvents = true
+                self.panel.resignKey()
+            }
+        }
+    }
+
     private func scheduleCollapse() {
         guard collapseTimer == nil else { return }
         collapseTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             self.collapseTimer = nil
-            if !self.viewModel.mouseInContent {
-                withAnimation(.snappy(duration: 0.3)) {
-                    self.viewModel.isExpanded = false
-                    self.viewModel.resetView()
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    if !self.viewModel.isExpanded {
-                        self.panel.ignoresMouseEvents = true
-                    }
-                }
+            if !self.viewModel.mouseInContent && !self.viewModel.isChatInputActive {
+                self.collapse()
             }
         }
     }
@@ -201,6 +255,8 @@ class NotchWindowController: NSObject {
         if let m = globalMonitor { NSEvent.removeMonitor(m) }
         if let m = localMonitor { NSEvent.removeMonitor(m) }
         if let m = scrollMonitor { NSEvent.removeMonitor(m) }
+        if let m = keyboardMonitor { NSEvent.removeMonitor(m) }
+        if let m = localKeyboardMonitor { NSEvent.removeMonitor(m) }
         collapseTimer?.invalidate()
     }
 }
