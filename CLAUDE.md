@@ -186,8 +186,57 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 - `done`: completion (`status`, `result`, `error`)
 - `task_summary`: bulk sync with `tasks` array
 
+## Backend Architecture
+
+TypeScript ESM service (`"type": "module"`). Run with `npm run dev` (tsx watch).
+
+### Structure
+
+```
+backend/src/
+├── index.ts          — Express on :3001, connects NotchBridge
+├── config.ts         — All config: port, model, max turns, system prompt (env-overridable)
+├── types.ts          — Task, ChatMessage, WebSocket event types
+├── agent/
+│   └── runner.ts     — Two modes: runChat() (Anthropic API) + runAgent() (Claude Agent SDK)
+├── events/
+│   └── notch.ts      — WebSocket client to notch app :7778, auto-reconnect every 3s
+└── routes/
+    └── tasks.ts      — REST endpoints
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check + notch connection status |
+| `POST` | `/api/chat` | Simple Claude conversation (no tools) |
+| `POST` | `/api/agent` | Claude Agent SDK — has tools: Bash, Read, Edit, Grep, Glob, etc. |
+| `GET` | `/api/tasks` | List all tasks |
+| `GET` | `/api/tasks/:id` | Get specific task |
+
+### Agent Runner
+
+Two execution modes in `runner.ts`:
+
+- **`runChat(message, notch, sessionId?)`** — Direct Anthropic API call with streaming. No tools. Good for quick Q&A. Streams tokens to notch via WebSocket progress events.
+
+- **`runAgent(message, notch, { sessionId?, cwd? })`** — Uses `@anthropic-ai/claude-agent-sdk` `query()` function. Full Claude Code capabilities (Bash, Read, Write, Edit, Grep, Glob). Iterates the async generator for `SDKMessage` events (assistant messages, tool use, stream events, results). Streams all progress to notch.
+
+Both modes store tasks in-memory (`Map<string, Task>`) and push status/progress/done events through `NotchBridge` to the app's existing WebSocket protocol.
+
+### Config (`config.ts`)
+
+All settings env-overridable:
+- `PORT` — server port (default: 3001)
+- `NOTCH_WS_URL` — notch app WebSocket (default: ws://localhost:7778/ws)
+- `CLAUDE_MODEL` — agent SDK model (default: claude-sonnet-4-20250514)
+- `CLAUDE_API_MODEL` — direct API model (default: claude-sonnet-4-20250514)
+- `MAX_TURNS` — agent max turns (default: 10)
+- `MAX_TOKENS` — API max tokens (default: 4096)
+
 ## Dependencies
 
 **App**: Swifter (1.5.0) for HTTP/WebSocket. Swift 6.0 toolchain, macOS 14+, Swift 5 language mode.
 
-**Backend**: Express (4.x).
+**Backend**: Express (4.x), `@anthropic-ai/sdk`, `@anthropic-ai/claude-agent-sdk`, ws, uuid. TypeScript with tsx for dev.

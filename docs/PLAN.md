@@ -45,9 +45,36 @@ The notch is the always-visible nerve center. Agents run in the background, the 
 
 ## Implementation Plan
 
-### Phase 1: Global Shortcut + Agent Monitoring (no backend needed)
+### Phase 1: Agent Monitoring ✅ DONE
 
-**1a. Global Keyboard Shortcut**
+**1b. Agent Process Monitoring** ✅
+
+Detect and display Claude Code sessions running on the system.
+
+**What's built:**
+- `AgentMonitor` class polls `ps -eo pid,pcpu,rss,etime,args` every 3s
+- Detects Claude Code via `*/claude` binary + `--session-id` flag
+- Also detects Cursor, Codex, Windsurf (but filtered from display since they don't expose prompt data)
+- Enriches each Claude Code session from `~/.claude/sessions/{pid}.json` and conversation JSONL:
+  - Project name (from cwd)
+  - Last user prompt (parsed from JSONL, cleaned of image refs/tags)
+  - Live state: thinking, tool use (with tool name + detail), responding (with text snippet), waiting for user
+  - Tool detail: Bash commands, file paths for Read/Edit/Write, search patterns for Grep, etc.
+  - Last activity time (JSONL mod time) for sort ordering
+- Grouped display via `AgentGroupView` with collapsible chevron toggle
+- Each session row shows: project name, live state indicator (pulsing), last prompt, elapsed time
+- CPU/MEM stats on hover
+- Clicking a row activates the terminal app (Ghostty → iTerm → Kitty → Terminal)
+- Sorted by most recently active — sessions you're working in float to top
+- Removed all mock data — app shows real data only
+
+**Key fix:** `Process` + `Pipe` deadlock — must read pipe data before `waitUntilExit()` to avoid 64KB buffer deadlock.
+
+**Key fix:** Tool results in JSONL are `type: "user"` with `tool_result` content blocks — must distinguish from real user messages to avoid always showing "THINKING".
+
+---
+
+### Phase 1a: Global Keyboard Shortcut — TODO
 
 Drop down the notch from anywhere with a hotkey (e.g. `⌘+Shift+D`).
 
@@ -56,27 +83,9 @@ Drop down the notch from anywhere with a hotkey (e.g. `⌘+Shift+D`).
 - Bring panel to front if not visible
 - Trivial — wires into existing infrastructure
 
-**1b. Agent Process Monitoring**
-
-Detect and display agents running on the system — Claude Code, Cursor, Codex, Flowlens, etc.
-
-- Extend `SystemStatsMonitor` (already runs `ps -axo`) to detect agent processes
-- Match process names/commands: `claude`, `cursor`, `codex`, `flowlens`, etc.
-- Map detected agents into `SubagentTask` model for display in existing UI
-- Show in notch: agent name, status (running/idle), duration, resource usage
-- Poll on interval (every 2-5s) alongside existing stats sampling
-- No backend required — pure Swift process scanning
-
-**Sources to detect:**
-- Claude Code CLI sessions (process name / command line args)
-- Cursor background agents (Cursor helper processes)
-- Codex CLI sessions
-- Flowlens workers
-- GitHub Actions (future — needs backend/API)
-
 ---
 
-### Phase 2: Backend Setup
+### Phase 2: Backend Setup — TODO
 
 Convert the stub backend into a real TypeScript service.
 
@@ -105,7 +114,7 @@ backend/
 
 ---
 
-### Phase 3: Chat from the Notch
+### Phase 3: Chat from the Notch — TODO
 
 Add a chat button to the notch home screen. Users type a message, it goes to the backend, Claude responds.
 
@@ -124,7 +133,7 @@ This is the foundation for the "natural language command bar" — type anything,
 
 ---
 
-### Phase 4: Screen-Aware Agent
+### Phase 4: Screen-Aware Agent — TODO
 
 The notch can see your screen and respond to what's on it. You tell the agent to do something with context from your display.
 

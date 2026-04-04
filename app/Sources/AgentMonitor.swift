@@ -191,6 +191,13 @@ class AgentMonitor: ObservableObject {
                 lastActivityTime = result.modTime
                 liveState = result.liveState
                 liveDetail = result.liveDetail
+
+                // If CPU is near zero, the process isn't actually doing anything —
+                // override stale JSONL state to waitingForUser
+                if agents[i].cpu < 0.5 && liveState != .idle && liveState != .waitingForUser {
+                    liveState = .waitingForUser
+                    liveDetail = nil
+                }
             }
 
             agents[i] = DetectedAgent(
@@ -229,7 +236,7 @@ class AgentMonitor: ObservableObject {
 
             guard let handle = try? FileHandle(forReadingFrom: jsonlFile) else { continue }
             let fileSize = handle.seekToEndOfFile()
-            let readSize: UInt64 = min(fileSize, 50_000)
+            let readSize: UInt64 = min(fileSize, 200_000)
             handle.seek(toFileOffset: fileSize - readSize)
             let tailData = handle.readDataToEndOfFile()
             handle.closeFile()
