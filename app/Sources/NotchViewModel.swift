@@ -134,6 +134,7 @@ class NotchViewModel: ObservableObject {
     @Published var settings = NotchSettings()
     @Published var agentMonitor = AgentMonitor()
     @Published var nowPlaying = NowPlayingMonitor()
+    let statsMonitor = SystemStatsMonitor()
     private var clockTimer: Timer?
     private var shimmerTimer: Timer?
     private var agentMonitorCancellable: AnyCancellable?
@@ -203,7 +204,7 @@ class NotchViewModel: ObservableObject {
     }
 
     func startShimmerCycle() {
-        shimmerTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        shimmerTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: true) { [weak self] _ in
             DispatchQueue.main.async { [weak self] in
                 withAnimation(.easeInOut(duration: 0.4)) {
                     self?.shimmerStep += 1
@@ -213,6 +214,14 @@ class NotchViewModel: ObservableObject {
     }
 
     func activityText(for task: SubagentTask) -> String {
+        // Show streaming text snippet once response starts coming in
+        if !task.streamingText.isEmpty {
+            let snippet = task.streamingText
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespaces)
+            let trimmed = snippet.count > 60 ? String(snippet.suffix(57)) + "..." : snippet
+            return trimmed
+        }
         guard !task.activitySteps.isEmpty else { return "Working..." }
         return task.activitySteps[shimmerStep % task.activitySteps.count]
     }
@@ -368,6 +377,90 @@ class NotchViewModel: ObservableObject {
         withAnimation(.snappy(duration: 0.3)) { tasks = newTasks }
     }
 
+    // MARK: - Goofy Loading Phrases
+
+    static let goofyLoadingPhrases: [String] = [
+        "Waking up the brain...",
+        "Consulting the oracle...",
+        "Summoning neurons...",
+        "Thinking really hard...",
+        "Downloading wisdom...",
+        "Asking the void...",
+        "Bribing the AI...",
+        "Spinning up hamsters...",
+        "Loading vibes...",
+        "Booting consciousness...",
+        "Warming up synapses...",
+        "Channeling big brain...",
+        "Rummaging through thoughts...",
+        "Poking the model...",
+        "Juggling tokens...",
+        "Herding electrons...",
+        "Sacrificing compute...",
+        "Dusting off knowledge...",
+        "Entering the matrix...",
+        "Calibrating sass levels...",
+        "Brewing intelligence...",
+        "Untangling concepts...",
+        "Vibing with vectors...",
+        "Consulting ancient scrolls...",
+        "Performing dark math...",
+        "Assembling words...",
+        "Negotiating with GPUs...",
+        "Crunching cosmic data...",
+        "Tickling transformers...",
+        "Manifesting answers...",
+        "Asking nicely...",
+        "Whispering to silicon...",
+        "Charging the flux...",
+        "Parsing the universe...",
+        "Feeding the beast...",
+        "Tuning the frequencies...",
+        "Cooking up replies...",
+        "Mining for insight...",
+        "Shaking the magic 8-ball...",
+        "Consulting my twin...",
+        "Running on caffeine...",
+        "Defragmenting thoughts...",
+        "Invoking the algorithm...",
+        "Stretching brain cells...",
+        "Warming the oven...",
+        "Rolling the dice...",
+        "Polishing the answer...",
+        "Stirring the pot...",
+        "Reticulating splines...",
+        "Compiling thoughts...",
+        "Buffering brilliance...",
+        "Querying the cosmos...",
+        "Loading sarcasm module...",
+        "Priming the pump...",
+        "Aligning chakras...",
+        "Booting neural nets...",
+        "Decoding your vibe...",
+        "Fetching smartness...",
+        "Beaming up data...",
+        "Consulting the elders...",
+        "Generating coherence...",
+        "Wrangling parameters...",
+        "Synthesizing wisdom...",
+        "Activating turbo mode...",
+        "Meditating on it...",
+        "Scanning the multiverse...",
+        "Doing the math...",
+        "Powering up lasers...",
+        "Hacking the mainframe...",
+        "Asking my mom...",
+        "Overthinking this...",
+        "Going full galaxy brain...",
+        "Transmitting thoughts...",
+        "Loading personality...",
+        "Deploying charm...",
+        "Crunching numbers fr...",
+        "Entering hyperdrive...",
+        "Sipping knowledge...",
+        "Unlocking potential...",
+    ]
+
     // MARK: - Chat
 
     func sendChat(message: String, sessionId: String? = nil) {
@@ -398,7 +491,7 @@ class NotchViewModel: ObservableObject {
                 toolCallsCount: 0,
                 streamingText: "",
                 createdAt: Date(),
-                activitySteps: ["Sending to Claude..."],
+                activitySteps: Self.goofyLoadingPhrases.shuffled(),
                 chatHistory: [
                     ChatMessage(
                         id: UUID().uuidString, role: "user", content: message,

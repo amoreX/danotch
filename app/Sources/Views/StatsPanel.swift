@@ -313,7 +313,7 @@ private extension View {
 
 struct StatsPanel: View {
     @ObservedObject var viewModel: NotchViewModel
-    @StateObject private var monitor = SystemStatsMonitor()
+    var monitor: SystemStatsMonitor { viewModel.statsMonitor }
 
     private let gap: CGFloat = 5
 
@@ -500,7 +500,7 @@ struct StatsPanel: View {
 
 struct ProcessListPanel: View {
     @ObservedObject var viewModel: NotchViewModel
-    @StateObject private var monitor = SystemStatsMonitor()
+    var monitor: SystemStatsMonitor { viewModel.statsMonitor }
     @State private var selectedPid: Int32? = nil
     @State private var sortBy: SortField = .cpu
 

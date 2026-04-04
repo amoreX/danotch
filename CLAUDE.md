@@ -44,13 +44,13 @@ No unit tests in either package.
 
 - **NotchWindowController** (`NotchWindow.swift`): Custom `DanotchPanel` (NSPanel subclass, `canBecomeKey: true`) positioned over the physical notch at `level = .mainMenu + 3`. Three event monitors handle hover-to-expand (with 400ms collapse delay), swipe-back gesture (60px scroll threshold), and mouse tracking. Global keyboard shortcut (⌘+Shift+Space) drops down the notch and focuses the chat input. Escape collapses. Panel won't auto-collapse while chat input is focused (`isChatInputActive`). On expand, calls `restoreOrResetView()` (respects `restoreLastView` setting). Detects notch dimensions via `NSScreen` safe area insets with fallbacks for non-notch Macs. Panel width: 520px (overview) / 540px (task/chat/stats). Window frame: 580x400.
 
-- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor` and `NotchSettings`, forwarding both via Combine. Runs clock timer (1s) and shimmer cycle timer (2s) for activity text rotation. All state mutations wrapped in `withAnimation`. Has `sendChat(message:)` that POSTs to backend `/api/chat` and optimistically creates a task (navigates to chat if `openChatOnSend`). Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
+- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor`, `NotchSettings`, `NowPlayingMonitor`, and `SystemStatsMonitor` (shared instance used by both StatsPanel and ProcessListPanel). Forwards nested ObservableObjects via Combine. Runs clock timer (1s) and shimmer cycle timer (4s) for activity text rotation. `activityText()` prioritizes streaming text snippet (last 60 chars) over cycling activity steps. New tasks get shuffled goofy loading phrases (`goofyLoadingPhrases`) as activity steps. Has `sendChat(message:)` that POSTs to backend `/api/chat` and optimistically creates a task (navigates to chat if `openChatOnSend`). Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
 
 - **AgentMonitor** (`AgentMonitor.swift`): Standalone `ObservableObject` that scans for AI agent processes every 3s. Currently only displays Claude Code sessions (filtered because Cursor/Codex/Windsurf don't expose prompt data). Enriches each session with project name (from `~/.claude/sessions/{pid}.json` cwd), last user prompt (from conversation JSONL in `~/.claude/projects/`), and working directory (via `lsof`). Can activate the terminal app for a session via `NSWorkspace`. Provides `groupedAgents` computed property for grouped display.
 
 - **WebSocketServer**: Swifter-based on `ws://localhost:7778/ws` with `/health` endpoint. Dispatches parsed JSON to ViewModel on main thread.
 
-- **SystemStatsMonitor** (`StatsPanel.swift`): Standalone `ObservableObject` that samples system metrics every 2s. Reads CPU via `host_processor_info`, RAM via `host_statistics64`, network via `getifaddrs`, disk via `FileManager`. Maintains 40-sample history arrays for sparkline graphs. Also runs `ps -axo` to build a filterable/sortable process list.
+- **SystemStatsMonitor** (`StatsPanel.swift`): Standalone `ObservableObject` owned by ViewModel (single shared instance — `StatsPanel` and `ProcessListPanel` both use `viewModel.statsMonitor` instead of their own `@StateObject`). Samples system metrics every 2s. Reads CPU via `host_processor_info`, RAM via `host_statistics64`, network via `getifaddrs`, disk via `FileManager`. Maintains 40-sample history arrays for sparkline graphs. Also runs `ps -axo` to build a filterable/sortable process list.
 
 ### Important: Pipe Buffer Deadlock
 
@@ -76,7 +76,7 @@ let data = pipe.fileHandleForReading.readDataToEndOfFile()
 - `.processList` → sortable process table (by CPU/MEM/name) with app icons, expandable rows, force-quit capability
 - `.settings` → app configuration
 
-Top bar has four tabs: `[ HOME ]  AGENTS  |  STATS  ⚙` plus battery indicator. Settings tab uses a gear icon (`gearshape` / `gearshape.fill`) instead of text label.
+Top bar has four tabs: `[ HOME ]  AGENTS  |  STATS  [ ⚙ ]` plus battery indicator. Settings tab uses a gear icon (`gearshape` / `gearshape.fill`) with bracket wrapping when active, matching the text tab style.
 
 ### View Hierarchy
 

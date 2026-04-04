@@ -142,7 +142,7 @@ struct NotchShellView: View {
 
             Color.clear.frame(width: notchW + DN.spaceMD)
 
-            HStack(spacing: DN.spaceMD) {
+            HStack(spacing: DN.spaceSM) {
                 tabButton(
                     label: "STATS",
                     isActive: viewModel.viewState == .stats || viewModel.viewState == .processList
@@ -152,16 +152,30 @@ struct NotchShellView: View {
                     }
                 }
 
+                let settingsActive = viewModel.viewState == .settings
                 Button(action: {
                     withAnimation(DN.transition) {
                         viewModel.viewState = .settings
                     }
                 }) {
-                    Image(systemName: viewModel.viewState == .settings ? "gearshape.fill" : "gearshape")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(viewModel.viewState == .settings ? DN.textDisplay : DN.textDisabled)
-                        .padding(DN.spaceXS)
-                        .contentShape(Rectangle())
+                    HStack(spacing: 2) {
+                        if settingsActive {
+                            Text("[")
+                                .font(DN.label(10))
+                                .foregroundColor(DN.textDisplay)
+                        }
+                        Image(systemName: settingsActive ? "gearshape.fill" : "gearshape")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(settingsActive ? DN.textDisplay : DN.textDisabled)
+                        if settingsActive {
+                            Text("]")
+                                .font(DN.label(10))
+                                .foregroundColor(DN.textDisplay)
+                        }
+                    }
+                    .padding(.horizontal, DN.spaceXS)
+                    .padding(.vertical, DN.spaceXS)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
@@ -169,6 +183,7 @@ struct NotchShellView: View {
                     BatteryView()
                 }
             }
+            .fixedSize(horizontal: true, vertical: false)
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .frame(width: shapeWidth, height: notchH)
