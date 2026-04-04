@@ -110,17 +110,22 @@ class NotchWindowController: NSObject {
     // MARK: - Global Keyboard Shortcut (Cmd+Shift+Space)
 
     private func startKeyboardShortcut() {
+        let checkShortcut: (NSEvent) -> Bool = { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            return flags.contains([.command, .shift]) && event.keyCode == 49
+        }
+
         // Global monitor: fires when app is NOT key
         keyboardMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 49 {
+            if checkShortcut(event) {
                 self?.handleGlobalShortcut()
             }
         }
         // Local monitor: fires when app IS key (panel has focus)
         localKeyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if event.modifierFlags.contains([.command, .shift]) && event.keyCode == 49 {
+            if checkShortcut(event) {
                 self?.handleGlobalShortcut()
-                return nil // consume the event
+                return nil
             }
             // Escape to collapse
             if event.keyCode == 53 && self?.viewModel.isExpanded == true {
@@ -215,6 +220,10 @@ class NotchWindowController: NSObject {
             if viewModel.isChatInputActive {
                 viewModel.isChatInputActive = false
                 viewModel.shouldFocusChatInput = false
+            }
+            // Don't auto-collapse if in a chat and setting is on
+            if case .agentChat = viewModel.viewState, viewModel.settings.keepOpenInChat {
+                return
             }
             scheduleCollapse()
         }

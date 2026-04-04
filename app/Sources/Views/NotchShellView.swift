@@ -293,6 +293,12 @@ struct SettingsPanel: View {
                             subtitle: "Re-hover opens the last page instead of home",
                             isOn: $viewModel.settings.restoreLastView
                         )
+                        SettingsToggleRow(
+                            icon: "lock.open",
+                            title: "Keep open in chat",
+                            subtitle: "Don't auto-close when viewing a conversation",
+                            isOn: $viewModel.settings.keepOpenInChat
+                        )
                     }
 
                     SettingsSection(title: "DISPLAY") {

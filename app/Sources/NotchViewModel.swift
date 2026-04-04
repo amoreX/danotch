@@ -35,6 +35,7 @@ class NotchSettings: ObservableObject {
     // Chat behavior
     @Published var openChatOnSend: Bool        { didSet { save() } }
     @Published var restoreLastView: Bool       { didSet { save() } }
+    @Published var keepOpenInChat: Bool        { didSet { save() } }
 
     // Display
     @Published var calendarMode: CalendarMode  { didSet { save() } }
@@ -62,6 +63,7 @@ class NotchSettings: ObservableObject {
         // Set defaults first
         openChatOnSend = true
         restoreLastView = false
+        keepOpenInChat = true
         calendarMode = .large
         showMusic = true
         musicSize = .mini
@@ -80,6 +82,7 @@ class NotchSettings: ObservableObject {
     private func save() {
         let data: [String: Any] = [
             "openChatOnSend": openChatOnSend,
+            "keepOpenInChat": keepOpenInChat,
             "restoreLastView": restoreLastView,
             "calendarMode": calendarMode.rawValue,
             "showMusic": showMusic,
@@ -106,6 +109,7 @@ class NotchSettings: ObservableObject {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
         if let v = json["openChatOnSend"] as? Bool { openChatOnSend = v }
+        if let v = json["keepOpenInChat"] as? Bool { keepOpenInChat = v }
         if let v = json["restoreLastView"] as? Bool { restoreLastView = v }
         if let v = json["calendarMode"] as? String { calendarMode = CalendarMode(rawValue: v) ?? .large }
         if let v = json["showMusic"] as? Bool { showMusic = v }

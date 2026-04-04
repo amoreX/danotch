@@ -206,6 +206,7 @@ Persisted via JSON file at `~/.danotch/settings.json`. All settings survive app 
 **Chat:**
 - `openChatOnSend` (default: true) — sending a message navigates to `.agentChat(sid)` instantly vs staying on current page
 - `restoreLastView` (default: false) — re-hover restores `lastViewBeforeCollapse` vs always opening home
+- `keepOpenInChat` (default: true) — prevents auto-collapse when viewing a conversation (`.agentChat`). Mouse leaving the notch area won't trigger collapse while in a chat view
 
 **Display:**
 - `calendarMode` (default: large) — `CalendarMode` enum: `off` / `mini` (one-line strip) / `large` (full grid). Left column layout: time/date → calendar → music, stacked vertically
