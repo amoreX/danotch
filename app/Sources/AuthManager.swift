@@ -127,6 +127,64 @@ class AuthManager: ObservableObject {
         try? FileManager.default.removeItem(at: Self.authFile)
     }
 
+    // MARK: - Token Refresh
+
+    private var isRefreshing = false
+
+    /// Ensures the access token is fresh. Call before making authenticated requests.
+    func ensureValidToken() async {
+        guard let session, !isRefreshing else { return }
+
+        // Check if token is expired or about to expire (within 60s)
+        if let exp = session.expiresAt, Double(exp) > Date().timeIntervalSince1970 + 60 {
+            return // Still valid
+        }
+
+        print("[AuthManager] Token expired, refreshing...")
+        isRefreshing = true
+        defer { isRefreshing = false }
+
+        guard let url = URL(string: baseURL + "/auth/refresh") else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["refresh_token": session.refreshToken]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+            guard status == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let sessionObj = json["session"] as? [String: Any],
+                  let newAccess = sessionObj["access_token"] as? String,
+                  let newRefresh = sessionObj["refresh_token"] as? String else {
+                print("[AuthManager] Refresh failed (status=\(status)), logging out")
+                await MainActor.run { self.logout() }
+                return
+            }
+
+            let updated = AuthSession(
+                accessToken: newAccess,
+                refreshToken: newRefresh,
+                expiresAt: sessionObj["expires_at"] as? Int,
+                userId: session.userId,
+                email: session.email,
+                fullName: session.fullName
+            )
+
+            await MainActor.run {
+                self.session = updated
+                self.isAuthenticated = true
+            }
+            saveSession(updated)
+            print("[AuthManager] Token refreshed successfully")
+        } catch {
+            print("[AuthManager] Refresh error: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Persistence
 
     private func saveSession(_ session: AuthSession) {
@@ -146,6 +204,9 @@ class AuthManager: ObservableObject {
         }
         self.session = session
         self.isAuthenticated = true
+
+        // Refresh token on startup if needed
+        Task { await ensureValidToken() }
     }
 
     // MARK: - HTTP

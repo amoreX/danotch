@@ -248,12 +248,26 @@ class NotchViewModel: ObservableObject {
     @Published var isLoadingHistory = false
 
     func loadThreadHistory() {
-        guard let token = authManager?.accessToken else {
-            print("[Danotch] loadThreadHistory: no auth token")
+        guard let auth = authManager else {
+            print("[Danotch] loadThreadHistory: no auth manager")
             return
         }
         isLoadingHistory = true
         print("[Danotch] loadThreadHistory: fetching...")
+
+        // Refresh token if needed, then fetch
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else {
+                await MainActor.run { self.isLoadingHistory = false }
+                print("[Danotch] loadThreadHistory: no token after refresh")
+                return
+            }
+            await self.fetchThreadHistory(token: token)
+        }
+    }
+
+    private func fetchThreadHistory(token: String) async {
 
         var request = URLRequest(url: URL(string: "http://localhost:3001/api/threads")!)
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -659,22 +673,25 @@ class NotchViewModel: ObservableObject {
             }
         }
 
-        // POST to backend
-        guard let url = URL(string: "http://localhost:3001/api/chat") else { return }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = authManager?.accessToken {
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        var body: [String: Any] = ["message": message, "session_id": sid]
-        // Include thread_id for follow-ups if we have one stored
-        if let threadId = tasks.first(where: { $0.id == sid })?.threadId {
-            body["thread_id"] = threadId
-        }
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        // POST to backend (refresh token first if needed)
+        let auth = authManager
+        let threadIdForRequest = tasks.first(where: { $0.id == sid })?.threadId
+        Task {
+            await auth?.ensureValidToken()
+            guard let url = URL(string: "http://localhost:3001/api/chat") else { return }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            if let token = auth?.accessToken {
+                request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            var body: [String: Any] = ["message": message, "session_id": sid]
+            if let threadId = threadIdForRequest {
+                body["thread_id"] = threadId
+            }
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
             DispatchQueue.main.async {
                 guard let self = self,
                       let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
@@ -694,5 +711,6 @@ class NotchViewModel: ObservableObject {
             }
             // Success is handled by WebSocket events updating the task
         }.resume()
+        } // Task
     }
 }
