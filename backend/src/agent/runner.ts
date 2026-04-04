@@ -153,7 +153,7 @@ export async function runChat(
     const stream = await anthropic.messages.stream({
       model: config.api.model,
       max_tokens: config.api.maxTokens,
-      system: config.agent.systemPrompt,
+      system: config.api.systemPrompt,
       messages,
     });
 

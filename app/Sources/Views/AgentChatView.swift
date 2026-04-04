@@ -122,13 +122,11 @@ struct AgentChatView: View {
     private let bottomAnchorId = "bottom-anchor"
 
     private func chatBody(_ task: SubagentTask) -> some View {
-        let lastAgentMsgId = task.chatHistory.last(where: { $0.role == "agent" })?.id
-
         return ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: DN.spaceXS) {
                     ForEach(task.chatHistory) { msg in
-                        chatBubble(msg, isFinalResponse: msg.id == lastAgentMsgId)
+                        chatBubble(msg)
                     }
 
                     // Streaming text
@@ -189,7 +187,7 @@ struct AgentChatView: View {
     }
 
     @ViewBuilder
-    private func chatBubble(_ msg: ChatMessage, isFinalResponse: Bool) -> some View {
+    private func chatBubble(_ msg: ChatMessage) -> some View {
         switch msg.role {
         case "user":
             HStack {
@@ -209,7 +207,7 @@ struct AgentChatView: View {
             .padding(.vertical, DN.space2xs)
 
         case "agent":
-            MarkdownView(text: msg.content, isFinal: isFinalResponse)
+            MarkdownView(text: msg.content, isFinal: true)
                 .padding(.vertical, DN.spaceXS)
 
         case "tool":

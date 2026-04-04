@@ -180,8 +180,8 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 2. `sendChat(message:)` in ViewModel creates optimistic `SubagentTask` with `session_id`
 3. POSTs to backend `http://localhost:3001/api/chat` with `{ message, session_id }`
 4. Backend streams response via WebSocket → existing `processEvent` pipeline updates the task
-5. View switches to AGENTS tab, task appears in `tasksSection`
-6. Clicking a task opens `AgentChatView` with full conversation
+5. View navigates directly to `AgentChatView` for that task (`.agentChat(sid)`)
+6. All agent chat bubbles render as final (bold markdown) — no dimmed intermediate distinction
 
 **Tasks section** appears below Claude Code agent groups in both HOME and AGENTS tabs, styled as a grouped card matching `AgentGroupView`.
 
@@ -232,7 +232,8 @@ TypeScript ESM service (`"type": "module"`). Run with `npm run dev` (tsx watch).
 ```
 backend/src/
 ├── index.ts          — Express on :3001, connects NotchBridge
-├── config.ts         — All config: port, model, max turns, system prompt (env-overridable)
+├── config.ts         — All config: port, model, max turns, permission mode (env-overridable)
+├── prompts.ts        — System prompts: CHAT_SYSTEM_PROMPT (plain text/markdown only) + AGENT_SYSTEM_PROMPT (tool-aware)
 ├── types.ts          — Task, ChatMessage, WebSocket event types
 ├── agent/
 │   └── runner.ts     — Two modes: runChat() (Anthropic API) + runAgent() (Claude Agent SDK)
@@ -256,9 +257,9 @@ backend/src/
 
 Two execution modes in `runner.ts`:
 
-- **`runChat(message, notch, sessionId?)`** — Direct Anthropic API call with streaming. No tools. Good for quick Q&A. Streams tokens to notch via WebSocket progress events.
+- **`runChat(message, notch, sessionId?)`** — Direct Anthropic API call with streaming. No tools. Good for quick Q&A. Uses `CHAT_SYSTEM_PROMPT` (enforces plain text/markdown responses, no XML/HTML). Streams tokens to notch via WebSocket progress events.
 
-- **`runAgent(message, notch, { sessionId?, cwd? })`** — Uses `@anthropic-ai/claude-agent-sdk` `query()` function. Full Claude Code capabilities (Bash, Read, Write, Edit, Grep, Glob). Iterates the async generator for `SDKMessage` events (assistant messages, tool use, stream events, results). Streams all progress to notch.
+- **`runAgent(message, notch, { sessionId?, cwd? })`** — Uses `@anthropic-ai/claude-agent-sdk` `query()` function. Full Claude Code capabilities (Bash, Read, Write, Edit, Grep, Glob). Uses `AGENT_SYSTEM_PROMPT`. Iterates the async generator for `SDKMessage` events (assistant messages, tool use, stream events, results). Streams all progress to notch.
 
 Both modes store tasks in-memory (`Map<string, Task>`) and push status/progress/done events through `NotchBridge` to the app's existing WebSocket protocol.
 

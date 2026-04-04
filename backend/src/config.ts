@@ -1,3 +1,5 @@
+import { CHAT_SYSTEM_PROMPT, AGENT_SYSTEM_PROMPT } from './prompts.js';
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   notchWsUrl: process.env.NOTCH_WS_URL || 'ws://localhost:7778/ws',
@@ -6,8 +8,7 @@ export const config = {
   agent: {
     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514',
     maxTurns: parseInt(process.env.MAX_TURNS || '10', 10),
-    systemPrompt: `You are a helpful assistant running inside Danotch, a macOS notch overlay app.
-Keep responses concise and actionable. You have access to Claude Code tools (Bash, Read, Write, Edit, Grep, Glob, etc.) to help users with their tasks.`,
+    systemPrompt: AGENT_SYSTEM_PROMPT,
     permissionMode: 'acceptEdits' as const,
   },
 
@@ -15,5 +16,6 @@ Keep responses concise and actionable. You have access to Claude Code tools (Bas
   api: {
     model: process.env.CLAUDE_API_MODEL || 'claude-sonnet-4-20250514',
     maxTokens: parseInt(process.env.MAX_TOKENS || '4096', 10),
+    systemPrompt: CHAT_SYSTEM_PROMPT,
   },
 } as const;

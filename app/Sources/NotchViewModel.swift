@@ -3,15 +3,39 @@ import SwiftUI
 import Combine
 
 class NotchSettings: ObservableObject {
-    @Published var tapAgentNavigates: Bool = true
-    @Published var showCalendar: Bool = true
-    @Published var largeCalendar: Bool = false
-    @Published var showMusic: Bool = true
-    @Published var showBattery: Bool = true
-    @Published var expandOnHover: Bool = true
-    @Published var showAgentLiveState: Bool = true
-    @Published var showDotGrid: Bool = true
-    @Published var compactAgentRows: Bool = false
+    private static let prefix = "danotch."
+
+    @Published var tapAgentNavigates: Bool  { didSet { Self.save("tapAgentNavigates", tapAgentNavigates) } }
+    @Published var showCalendar: Bool       { didSet { Self.save("showCalendar", showCalendar) } }
+    @Published var largeCalendar: Bool      { didSet { Self.save("largeCalendar", largeCalendar) } }
+    @Published var showMusic: Bool          { didSet { Self.save("showMusic", showMusic) } }
+    @Published var showBattery: Bool        { didSet { Self.save("showBattery", showBattery) } }
+    @Published var expandOnHover: Bool      { didSet { Self.save("expandOnHover", expandOnHover) } }
+    @Published var showAgentLiveState: Bool { didSet { Self.save("showAgentLiveState", showAgentLiveState) } }
+    @Published var showDotGrid: Bool        { didSet { Self.save("showDotGrid", showDotGrid) } }
+    @Published var compactAgentRows: Bool   { didSet { Self.save("compactAgentRows", compactAgentRows) } }
+
+    init() {
+        tapAgentNavigates  = Self.load("tapAgentNavigates", default: true)
+        showCalendar       = Self.load("showCalendar", default: true)
+        largeCalendar      = Self.load("largeCalendar", default: false)
+        showMusic          = Self.load("showMusic", default: true)
+        showBattery        = Self.load("showBattery", default: true)
+        expandOnHover      = Self.load("expandOnHover", default: true)
+        showAgentLiveState = Self.load("showAgentLiveState", default: true)
+        showDotGrid        = Self.load("showDotGrid", default: true)
+        compactAgentRows   = Self.load("compactAgentRows", default: false)
+    }
+
+    private static func save(_ key: String, _ value: Bool) {
+        UserDefaults.standard.set(value, forKey: prefix + key)
+    }
+
+    private static func load(_ key: String, default defaultValue: Bool) -> Bool {
+        let fullKey = prefix + key
+        if UserDefaults.standard.object(forKey: fullKey) == nil { return defaultValue }
+        return UserDefaults.standard.bool(forKey: fullKey)
+    }
 }
 
 class NotchViewModel: ObservableObject {
@@ -288,7 +312,7 @@ class NotchViewModel: ObservableObject {
             )
             withAnimation(.snappy(duration: 0.3)) {
                 tasks.insert(task, at: 0)
-                viewState = .taskList
+                viewState = .agentChat(sid)
             }
         }
 

@@ -150,14 +150,18 @@ struct NotchShellView: View {
                     }
                 }
 
-                tabButton(
-                    label: "SET",
-                    isActive: viewModel.viewState == .settings
-                ) {
+                Button(action: {
                     withAnimation(DN.transition) {
                         viewModel.viewState = .settings
                     }
+                }) {
+                    Image(systemName: viewModel.viewState == .settings ? "gearshape.fill" : "gearshape")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(viewModel.viewState == .settings ? DN.textDisplay : DN.textDisabled)
+                        .padding(DN.spaceXS)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
 
                 BatteryView()
             }
@@ -172,6 +176,9 @@ struct NotchShellView: View {
                 .font(DN.label(10))
                 .tracking(1.2)
                 .foregroundColor(isActive ? DN.textDisplay : DN.textDisabled)
+                .padding(.horizontal, DN.spaceXS)
+                .padding(.vertical, DN.spaceXS)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

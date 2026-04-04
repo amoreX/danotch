@@ -357,8 +357,8 @@ struct IconActionButton: View {
                 }
             }
             .foregroundColor(isHovering ? DN.textPrimary : DN.textDisabled)
-            .padding(.horizontal, isHovering ? DN.spaceSM : 5)
-            .padding(.vertical, 3)
+            .padding(.horizontal, isHovering ? DN.spaceSM : DN.spaceSM)
+            .padding(.vertical, DN.spaceXS + 1)
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
                     .stroke(isHovering ? DN.borderVisible : DN.border, lineWidth: 1)
@@ -528,7 +528,8 @@ struct AgentSessionRow: View {
                 }
             }
             .padding(.horizontal, DN.spaceSM)
-            .padding(.vertical, DN.spaceXS + 1)
+            .padding(.vertical, DN.spaceXS + 2)
+            .contentShape(Rectangle())
             .background(isHovering ? DN.surface : .clear)
             .animation(.easeOut(duration: DN.microDuration), value: isHovering)
         }
@@ -623,7 +624,8 @@ struct AgentRow: View {
                 }
             }
             .padding(.horizontal, DN.spaceSM)
-            .padding(.vertical, isCompact ? 5 : 7)
+            .padding(.vertical, isCompact ? 6 : 8)
+            .contentShape(Rectangle())
             .background(isHovering ? DN.surface : (isCompact ? .clear : DN.surface.opacity(0.6)))
             .clipShape(RoundedRectangle(cornerRadius: 4))
             .overlay(
