@@ -76,7 +76,7 @@ let data = pipe.fileHandleForReading.readDataToEndOfFile()
 - `.processList` → sortable process table (by CPU/MEM/name) with app icons, expandable rows, force-quit capability
 - `.settings` → app configuration
 
-Top bar has four tabs: `[ HOME ]  AGENTS  |  STATS  SET` plus battery indicator.
+Top bar has four tabs: `[ HOME ]  AGENTS  |  STATS  ⚙` plus battery indicator. Settings tab uses a gear icon (`gearshape` / `gearshape.fill`) instead of text label.
 
 ### View Hierarchy
 
