@@ -207,7 +207,7 @@ class NotchWindowController: NSObject {
         if inTrigger || inContent {
             collapseTimer?.invalidate()
             collapseTimer = nil
-            if !viewModel.isExpanded && viewModel.settings.expandOnHover {
+            if !viewModel.isExpanded {
                 expand()
             }
         } else if viewModel.isExpanded {
@@ -222,6 +222,7 @@ class NotchWindowController: NSObject {
 
     private func expand() {
         panel.ignoresMouseEvents = false
+        viewModel.restoreOrResetView()
         withAnimation(.snappy(duration: 0.35)) {
             viewModel.isExpanded = true
         }

@@ -42,9 +42,9 @@ No unit tests in either package.
 
 ### Key Components
 
-- **NotchWindowController** (`NotchWindow.swift`): Custom `DanotchPanel` (NSPanel subclass, `canBecomeKey: true`) positioned over the physical notch at `level = .mainMenu + 3`. Three event monitors handle hover-to-expand (with 400ms collapse delay), swipe-back gesture (60px scroll threshold), and mouse tracking. Global keyboard shortcut (⌘+Shift+Space) drops down the notch and focuses the chat input. Escape collapses. Panel won't auto-collapse while chat input is focused (`isChatInputActive`). Detects notch dimensions via `NSScreen` safe area insets with fallbacks for non-notch Macs. Panel width: 520px (overview) / 540px (task/chat/stats). Window frame: 580x400.
+- **NotchWindowController** (`NotchWindow.swift`): Custom `DanotchPanel` (NSPanel subclass, `canBecomeKey: true`) positioned over the physical notch at `level = .mainMenu + 3`. Three event monitors handle hover-to-expand (with 400ms collapse delay), swipe-back gesture (60px scroll threshold), and mouse tracking. Global keyboard shortcut (⌘+Shift+Space) drops down the notch and focuses the chat input. Escape collapses. Panel won't auto-collapse while chat input is focused (`isChatInputActive`). On expand, calls `restoreOrResetView()` (respects `restoreLastView` setting). Detects notch dimensions via `NSScreen` safe area insets with fallbacks for non-notch Macs. Panel width: 520px (overview) / 540px (task/chat/stats). Window frame: 580x400.
 
-- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor` and `NotchSettings`, forwarding both via Combine. Runs clock timer (1s) and shimmer cycle timer (2s) for activity text rotation. All state mutations wrapped in `withAnimation`. Has `sendChat(message:)` that POSTs to backend `/api/chat` and optimistically creates a task. Tracks `shouldFocusChatInput`, `isChatInputActive`, and `collapsedGroups` for UI state persistence.
+- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor` and `NotchSettings`, forwarding both via Combine. Runs clock timer (1s) and shimmer cycle timer (2s) for activity text rotation. All state mutations wrapped in `withAnimation`. Has `sendChat(message:)` that POSTs to backend `/api/chat` and optimistically creates a task (navigates to chat if `openChatOnSend`). Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
 
 - **AgentMonitor** (`AgentMonitor.swift`): Standalone `ObservableObject` that scans for AI agent processes every 3s. Currently only displays Claude Code sessions (filtered because Cursor/Codex/Windsurf don't expose prompt data). Enriches each session with project name (from `~/.claude/sessions/{pid}.json` cwd), last user prompt (from conversation JSONL in `~/.claude/projects/`), and working directory (via `lsof`). Can activate the terminal app for a session via `NSWorkspace`. Provides `groupedAgents` computed property for grouped display.
 
@@ -82,24 +82,28 @@ Top bar has four tabs: `[ HOME ]  AGENTS  |  STATS  ⚙` plus battery indicator.
 
 ```
 NotchShellView (root: notch shape, top bar tabs, dot grid background)
-├── DotGridView (animated dot matrix, mouse-interactive via global NSEvent tracking)
-├── expandedTopBar (HOME / AGENTS / STATS / SET tabs + BatteryView)
+├── DotGridView (animated dot matrix, configurable color + opacity via settings)
+├── expandedTopBar (HOME / AGENTS / STATS / ⚙ tabs + BatteryView if enabled)
 └── expandedContent (routes by viewState)
     ├── NotchContentView (overview + taskList + agentChat routing)
-    │   ├── leftColumn (time display, date, MiniCalendarView)
+    │   ├── leftColumn (time, date, MiniCalendarView per calendarMode, NowPlayingView per showMusic)
     │   ├── dividerBar
     │   └── mainColumn → overviewRightColumn | agentsColumn | AgentChatView
-    │       ├── AgentGroupView (collapsible group: header with type icon/count/chevron toggle, contains AgentSessionRows)
-    │       ├── AgentSessionRow (project name, live state indicator, last prompt, elapsed, CPU/MEM on hover)
+    │       ├── AgentGroupView (collapsible, passes showLiveState + compactRows from settings)
+    │       ├── AgentSessionRow (project name, live state if enabled, last prompt, elapsed, CPU/MEM on hover)
     │       ├── LiveStateView (pulsing dot + icon + label + detail for active tool/thinking/responding states)
+    │       ├── NowPlayingView (Apple Music/Spotify polling, positioned by calendarMode)
     │       ├── chatInputBar (TextField + submit button, sends to backend POST /api/chat)
     │       ├── tasksSection (grouped user tasks from chat, clickable → AgentChatView)
     │       └── AgentRow (WebSocket task rows with status dot, activity text)
     ├── StatsPanel (bento grid: ArcGaugeCell, SparklineGraph, network rows, disk ring)
     ├── ProcessListPanel (sorted process table with ProcessIconView, kill actions)
-    └── SettingsPanel (scrollable toggle sections: Behavior, Display, Agents)
+    └── SettingsPanel (scrollable sections: Chat, Display, Agents)
         ├── SettingsSection (titled group with DN styling)
-        └── SettingsToggleRow (icon + title + subtitle + custom capsule toggle)
+        ├── SettingsToggleRow (icon + title + subtitle + capsule toggle)
+        ├── SettingsPickerRow (segmented picker for enum options)
+        ├── SettingsSliderRow (slider with percentage label)
+        └── SettingsColorRow (color dot presets)
 ```
 
 ### Settings
@@ -194,6 +198,48 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 - **AgentStatus**: running (warning color), idle (disabled color)
 - **SubagentTask**: id, task, description, status, toolCallsCount, streamingText, chatHistory — used for WebSocket-driven tasks from the backend
 - **TaskStatus**: pending, running, completed, failed, cancelled, awaitingApproval
+
+### Settings (`NotchSettings`)
+
+Persisted via JSON file at `~/.danotch/settings.json`. All settings survive app restarts. Each `@Published` property calls `save()` on `didSet`. JSON written with `prettyPrinted` + `sortedKeys`.
+
+**Chat:**
+- `openChatOnSend` (default: true) — sending a message navigates to `.agentChat(sid)` instantly vs staying on current page
+- `restoreLastView` (default: false) — re-hover restores `lastViewBeforeCollapse` vs always opening home
+
+**Display:**
+- `calendarMode` (default: large) — `CalendarMode` enum: `off` / `mini` (one-line strip) / `large` (full grid). Left column layout: time/date → calendar → music, stacked vertically
+- `showMusic` (default: true) — `NowPlayingView` in left column below calendar
+- `musicSize` (default: mini) — `MusicSize` enum: `mini` (30px art, compact) / `big` (56px art, 2-line title, separate controls row). Big only activates when calendar is mini or off
+- `showBattery` (default: true) — battery indicator in top bar
+- `showDotGrid` (default: true) — animated dot matrix background
+- `dotGridColor` (default: "#FFFFFF") — dot grid color, 8 presets (white, orange, cyan, red, green, yellow, purple, teal). `dotGridSwiftColor` computed property converts hex to `Color`. Also used as accent for music player controls and progress bar
+- `dotGridOpacity` (default: 0.6) — dot grid brightness (0.1–1.0)
+
+**Agents:**
+- `showAgentLiveState` (default: true) — real-time tool activity indicators. Passed through `AgentGroupView` → `AgentSessionRow`
+- `compactAgentRows` (default: false) — smaller rows in agent list. Applied to both agent groups and tasks section
+
+**UI state (also persisted):**
+- `collapsedGroups` — Set of collapsed agent group IDs
+
+Settings UI components: `SettingsToggleRow` (capsule toggle), `SettingsPickerRow` (segmented picker for enums), `SettingsSliderRow` (slider with percentage), `SettingsColorRow` (color dot presets).
+
+### Now Playing (`NowPlayingView` + `NowPlayingMonitor`)
+
+`NowPlayingMonitor` is an `ObservableObject` owned by the ViewModel (lives for the app's lifetime). Polls Apple Music and Spotify every 2s via `osascript` on a background thread. Fetches: track name, artist, play/pause state, playback position, duration, and album artwork.
+
+**Artwork:** Exported via osascript `raw data of artwork 1 of current track` to `/tmp/danotch_art.png`. Only re-fetched when track changes (keyed by track name). Displayed as `NSImage` in the view.
+
+**Music detection:** Checks `if application "Music" is running` before talking to it (prevents launching the app). Falls back to Spotify.
+
+**Two display modes** controlled by `musicSize` setting:
+- **Mini:** 30px album art, track + artist inline, controls appear on hover (opacity toggle, no layout shift)
+- **Big:** 56px album art, larger text (2-line track name), progress bar, centered playback controls below (opacity toggle on hover, space always reserved)
+
+**Playback controls:** Previous, play/pause, next — send commands via `osascript` (`tell application "Music" to playpause` etc.). Control color uses the user's `dotGridColor` accent. Progress bar fill also uses accent color.
+
+**Layout:** Always positioned below calendar in the left column. No background — floats with the rest of the content.
 
 ### Design System
 

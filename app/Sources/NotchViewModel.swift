@@ -2,39 +2,121 @@ import Foundation
 import SwiftUI
 import Combine
 
-class NotchSettings: ObservableObject {
-    private static let prefix = "danotch."
+enum MusicSize: String, CaseIterable {
+    case mini = "mini"
+    case big = "big"
 
-    @Published var tapAgentNavigates: Bool  { didSet { Self.save("tapAgentNavigates", tapAgentNavigates) } }
-    @Published var showCalendar: Bool       { didSet { Self.save("showCalendar", showCalendar) } }
-    @Published var largeCalendar: Bool      { didSet { Self.save("largeCalendar", largeCalendar) } }
-    @Published var showMusic: Bool          { didSet { Self.save("showMusic", showMusic) } }
-    @Published var showBattery: Bool        { didSet { Self.save("showBattery", showBattery) } }
-    @Published var expandOnHover: Bool      { didSet { Self.save("expandOnHover", expandOnHover) } }
-    @Published var showAgentLiveState: Bool { didSet { Self.save("showAgentLiveState", showAgentLiveState) } }
-    @Published var showDotGrid: Bool        { didSet { Self.save("showDotGrid", showDotGrid) } }
-    @Published var compactAgentRows: Bool   { didSet { Self.save("compactAgentRows", compactAgentRows) } }
+    var label: String {
+        switch self {
+        case .mini: return "MINI"
+        case .big: return "BIG"
+        }
+    }
+}
+
+enum CalendarMode: String, CaseIterable {
+    case off = "off"
+    case mini = "mini"    // one-line horizontal strip
+    case large = "large"  // full grid
+
+    var label: String {
+        switch self {
+        case .off: return "OFF"
+        case .mini: return "MINI"
+        case .large: return "LARGE"
+        }
+    }
+}
+
+class NotchSettings: ObservableObject {
+    private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
+    private static let configFile = configDir.appendingPathComponent("settings.json")
+
+    // Chat behavior
+    @Published var openChatOnSend: Bool        { didSet { save() } }
+    @Published var restoreLastView: Bool       { didSet { save() } }
+
+    // Display
+    @Published var calendarMode: CalendarMode  { didSet { save() } }
+    @Published var showMusic: Bool             { didSet { save() } }
+    @Published var musicSize: MusicSize       { didSet { save() } }
+    @Published var showBattery: Bool           { didSet { save() } }
+    @Published var showDotGrid: Bool           { didSet { save() } }
+
+    // Agents
+    @Published var showAgentLiveState: Bool    { didSet { save() } }
+    @Published var compactAgentRows: Bool      { didSet { save() } }
+
+    // Dot grid
+    @Published var dotGridColor: String        { didSet { save() } }
+    @Published var dotGridOpacity: Double      { didSet { save() } }
+
+    var dotGridSwiftColor: Color {
+        Color(hex: UInt32(dotGridColor.dropFirst(), radix: 16) ?? 0xFFFFFF)
+    }
+
+    // UI state (persisted across restarts)
+    @Published var collapsedGroups: Set<String> { didSet { save() } }
 
     init() {
-        tapAgentNavigates  = Self.load("tapAgentNavigates", default: true)
-        showCalendar       = Self.load("showCalendar", default: true)
-        largeCalendar      = Self.load("largeCalendar", default: false)
-        showMusic          = Self.load("showMusic", default: true)
-        showBattery        = Self.load("showBattery", default: true)
-        expandOnHover      = Self.load("expandOnHover", default: true)
-        showAgentLiveState = Self.load("showAgentLiveState", default: true)
-        showDotGrid        = Self.load("showDotGrid", default: true)
-        compactAgentRows   = Self.load("compactAgentRows", default: false)
+        // Set defaults first
+        openChatOnSend = true
+        restoreLastView = false
+        calendarMode = .large
+        showMusic = true
+        musicSize = .mini
+        showBattery = true
+        showDotGrid = true
+        showAgentLiveState = true
+        compactAgentRows = false
+        dotGridColor = "#FFFFFF"
+        dotGridOpacity = 0.6
+        collapsedGroups = []
+
+        // Then load from file
+        load()
     }
 
-    private static func save(_ key: String, _ value: Bool) {
-        UserDefaults.standard.set(value, forKey: prefix + key)
+    private func save() {
+        let data: [String: Any] = [
+            "openChatOnSend": openChatOnSend,
+            "restoreLastView": restoreLastView,
+            "calendarMode": calendarMode.rawValue,
+            "showMusic": showMusic,
+            "musicSize": musicSize.rawValue,
+            "showBattery": showBattery,
+            "showDotGrid": showDotGrid,
+            "showAgentLiveState": showAgentLiveState,
+            "compactAgentRows": compactAgentRows,
+            "dotGridColor": dotGridColor,
+            "dotGridOpacity": dotGridOpacity,
+            "collapsedGroups": Array(collapsedGroups),
+        ]
+        do {
+            try FileManager.default.createDirectory(at: Self.configDir, withIntermediateDirectories: true)
+            let json = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
+            try json.write(to: Self.configFile)
+        } catch {
+            // Silent fail
+        }
     }
 
-    private static func load(_ key: String, default defaultValue: Bool) -> Bool {
-        let fullKey = prefix + key
-        if UserDefaults.standard.object(forKey: fullKey) == nil { return defaultValue }
-        return UserDefaults.standard.bool(forKey: fullKey)
+    private func load() {
+        guard let data = try? Data(contentsOf: Self.configFile),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+
+        if let v = json["openChatOnSend"] as? Bool { openChatOnSend = v }
+        if let v = json["restoreLastView"] as? Bool { restoreLastView = v }
+        if let v = json["calendarMode"] as? String { calendarMode = CalendarMode(rawValue: v) ?? .large }
+        if let v = json["showMusic"] as? Bool { showMusic = v }
+        if let v = json["musicSize"] as? String { musicSize = MusicSize(rawValue: v) ?? .mini }
+        if let v = json["showBattery"] as? Bool { showBattery = v }
+        if let v = json["showDotGrid"] as? Bool { showDotGrid = v }
+        if let v = json["showAgentLiveState"] as? Bool { showAgentLiveState = v }
+        if let v = json["compactAgentRows"] as? Bool { compactAgentRows = v }
+        if let v = json["dotGridColor"] as? String { dotGridColor = v }
+        if let v = json["dotGridOpacity"] as? Double { dotGridOpacity = v }
+        if let v = json["collapsedGroups"] as? [String] { collapsedGroups = Set(v) }
     }
 }
 
@@ -46,15 +128,17 @@ class NotchViewModel: ObservableObject {
     @Published var shimmerStep: Int = 0
     @Published var shouldFocusChatInput = false
     @Published var isChatInputActive = false
-    @Published var collapsedGroups: Set<String> = [] // agent group IDs that are collapsed
     var mouseInContent = false
+    var lastViewBeforeCollapse: NotchViewState = .overview
 
     @Published var settings = NotchSettings()
     @Published var agentMonitor = AgentMonitor()
+    @Published var nowPlaying = NowPlayingMonitor()
     private var clockTimer: Timer?
     private var shimmerTimer: Timer?
     private var agentMonitorCancellable: AnyCancellable?
     private var settingsCancellable: AnyCancellable?
+    private var cancellables: Set<AnyCancellable> = []
 
     var delegatedCount: Int { tasks.filter { $0.status == .running || $0.status == .pending }.count }
     var approvalCount: Int { tasks.filter { $0.status == .awaitingApproval }.count }
@@ -102,6 +186,9 @@ class NotchViewModel: ObservableObject {
         agentMonitorCancellable = agentMonitor.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        nowPlaying.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -135,9 +222,19 @@ class NotchViewModel: ObservableObject {
     }
 
     func resetView() {
+        lastViewBeforeCollapse = viewState
         withAnimation(.snappy(duration: 0.25)) {
             viewState = .overview
         }
+    }
+
+    func restoreOrResetView() {
+        if settings.restoreLastView {
+            withAnimation(.snappy(duration: 0.25)) {
+                viewState = lastViewBeforeCollapse
+            }
+        }
+        // else stays at .overview (default on expand)
     }
 
     var isInTaskOrChat: Bool {
@@ -311,7 +408,10 @@ class NotchViewModel: ObservableObject {
             )
             withAnimation(.snappy(duration: 0.3)) {
                 tasks.insert(task, at: 0)
-                viewState = .agentChat(sid)
+                if settings.openChatOnSend {
+                    viewState = .agentChat(sid)
+                }
+                // else: stay on current page, task appears in background
             }
         }
 

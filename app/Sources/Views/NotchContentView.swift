@@ -35,6 +35,7 @@ struct NotchContentView: View {
 
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: DN.spaceXS) {
+            // Time + date
             HStack(alignment: .firstTextBaseline, spacing: DN.space2xs) {
                 Text(viewModel.timeString)
                     .font(DN.display(32))
@@ -52,10 +53,22 @@ struct NotchContentView: View {
                 .tracking(1.2)
                 .foregroundColor(DN.textSecondary)
 
-            if viewModel.settings.showCalendar {
-                Spacer().frame(height: DN.spaceXS)
+            Spacer().frame(height: DN.space2xs)
 
-                MiniCalendarView(compact: !viewModel.settings.largeCalendar)
+            // Calendar
+            switch viewModel.settings.calendarMode {
+            case .large: MiniCalendarView(compact: false)
+            case .mini: MiniCalendarView(compact: true)
+            case .off: EmptyView()
+            }
+
+            // Now playing — always below calendar
+            if viewModel.settings.showMusic {
+                NowPlayingView(
+                    monitor: viewModel.nowPlaying,
+                    isBig: viewModel.settings.musicSize == .big && viewModel.settings.calendarMode != .large,
+                    accentColor: viewModel.settings.dotGridSwiftColor
+                )
             }
         }
         .padding(.trailing, DN.spaceSM)
@@ -102,14 +115,14 @@ struct NotchContentView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: DN.spaceSM) {
                         ForEach(viewModel.agentMonitor.groupedAgents) { group in
-                            AgentGroupView(group: group, isCompact: true, showLiveState: viewModel.settings.showAgentLiveState, collapsedGroups: $viewModel.collapsedGroups) { agent in
+                            AgentGroupView(group: group, isCompact: viewModel.settings.compactAgentRows, collapsedGroups: $viewModel.settings.collapsedGroups, showLiveState: viewModel.settings.showAgentLiveState) { agent in
                                 viewModel.agentMonitor.activateAgent(agent)
                             }
                         }
 
                         // User tasks from chat
                         if !viewModel.tasks.isEmpty {
-                            tasksSection(compact: true)
+                            tasksSection(compact: viewModel.settings.compactAgentRows)
                         }
                     }
                 }
@@ -366,8 +379,8 @@ struct IconActionButton: View {
 struct AgentGroupView: View {
     let group: AgentGroup
     let isCompact: Bool
-    let showLiveState: Bool
     @Binding var collapsedGroups: Set<String>
+    var showLiveState: Bool = true
     let onTapAgent: (DetectedAgent) -> Void
 
     private var isGroupExpanded: Bool { !collapsedGroups.contains(group.id) }
@@ -432,7 +445,7 @@ struct AgentGroupView: View {
             if isGroupExpanded {
                 VStack(spacing: 1) {
                     ForEach(group.agents) { agent in
-                        AgentSessionRow(agent: agent, isCompact: isCompact, showLiveState: showLiveState) {
+                        AgentSessionRow(agent: agent, showLiveState: showLiveState, isCompact: isCompact) {
                             onTapAgent(agent)
                         }
                     }
@@ -453,8 +466,8 @@ struct AgentGroupView: View {
 
 struct AgentSessionRow: View {
     let agent: DetectedAgent
+    var showLiveState: Bool = true
     let isCompact: Bool
-    let showLiveState: Bool
     let onTap: () -> Void
 
     @State private var isHovering = false
@@ -672,6 +685,292 @@ struct ActivityText: View {
         case 2: return phase ? 0.3 : 1.0
         default: return base
         }
+    }
+}
+
+// MARK: - Now Playing
+
+class NowPlayingMonitor: ObservableObject {
+    @Published var track: String?
+    @Published var artist: String?
+    @Published var isPlaying = false
+    @Published var artworkImage: NSImage?
+    @Published var position: Double = 0
+    @Published var duration: Double = 0
+
+    private var timer: Timer?
+    private var lastTrack: String?
+    private static let artPath = "/tmp/danotch_art.png"
+
+    var progress: Double { duration > 0 ? position / duration : 0 }
+
+    func timeString(_ seconds: Double) -> String {
+        let m = Int(seconds) / 60
+        let s = Int(seconds) % 60
+        return String(format: "%d:%02d", m, s)
+    }
+
+    init() {
+        poll()
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.poll()
+        }
+    }
+
+    deinit { timer?.invalidate() }
+
+    func runCommand(_ cmd: String) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let script = """
+            try
+                if application "Music" is running then
+                    tell application "Music" to \(cmd)
+                end if
+            end try
+            """
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            proc.arguments = ["-e", script]
+            proc.standardOutput = FileHandle.nullDevice
+            proc.standardError = FileHandle.nullDevice
+            try? proc.run()
+            proc.waitUntilExit()
+            Thread.sleep(forTimeInterval: 0.3)
+            self?.poll()
+        }
+    }
+
+    func poll() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Self.fetch()
+            let trackChanged = result.track != self?.lastTrack
+            var artwork: NSImage? = self?.artworkImage
+
+            if trackChanged, result.track != nil {
+                Self.fetchArtwork()
+                artwork = NSImage(contentsOfFile: Self.artPath)
+            }
+            if result.track == nil { artwork = nil }
+
+            DispatchQueue.main.async {
+                self?.track = result.track
+                self?.artist = result.artist
+                self?.isPlaying = result.playing
+                self?.position = result.position
+                self?.duration = result.duration
+                self?.lastTrack = result.track
+                if trackChanged { self?.artworkImage = artwork }
+            }
+        }
+    }
+
+    private struct FetchResult {
+        let track: String?; let artist: String?; let playing: Bool
+        let position: Double; let duration: Double
+    }
+
+    private static func fetch() -> FetchResult {
+        let script = """
+        try
+            if application "Music" is running then
+                tell application "Music"
+                    if player state is playing or player state is paused then
+                        set t to name of current track
+                        set a to artist of current track
+                        set p to player position
+                        set d to duration of current track
+                        set s to "paused"
+                        if player state is playing then set s to "playing"
+                        return t & "|||" & a & "|||" & s & "|||" & (round p) & "|||" & (round d)
+                    end if
+                end tell
+            end if
+        end try
+        return ""
+        """
+        let pipe = Pipe()
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do { try proc.run() } catch { return FetchResult(track: nil, artist: nil, playing: false, position: 0, duration: 0) }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !out.isEmpty else { return FetchResult(track: nil, artist: nil, playing: false, position: 0, duration: 0) }
+        let p = out.components(separatedBy: "|||")
+        return FetchResult(
+            track: p.count > 0 ? p[0] : nil,
+            artist: p.count > 1 ? p[1] : nil,
+            playing: p.count > 2 && p[2] == "playing",
+            position: p.count > 3 ? Double(p[3]) ?? 0 : 0,
+            duration: p.count > 4 ? Double(p[4]) ?? 0 : 0
+        )
+    }
+
+    private static func fetchArtwork() {
+        let script = """
+        try
+            if application "Music" is running then
+                tell application "Music"
+                    set artData to raw data of artwork 1 of current track
+                    set f to open for access POSIX file "\(artPath)" with write permission
+                    set eof of f to 0
+                    write artData to f
+                    close access f
+                end tell
+            end if
+        end try
+        """
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        proc.arguments = ["-e", script]
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        try? proc.run()
+        proc.waitUntilExit()
+    }
+}
+
+struct NowPlayingView: View {
+    @ObservedObject var monitor: NowPlayingMonitor
+    var isBig: Bool = false
+    var accentColor: Color = DN.textPrimary
+    @State private var isHovering = false
+
+    private var artSize: CGFloat { isBig ? 52 : 30 }
+    private var titleSize: CGFloat { isBig ? 12 : 10 }
+    private var artistSize: CGFloat { isBig ? 9 : 8 }
+    private var controlSize: CGFloat { isBig ? 12 : 9 }
+
+    var body: some View {
+        if let track = monitor.track {
+            VStack(spacing: DN.spaceXS) {
+                if isBig {
+                    bigLayout(track: track)
+                } else {
+                    miniLayout(track: track)
+                }
+
+                // Progress bar + times
+                VStack(spacing: 2) {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.06)).frame(height: isBig ? 3 : 2)
+                            Capsule().fill(accentColor.opacity(0.6)).frame(width: max(geo.size.width * monitor.progress, 2), height: isBig ? 3 : 2)
+                        }
+                    }
+                    .frame(height: isBig ? 3 : 2)
+
+                    HStack {
+                        Text(monitor.timeString(monitor.position))
+                            .font(DN.mono(7))
+                            .foregroundColor(DN.textDisabled)
+                        Spacer()
+                        Text(monitor.timeString(monitor.duration))
+                            .font(DN.mono(7))
+                            .foregroundColor(DN.textDisabled)
+                    }
+                }
+
+                // Big: controls row, always reserved, opacity toggle
+                if isBig {
+                    HStack(spacing: DN.spaceLG) {
+                        mediaButton("backward.fill") { monitor.runCommand("previous track") }
+                        mediaButton(monitor.isPlaying ? "pause.fill" : "play.fill", size: 16) { monitor.runCommand("playpause") }
+                        mediaButton("forward.fill") { monitor.runCommand("next track") }
+                    }
+                    .padding(.top, DN.space2xs)
+                    .opacity(isHovering ? 1 : 0)
+                }
+            }
+            .padding(.top, DN.spaceXS)
+            .contentShape(Rectangle())
+            .onHover { isHovering = $0 }
+            .animation(.easeOut(duration: DN.microDuration), value: isHovering)
+        }
+    }
+
+    // Big: art on left, info on right, stacked
+    private func bigLayout(track: String) -> some View {
+        HStack(spacing: DN.spaceSM + 2) {
+            albumArt(size: 56, radius: 8)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track)
+                    .font(DN.body(13, weight: .semibold))
+                    .foregroundColor(DN.textDisplay)
+                    .lineLimit(2)
+
+                if let artist = monitor.artist {
+                    Text(artist)
+                        .font(DN.mono(9))
+                        .foregroundColor(DN.textSecondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    // Mini: compact single row
+    private func miniLayout(track: String) -> some View {
+        HStack(spacing: DN.spaceSM) {
+            albumArt(size: 30, radius: 5)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(track)
+                    .font(DN.body(10, weight: .medium))
+                    .foregroundColor(DN.textPrimary)
+                    .lineLimit(1)
+
+                if let artist = monitor.artist {
+                    Text(artist)
+                        .font(DN.mono(8))
+                        .foregroundColor(DN.textDisabled)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            // Inline controls on hover
+            HStack(spacing: DN.spaceSM) {
+                mediaButton("backward.fill") { monitor.runCommand("previous track") }
+                mediaButton(monitor.isPlaying ? "pause.fill" : "play.fill", size: 11) { monitor.runCommand("playpause") }
+                mediaButton("forward.fill") { monitor.runCommand("next track") }
+            }
+            .opacity(isHovering ? 1 : 0)
+        }
+    }
+
+    private func albumArt(size: CGFloat, radius: CGFloat) -> some View {
+        ZStack {
+            if let img = monitor.artworkImage {
+                Image(nsImage: img)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(DN.surface)
+                Image(systemName: "music.note")
+                    .font(.system(size: size * 0.35, weight: .light))
+                    .foregroundColor(DN.textDisabled)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+
+    private func mediaButton(_ icon: String, size: CGFloat? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size ?? controlSize, weight: .medium))
+                .foregroundColor(accentColor)
+        }
+        .buttonStyle(.plain)
     }
 }
 

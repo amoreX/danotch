@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 struct DotGridView: View {
+    var dotColor: Color = .white
     let spacing: CGFloat = 14
     let baseDotSize: CGFloat = 1.2
     let influenceRadius: CGFloat = 80
@@ -33,7 +34,7 @@ struct DotGridView: View {
                             let dist = sqrt(dx * dx + dy * dy)
 
                             // Ambient wave
-                            let wave = sin(time * 0.8 + Double(col) * 0.3 + Double(row) * 0.2) * 0.12 + 0.12
+                            let wave = sin(time * 0.8 + Double(col) * 0.3 + Double(row) * 0.2) * 0.18 + 0.18
 
                             // Mouse influence
                             var mouseInfluence: Double = 0
@@ -51,7 +52,7 @@ struct DotGridView: View {
                                 pushY = sin(angle) * pushDist
                             }
 
-                            let opacity = min(0.06 + wave + mouseInfluence * 0.55, 0.85)
+                            let opacity = min(0.15 + wave + mouseInfluence * 0.7, 1.0)
                             let dotSize = baseDotSize + CGFloat(mouseInfluence) * 2.5
 
                             let rect = CGRect(
@@ -63,7 +64,7 @@ struct DotGridView: View {
 
                             context.fill(
                                 Circle().path(in: rect),
-                                with: .color(.white.opacity(opacity))
+                                with: .color(dotColor.opacity(opacity))
                             )
                         }
                     }

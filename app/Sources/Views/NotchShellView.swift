@@ -44,9 +44,9 @@ struct NotchShellView: View {
             if expanded {
                 // Interactive dot grid behind content
                 if viewModel.settings.showDotGrid {
-                    DotGridView()
+                    DotGridView(dotColor: viewModel.settings.dotGridSwiftColor)
                         .padding(.top, notchH)
-                        .opacity(0.6)
+                        .opacity(viewModel.settings.dotGridOpacity)
                         .allowsHitTesting(false)
                 }
 
@@ -265,65 +265,90 @@ struct SettingsPanel: View {
 
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: 2) {
-                    SettingsSection(title: "BEHAVIOR") {
+                    SettingsSection(title: "CHAT") {
                         SettingsToggleRow(
-                            icon: "arrow.right.circle",
-                            title: "Navigate to agent on tap",
-                            subtitle: "Tapping an agent row opens its detail page",
-                            isOn: $viewModel.settings.tapAgentNavigates
+                            icon: "bubble.left.and.text.bubble.right",
+                            title: "Open chat on send",
+                            subtitle: "Sending a message opens the conversation instantly",
+                            isOn: $viewModel.settings.openChatOnSend
                         )
                         SettingsToggleRow(
-                            icon: "cursorarrow.motionlines",
-                            title: "Expand on hover",
-                            subtitle: "Automatically expand panel when hovering over notch",
-                            isOn: $viewModel.settings.expandOnHover
+                            icon: "arrow.counterclockwise",
+                            title: "Restore last view",
+                            subtitle: "Re-hover opens the last page instead of home",
+                            isOn: $viewModel.settings.restoreLastView
                         )
                     }
 
                     SettingsSection(title: "DISPLAY") {
-                        SettingsToggleRow(
+                        SettingsPickerRow(
                             icon: "calendar",
-                            title: "Show calendar",
-                            subtitle: "Display mini calendar in the overview",
-                            isOn: $viewModel.settings.showCalendar
-                        )
-                        SettingsToggleRow(
-                            icon: "arrow.up.left.and.arrow.down.right",
-                            title: "Large calendar",
-                            subtitle: "Use expanded calendar layout",
-                            isOn: $viewModel.settings.largeCalendar
+                            title: "Calendar",
+                            subtitle: "Calendar display in overview",
+                            options: CalendarMode.allCases.map { $0.label },
+                            selection: Binding(
+                                get: { CalendarMode.allCases.firstIndex(of: viewModel.settings.calendarMode) ?? 2 },
+                                set: { viewModel.settings.calendarMode = CalendarMode.allCases[$0] }
+                            )
                         )
                         SettingsToggleRow(
                             icon: "music.note",
-                            title: "Show now playing",
-                            subtitle: "Display current music track in overview",
+                            title: "Now playing",
+                            subtitle: "Show current music track in overview",
                             isOn: $viewModel.settings.showMusic
                         )
+                        if viewModel.settings.showMusic {
+                            SettingsPickerRow(
+                                icon: "rectangle.expand.vertical",
+                                title: "Player size",
+                                subtitle: "Music widget size when space allows",
+                                options: MusicSize.allCases.map { $0.label },
+                                selection: Binding(
+                                    get: { MusicSize.allCases.firstIndex(of: viewModel.settings.musicSize) ?? 0 },
+                                    set: { viewModel.settings.musicSize = MusicSize.allCases[$0] }
+                                )
+                            )
+                        }
                         SettingsToggleRow(
                             icon: "battery.75percent",
-                            title: "Show battery",
-                            subtitle: "Display battery indicator in the top bar",
+                            title: "Battery indicator",
+                            subtitle: "Show battery in the top bar",
                             isOn: $viewModel.settings.showBattery
                         )
                         SettingsToggleRow(
                             icon: "circle.grid.3x3",
-                            title: "Animated dot grid",
-                            subtitle: "Show animated dot matrix background",
+                            title: "Dot grid",
+                            subtitle: "Animated dot matrix background",
                             isOn: $viewModel.settings.showDotGrid
                         )
+                        if viewModel.settings.showDotGrid {
+                            SettingsColorRow(
+                                icon: "paintbrush",
+                                title: "Grid color",
+                                subtitle: "Dot grid color",
+                                selectedHex: $viewModel.settings.dotGridColor
+                            )
+                            SettingsSliderRow(
+                                icon: "circle.lefthalf.filled",
+                                title: "Grid opacity",
+                                subtitle: "Brightness of the dot grid",
+                                value: $viewModel.settings.dotGridOpacity,
+                                range: 0.1...1.0
+                            )
+                        }
                     }
 
                     SettingsSection(title: "AGENTS") {
                         SettingsToggleRow(
                             icon: "waveform",
-                            title: "Show live state",
-                            subtitle: "Display real-time tool activity for agents",
+                            title: "Live state",
+                            subtitle: "Real-time tool activity for agents",
                             isOn: $viewModel.settings.showAgentLiveState
                         )
                         SettingsToggleRow(
                             icon: "rectangle.compress.vertical",
-                            title: "Compact agent rows",
-                            subtitle: "Use smaller rows in the agent list",
+                            title: "Compact rows",
+                            subtitle: "Smaller rows in the agent list",
                             isOn: $viewModel.settings.compactAgentRows
                         )
                     }
@@ -393,6 +418,175 @@ struct SettingsToggleRow: View {
                 isOn.toggle()
             }
         }
+    }
+}
+
+struct SettingsPickerRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    let options: [String]
+    @Binding var selection: Int
+
+    var body: some View {
+        HStack(spacing: DN.spaceSM) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(DN.textPrimary)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(DN.body(11))
+                    .foregroundColor(DN.textPrimary)
+                Text(subtitle)
+                    .font(DN.mono(8))
+                    .foregroundColor(DN.textDisabled)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            HStack(spacing: 1) {
+                ForEach(0..<options.count, id: \.self) { i in
+                    Button(action: {
+                        withAnimation(.easeOut(duration: DN.microDuration)) {
+                            selection = i
+                        }
+                    }) {
+                        Text(options[i])
+                            .font(DN.label(7))
+                            .tracking(0.4)
+                            .foregroundColor(selection == i ? DN.textDisplay : DN.textDisabled)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(selection == i ? DN.borderVisible : .clear)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(2)
+            .background(DN.black)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(DN.border, lineWidth: 1)
+            )
+        }
+        .padding(.horizontal, DN.spaceSM)
+        .padding(.vertical, 6)
+        .background(DN.surface)
+    }
+}
+
+struct SettingsSliderRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    @Binding var value: Double
+    var range: ClosedRange<Double> = 0...1
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DN.spaceXS) {
+            HStack(spacing: DN.spaceSM) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DN.textPrimary)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(DN.body(11))
+                        .foregroundColor(DN.textPrimary)
+                    Text(subtitle)
+                        .font(DN.mono(8))
+                        .foregroundColor(DN.textDisabled)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Text("\(Int(value * 100))%")
+                    .font(DN.mono(9))
+                    .foregroundColor(DN.textSecondary)
+                    .frame(width: 32, alignment: .trailing)
+            }
+
+            Slider(value: $value, in: range)
+                .tint(DN.textSecondary)
+        }
+        .padding(.horizontal, DN.spaceSM)
+        .padding(.vertical, 6)
+        .background(DN.surface)
+    }
+}
+
+struct SettingsColorRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    @Binding var selectedHex: String
+
+    private let presets: [(String, String)] = [
+        ("#FFFFFF", "White"),
+        ("#D97757", "Orange"),
+        ("#00B4D8", "Cyan"),
+        ("#D71921", "Red"),
+        ("#4A9E5C", "Green"),
+        ("#D4A843", "Yellow"),
+        ("#A855F7", "Purple"),
+        ("#10A37F", "Teal"),
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DN.spaceXS) {
+            HStack(spacing: DN.spaceSM) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(DN.textPrimary)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(DN.body(11))
+                        .foregroundColor(DN.textPrimary)
+                    Text(subtitle)
+                        .font(DN.mono(8))
+                        .foregroundColor(DN.textDisabled)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+            }
+
+            HStack(spacing: 6) {
+                ForEach(presets, id: \.0) { hex, _ in
+                    Button(action: {
+                        withAnimation(.easeOut(duration: DN.microDuration)) {
+                            selectedHex = hex
+                        }
+                    }) {
+                        Circle()
+                            .fill(Color(hex: UInt32(hex.dropFirst(), radix: 16) ?? 0xFFFFFF))
+                            .frame(width: 18, height: 18)
+                            .overlay(
+                                Circle()
+                                    .stroke(selectedHex == hex ? DN.textDisplay : .clear, lineWidth: 2)
+                            )
+                            .overlay(
+                                Circle()
+                                    .stroke(DN.black, lineWidth: selectedHex == hex ? 1 : 0)
+                                    .padding(1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.horizontal, DN.spaceSM)
+        .padding(.vertical, 6)
+        .background(DN.surface)
     }
 }
 
