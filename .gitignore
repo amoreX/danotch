@@ -9,5 +9,11 @@ DerivedData/
 # Node
 backend/node_modules/
 
+# Other projects
+ghost-desktop-mono/
+
+# Env
+.env
+
 # OS
 .DS_Store

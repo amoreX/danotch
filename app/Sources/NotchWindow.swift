@@ -207,7 +207,7 @@ class NotchWindowController: NSObject {
         if inTrigger || inContent {
             collapseTimer?.invalidate()
             collapseTimer = nil
-            if !viewModel.isExpanded {
+            if !viewModel.isExpanded && viewModel.settings.expandOnHover {
                 expand()
             }
         } else if viewModel.isExpanded {

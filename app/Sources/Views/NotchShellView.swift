@@ -43,10 +43,12 @@ struct NotchShellView: View {
 
             if expanded {
                 // Interactive dot grid behind content
-                DotGridView()
-                    .padding(.top, notchH)
-                    .opacity(0.6)
-                    .allowsHitTesting(false)
+                if viewModel.settings.showDotGrid {
+                    DotGridView()
+                        .padding(.top, notchH)
+                        .opacity(0.6)
+                        .allowsHitTesting(false)
+                }
 
                 expandedTopBar
                     .transition(.opacity)
@@ -163,7 +165,9 @@ struct NotchShellView: View {
                 }
                 .buttonStyle(.plain)
 
-                BatteryView()
+                if viewModel.settings.showBattery {
+                    BatteryView()
+                }
             }
             .frame(maxWidth: .infinity, alignment: .center)
         }

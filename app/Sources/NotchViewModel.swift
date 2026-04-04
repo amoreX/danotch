@@ -41,7 +41,6 @@ class NotchSettings: ObservableObject {
 class NotchViewModel: ObservableObject {
     @Published var tasks: [SubagentTask] = []
     @Published var currentTime: Date = Date()
-    @Published var weather: WeatherInfo = WeatherInfo(temp: 72, condition: "Sunny", icon: "sun.max.fill")
     @Published var viewState: NotchViewState = .overview
     @Published var isExpanded = false
     @Published var shimmerStep: Int = 0
@@ -328,7 +327,7 @@ class NotchViewModel: ObservableObject {
             if let error = error {
                 DispatchQueue.main.async {
                     guard let self = self,
-                          let idx = self.tasks.firstIndex(where: { $0.id == sessionId }) else { return }
+                          let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
                     withAnimation(.snappy(duration: 0.3)) {
                         self.tasks[idx].status = .failed
                         self.tasks[idx].error = error.localizedDescription

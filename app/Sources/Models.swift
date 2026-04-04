@@ -77,12 +77,6 @@ struct SubagentTask: Identifiable {
     }
 }
 
-struct WeatherInfo {
-    var temp: Int
-    var condition: String
-    var icon: String
-}
-
 // MARK: - Agent Monitoring
 
 enum AgentType: String, CaseIterable {

@@ -2,30 +2,6 @@ import SwiftUI
 
 // MARK: - Tool Name Formatter
 
-private func toolActionText(_ name: String) -> String {
-    let map: [String: String] = [
-        "gmail_search": "Searching Gmail",
-        "gmail_read_email": "Reading email",
-        "gmail_create_draft": "Creating draft",
-        "gmail_send": "Sending email",
-        "gmail_reply": "Replying to email",
-        "notion_create_page": "Creating Notion page",
-        "notion_append_block": "Updating Notion page",
-        "notion_search": "Searching Notion",
-        "linear_list_issues": "Fetching Linear issues",
-        "linear_update_issue": "Updating Linear issue",
-        "linear_add_comment": "Adding comment on Linear",
-        "linear_create_issue": "Creating Linear issue",
-        "calendar_list_events": "Checking calendar",
-        "calendar_create_event": "Creating event",
-        "slack_send_message": "Sending Slack message",
-        "slack_search": "Searching Slack",
-        "web_search": "Searching the web",
-        "drive_search": "Searching Drive",
-    ]
-    return map[name] ?? name.replacingOccurrences(of: "_", with: " ").capitalized
-}
-
 private func toolCompletedText(_ name: String) -> String {
     let map: [String: String] = [
         "gmail_search": "Searched Gmail",

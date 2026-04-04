@@ -52,9 +52,11 @@ struct NotchContentView: View {
                 .tracking(1.2)
                 .foregroundColor(DN.textSecondary)
 
-            Spacer().frame(height: DN.spaceXS)
+            if viewModel.settings.showCalendar {
+                Spacer().frame(height: DN.spaceXS)
 
-            MiniCalendarView(compact: false)
+                MiniCalendarView(compact: !viewModel.settings.largeCalendar)
+            }
         }
         .padding(.trailing, DN.spaceSM)
     }
@@ -89,16 +91,10 @@ struct NotchContentView: View {
 
     private var overviewRightColumn: some View {
         VStack(alignment: .leading, spacing: DN.spaceSM) {
-            HStack(spacing: 0) {
-                Text("AGENTS")
-                    .font(DN.label(9))
-                    .tracking(1.5)
-                    .foregroundColor(DN.textSecondary)
-
-                Spacer()
-
-                agentStatusCounts
-            }
+            Text("AGENTS")
+                .font(DN.label(9))
+                .tracking(1.5)
+                .foregroundColor(DN.textSecondary)
 
             if viewModel.agentMonitor.agents.isEmpty && viewModel.tasks.isEmpty {
                 emptyAgentState
@@ -106,7 +102,7 @@ struct NotchContentView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: DN.spaceSM) {
                         ForEach(viewModel.agentMonitor.groupedAgents) { group in
-                            AgentGroupView(group: group, isCompact: true, collapsedGroups: $viewModel.collapsedGroups) { agent in
+                            AgentGroupView(group: group, isCompact: true, showLiveState: viewModel.settings.showAgentLiveState, collapsedGroups: $viewModel.collapsedGroups) { agent in
                                 viewModel.agentMonitor.activateAgent(agent)
                             }
                         }
@@ -327,11 +323,6 @@ struct NotchContentView: View {
         )
     }
 
-    // MARK: - Status Counts
-
-    private var agentStatusCounts: some View {
-        EmptyView()
-    }
 }
 
 // MARK: - Icon Action Button (icon only, label on hover)
@@ -375,6 +366,7 @@ struct IconActionButton: View {
 struct AgentGroupView: View {
     let group: AgentGroup
     let isCompact: Bool
+    let showLiveState: Bool
     @Binding var collapsedGroups: Set<String>
     let onTapAgent: (DetectedAgent) -> Void
 
@@ -440,7 +432,7 @@ struct AgentGroupView: View {
             if isGroupExpanded {
                 VStack(spacing: 1) {
                     ForEach(group.agents) { agent in
-                        AgentSessionRow(agent: agent, isCompact: isCompact) {
+                        AgentSessionRow(agent: agent, isCompact: isCompact, showLiveState: showLiveState) {
                             onTapAgent(agent)
                         }
                     }
@@ -462,6 +454,7 @@ struct AgentGroupView: View {
 struct AgentSessionRow: View {
     let agent: DetectedAgent
     let isCompact: Bool
+    let showLiveState: Bool
     let onTap: () -> Void
 
     @State private var isHovering = false
@@ -485,7 +478,7 @@ struct AgentSessionRow: View {
                 }
 
                 // Live state indicator
-                if agent.liveState != .idle && agent.liveState != .waitingForUser {
+                if showLiveState && agent.liveState != .idle && agent.liveState != .waitingForUser {
                     LiveStateView(state: agent.liveState, detail: agent.liveDetail)
                         .padding(.top, 1)
                 }
