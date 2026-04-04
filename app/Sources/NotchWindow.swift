@@ -211,10 +211,12 @@ class NotchWindowController: NSObject {
                 expand()
             }
         } else if viewModel.isExpanded {
-            // Don't auto-collapse if chat input is focused
-            if !viewModel.isChatInputActive {
-                scheduleCollapse()
+            // Clear chat input focus when mouse leaves the panel entirely
+            if viewModel.isChatInputActive {
+                viewModel.isChatInputActive = false
+                viewModel.shouldFocusChatInput = false
             }
+            scheduleCollapse()
         }
     }
 

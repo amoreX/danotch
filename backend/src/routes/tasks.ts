@@ -29,7 +29,7 @@ export function createTaskRoutes(notch: NotchBridge): Router {
     }
     try {
       const task = await runChat(message, notch, session_id);
-      res.json({ task: { id: task.id, status: task.status, result: task.result } });
+      res.json({ task: { id: task.id, status: task.status, result: task.result, error: task.error } });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
     }

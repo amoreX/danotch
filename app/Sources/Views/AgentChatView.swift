@@ -117,66 +117,100 @@ struct AgentChatView: View {
 
     // MARK: - Chat Body
 
+    @State private var autoScroll = true
+    @State private var scrollTarget: String? = nil
+    private let bottomAnchorId = "bottom-anchor"
+
     private func chatBody(_ task: SubagentTask) -> some View {
         let lastAgentMsgId = task.chatHistory.last(where: { $0.role == "agent" })?.id
 
-        return ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: DN.spaceXS) {
-                ForEach(task.chatHistory) { msg in
-                    chatBubble(msg, isFinalResponse: msg.id == lastAgentMsgId)
-                }
+        return ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: DN.spaceXS) {
+                    ForEach(task.chatHistory) { msg in
+                        chatBubble(msg, isFinalResponse: msg.id == lastAgentMsgId)
+                    }
 
-                if task.status == .running {
-                    liveActivityBar(task)
+                    // Streaming text
+                    if task.status == .running && !task.streamingText.isEmpty {
+                        StreamingTextView(text: task.streamingText)
+                    }
+
+                    if task.status == .running && task.streamingText.isEmpty {
+                        typingIndicator
+                    }
+
+                    Color.clear.frame(height: 1).id(bottomAnchorId)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSScrollView.willStartLiveScrollNotification)) { _ in
+                autoScroll = false
+            }
+            .onChange(of: task.chatHistory.count) { _, _ in
+                autoScroll = true
+                scrollToBottom(proxy)
+            }
+            .onChange(of: task.streamingText) { _, _ in
+                if autoScroll { scrollToBottom(proxy) }
             }
         }
     }
 
-    private func liveActivityBar(_ task: SubagentTask) -> some View {
-        HStack(spacing: DN.spaceSM) {
-            // Mechanical dots
-            HStack(spacing: 2) {
-                ForEach(0..<3, id: \.self) { _ in
-                    Circle()
-                        .fill(DN.warning)
-                        .frame(width: 3, height: 3)
-                }
-            }
-
-            Text(viewModel.activityText(for: task).uppercased())
-                .font(DN.label(9))
-                .tracking(0.6)
-                .foregroundColor(DN.warning.opacity(0.7))
-                .lineLimit(1)
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            proxy.scrollTo(bottomAnchorId, anchor: .bottom)
         }
-        .padding(.vertical, DN.spaceXS)
-        .padding(.horizontal, DN.spaceSM)
-        .background(DN.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .stroke(DN.border, lineWidth: 1)
-        )
+    }
+
+    private var typingIndicator: some View {
+        HStack(spacing: 4) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .fill(DN.textDisabled)
+                    .frame(width: 4, height: 4)
+                    .opacity(typingDotOpacity(i))
+            }
+        }
+        .padding(.vertical, DN.spaceSM)
+        .onAppear { autoScroll = true }
+    }
+
+    @State private var typingPhase = false
+
+    private func typingDotOpacity(_ index: Int) -> Double {
+        // Simple staggered pulse
+        let base = typingPhase ? 1.0 : 0.3
+        switch index {
+        case 0: return typingPhase ? 1.0 : 0.3
+        case 1: return 0.6
+        case 2: return typingPhase ? 0.3 : 1.0
+        default: return base
+        }
     }
 
     @ViewBuilder
     private func chatBubble(_ msg: ChatMessage, isFinalResponse: Bool) -> some View {
         switch msg.role {
-        case "agent":
-            if isFinalResponse {
+        case "user":
+            HStack {
+                Spacer()
                 Text(msg.content)
-                    .font(DN.body(12, weight: .medium))
+                    .font(DN.body(11, weight: .medium))
                     .foregroundColor(DN.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, DN.spaceXS)
-            } else {
-                Text(msg.content)
-                    .font(DN.body(11))
-                    .foregroundColor(DN.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, DN.space2xs)
+                    .padding(.horizontal, DN.spaceSM + DN.spaceXS)
+                    .padding(.vertical, DN.spaceXS + 1)
+                    .background(DN.surfaceRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(DN.borderVisible, lineWidth: 1)
+                    )
             }
+            .padding(.vertical, DN.space2xs)
+
+        case "agent":
+            MarkdownView(text: msg.content, isFinal: isFinalResponse)
+                .padding(.vertical, DN.spaceXS)
 
         case "tool":
             toolCallBubble(msg)
@@ -220,28 +254,260 @@ struct AgentChatView: View {
 
     // MARK: - Input Bar
 
+    @State private var messageText: String = ""
+
     private var inputBar: some View {
         HStack(spacing: DN.spaceSM) {
-            Text("MESSAGE AGENT...")
-                .font(DN.label(9))
-                .tracking(0.6)
+            Image(systemName: "sparkle")
+                .font(.system(size: 9, weight: .medium))
                 .foregroundColor(DN.textDisabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-            Image(systemName: "arrow.up")
-                .font(.system(size: 10, weight: .medium))
+            TextField("", text: $messageText, prompt: Text("Message agent...")
+                .font(DN.body(11))
                 .foregroundColor(DN.textDisabled)
-                .frame(width: 20, height: 20)
-                .overlay(
-                    Circle().stroke(DN.borderVisible, lineWidth: 1)
-                )
+            )
+            .textFieldStyle(.plain)
+            .font(DN.body(11))
+            .foregroundColor(DN.textPrimary)
+            .onSubmit { sendMessage() }
+
+            if !messageText.isEmpty {
+                Button(action: { sendMessage() }) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(DN.black)
+                        .frame(width: 18, height: 18)
+                        .background(DN.textDisplay)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            }
         }
         .padding(.horizontal, DN.spaceSM + DN.spaceXS)
-        .padding(.vertical, DN.spaceSM)
+        .padding(.vertical, DN.spaceXS + 2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DN.surface)
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(DN.border, lineWidth: 1)
         )
+        .animation(.easeOut(duration: DN.microDuration), value: messageText.isEmpty)
+    }
+
+    private func sendMessage() {
+        let text = messageText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+        messageText = ""
+        viewModel.sendChat(message: text, sessionId: taskId)
+    }
+}
+
+// MARK: - Streaming Text View
+
+struct StreamingTextView: View {
+    let text: String
+    @State private var cursorVisible = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            MarkdownView(text: text, isFinal: true)
+
+            // Blinking cursor
+            Rectangle()
+                .fill(DN.textPrimary)
+                .frame(width: 1.5, height: 13)
+                .opacity(cursorVisible ? 1 : 0)
+                .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, DN.spaceXS)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
+                cursorVisible.toggle()
+            }
+        }
+    }
+}
+
+// MARK: - Markdown Renderer
+
+struct MarkdownView: View {
+    let text: String
+    let isFinal: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DN.spaceXS) {
+            ForEach(Array(parseBlocks().enumerated()), id: \.offset) { _, block in
+                renderBlock(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private enum MdBlock {
+        case heading(Int, String) // level, text
+        case paragraph(String)
+        case bullet(String)
+        case code(String) // code block content
+        case divider
+    }
+
+    private func parseBlocks() -> [MdBlock] {
+        var blocks: [MdBlock] = []
+        let lines = text.components(separatedBy: "\n")
+        var inCodeBlock = false
+        var codeLines: [String] = []
+
+        for line in lines {
+            // Code blocks
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                if inCodeBlock {
+                    blocks.append(.code(codeLines.joined(separator: "\n")))
+                    codeLines = []
+                    inCodeBlock = false
+                } else {
+                    inCodeBlock = true
+                }
+                continue
+            }
+            if inCodeBlock {
+                codeLines.append(line)
+                continue
+            }
+
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                continue
+            }
+
+            // Headings
+            if trimmed.hasPrefix("### ") {
+                blocks.append(.heading(3, String(trimmed.dropFirst(4))))
+            } else if trimmed.hasPrefix("## ") {
+                blocks.append(.heading(2, String(trimmed.dropFirst(3))))
+            } else if trimmed.hasPrefix("# ") {
+                blocks.append(.heading(1, String(trimmed.dropFirst(2))))
+            }
+            // Bullets
+            else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+                blocks.append(.bullet(String(trimmed.dropFirst(2))))
+            }
+            // Numbered lists
+            else if let match = trimmed.range(of: #"^\d+\.\s"#, options: .regularExpression) {
+                blocks.append(.bullet(String(trimmed[match.upperBound...])))
+            }
+            // Divider
+            else if trimmed == "---" || trimmed == "***" {
+                blocks.append(.divider)
+            }
+            // Paragraph
+            else {
+                // Merge consecutive paragraph lines
+                if case .paragraph(let prev) = blocks.last {
+                    blocks[blocks.count - 1] = .paragraph(prev + " " + trimmed)
+                } else {
+                    blocks.append(.paragraph(trimmed))
+                }
+            }
+        }
+
+        // Close unclosed code block
+        if inCodeBlock && !codeLines.isEmpty {
+            blocks.append(.code(codeLines.joined(separator: "\n")))
+        }
+
+        return blocks
+    }
+
+    @ViewBuilder
+    private func renderBlock(_ block: MdBlock) -> some View {
+        switch block {
+        case .heading(let level, let text):
+            let size: CGFloat = level == 1 ? 14 : level == 2 ? 12 : 11
+            renderInline(text)
+                .font(.system(size: size, weight: .semibold, design: .default))
+                .foregroundColor(DN.textDisplay)
+
+        case .paragraph(let text):
+            renderInline(text)
+                .font(DN.body(isFinal ? 12 : 11))
+                .foregroundColor(isFinal ? DN.textPrimary : DN.textSecondary)
+
+        case .bullet(let text):
+            HStack(alignment: .top, spacing: DN.spaceSM) {
+                Text("\u{2022}")
+                    .font(DN.body(12, weight: .bold))
+                    .foregroundColor(DN.textDisabled)
+                    .frame(width: 8)
+
+                renderInline(text)
+                    .font(DN.body(isFinal ? 12 : 11))
+                    .foregroundColor(isFinal ? DN.textPrimary : DN.textSecondary)
+            }
+
+        case .code(let code):
+            Text(code)
+                .font(DN.mono(10))
+                .foregroundColor(DN.textPrimary)
+                .padding(DN.spaceSM)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DN.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(DN.border, lineWidth: 1)
+                )
+
+        case .divider:
+            Rectangle()
+                .fill(DN.border)
+                .frame(height: 1)
+                .padding(.vertical, DN.space2xs)
+        }
+    }
+
+    private func renderInline(_ text: String) -> Text {
+        // Parse inline markdown: **bold**, *italic*, `code`
+        var result = Text("")
+        var remaining = text[text.startIndex...]
+
+        while !remaining.isEmpty {
+            // Inline code: `...`
+            if remaining.hasPrefix("`"), let end = remaining.dropFirst().firstIndex(of: "`") {
+                let code = remaining[remaining.index(after: remaining.startIndex)..<end]
+                result = result + Text(String(code))
+                    .font(DN.mono(11))
+                    .foregroundColor(Color(hex: 0xD97757))
+                remaining = remaining[remaining.index(after: end)...]
+            }
+            // Bold: **...**
+            else if remaining.hasPrefix("**"), let end = remaining.dropFirst(2).range(of: "**") {
+                let bold = remaining[remaining.index(remaining.startIndex, offsetBy: 2)..<end.lowerBound]
+                result = result + Text(String(bold)).bold()
+                remaining = remaining[end.upperBound...]
+            }
+            // Italic: *...*
+            else if remaining.hasPrefix("*"), let end = remaining.dropFirst().firstIndex(of: "*") {
+                let italic = remaining[remaining.index(after: remaining.startIndex)..<end]
+                result = result + Text(String(italic)).italic()
+                remaining = remaining[remaining.index(after: end)...]
+            }
+            // Plain text until next marker
+            else {
+                if let next = remaining.firstIndex(where: { $0 == "*" || $0 == "`" }) {
+                    result = result + Text(String(remaining[remaining.startIndex..<next]))
+                    remaining = remaining[next...]
+                } else {
+                    result = result + Text(String(remaining))
+                    break
+                }
+            }
+        }
+
+        return result
     }
 }
 

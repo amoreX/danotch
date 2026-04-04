@@ -42,9 +42,9 @@ No unit tests in either package.
 
 ### Key Components
 
-- **NotchWindowController** (`NotchWindow.swift`): Custom `DanotchPanel` (NSPanel subclass) positioned over the physical notch at `level = .mainMenu + 3`. Three event monitors handle hover-to-expand (with 400ms collapse delay), swipe-back gesture (60px scroll threshold), and mouse tracking. Detects notch dimensions via `NSScreen` safe area insets with fallbacks for non-notch Macs. Panel width: 520px (overview) / 540px (task/chat/stats). Window frame: 580x400.
+- **NotchWindowController** (`NotchWindow.swift`): Custom `DanotchPanel` (NSPanel subclass, `canBecomeKey: true`) positioned over the physical notch at `level = .mainMenu + 3`. Three event monitors handle hover-to-expand (with 400ms collapse delay), swipe-back gesture (60px scroll threshold), and mouse tracking. Global keyboard shortcut (⌘+Shift+Space) drops down the notch and focuses the chat input. Escape collapses. Panel won't auto-collapse while chat input is focused (`isChatInputActive`). Detects notch dimensions via `NSScreen` safe area insets with fallbacks for non-notch Macs. Panel width: 520px (overview) / 540px (task/chat/stats). Window frame: 580x400.
 
-- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor` and forwards its `objectWillChange` via Combine. Runs clock timer (1s) and shimmer cycle timer (2s) for activity text rotation. All state mutations wrapped in `withAnimation`.
+- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor` and `NotchSettings`, forwarding both via Combine. Runs clock timer (1s) and shimmer cycle timer (2s) for activity text rotation. All state mutations wrapped in `withAnimation`. Has `sendChat(message:)` that POSTs to backend `/api/chat` and optimistically creates a task. Tracks `shouldFocusChatInput`, `isChatInputActive`, and `collapsedGroups` for UI state persistence.
 
 - **AgentMonitor** (`AgentMonitor.swift`): Standalone `ObservableObject` that scans for AI agent processes every 3s. Currently only displays Claude Code sessions (filtered because Cursor/Codex/Windsurf don't expose prompt data). Enriches each session with project name (from `~/.claude/sessions/{pid}.json` cwd), last user prompt (from conversation JSONL in `~/.claude/projects/`), and working directory (via `lsof`). Can activate the terminal app for a session via `NSWorkspace`. Provides `groupedAgents` computed property for grouped display.
 
@@ -69,7 +69,7 @@ let data = pipe.fileHandleForReading.readDataToEndOfFile()
 ### View State Machine
 
 `NotchViewState` enum drives all navigation:
-- `.overview` → left column (time, date, calendar) + right column (grouped Claude Code agents with prompts)
+- `.overview` → left column (time, date, calendar) + right column (grouped Claude Code agents with prompts, chat input bar at bottom)
 - `.taskList` → full scrollable agent list (grouped agents + delegated tasks)
 - `.agentChat(taskId)` → task detail with chat history, tool calls, draft cards
 - `.stats` → bento grid: CPU/RAM arc gauges with sparklines, network up/down with stepped graphs, disk ring, process count, uptime
@@ -91,12 +91,35 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
     │   └── mainColumn → overviewRightColumn | agentsColumn | AgentChatView
     │       ├── AgentGroupView (collapsible group: header with type icon/count/chevron toggle, contains AgentSessionRows)
     │       ├── AgentSessionRow (project name, live state indicator, last prompt, elapsed, CPU/MEM on hover)
-    │       ├── LiveStateView (pulsing dot + icon + label for active tool/thinking/responding states)
+    │       ├── LiveStateView (pulsing dot + icon + label + detail for active tool/thinking/responding states)
+    │       ├── chatInputBar (TextField + submit button, sends to backend POST /api/chat)
+    │       ├── tasksSection (grouped user tasks from chat, clickable → AgentChatView)
     │       └── AgentRow (WebSocket task rows with status dot, activity text)
     ├── StatsPanel (bento grid: ArcGaugeCell, SparklineGraph, network rows, disk ring)
     ├── ProcessListPanel (sorted process table with ProcessIconView, kill actions)
-    └── SettingsPanel
+    └── SettingsPanel (scrollable toggle sections: Behavior, Display, Agents)
+        ├── SettingsSection (titled group with DN styling)
+        └── SettingsToggleRow (icon + title + subtitle + custom capsule toggle)
 ```
+
+### Settings
+
+`NotchSettings` (`ObservableObject`, owned by ViewModel) stores all toggle state. No persistence yet — resets on relaunch. The `SettingsPanel` renders toggles in three sections with custom capsule switches (green/gray).
+
+**Behavior:**
+- `tapAgentNavigates` (default: true) — tapping an agent row opens its detail page
+- `expandOnHover` (default: true) — auto-expand panel when hovering over notch
+
+**Display:**
+- `showCalendar` (default: true) — show mini calendar in overview
+- `largeCalendar` (default: false) — use expanded calendar layout
+- `showMusic` (default: true) — show now playing track in overview
+- `showBattery` (default: true) — show battery indicator in top bar
+- `showDotGrid` (default: true) — show animated dot matrix background
+
+**Agents:**
+- `showAgentLiveState` (default: true) — show real-time tool activity for agents
+- `compactAgentRows` (default: false) — use smaller rows in agent list
 
 ### Agent Monitoring
 
@@ -113,7 +136,7 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 2. Fallback: resolve cwd via `lsof -a -p PID -d cwd -Fn`
 3. Extract project name from cwd (last path component)
 4. Find conversation JSONL at `~/.claude/projects/{project-dir}/{sessionId}.jsonl`
-5. Read last ~50KB of JSONL via `readSessionState()`:
+5. Read last ~200KB of JSONL via `readSessionState()`:
    - Parse in reverse to find last `type: "user"` message → last prompt
    - Clean prompt text: strip `[Image...]` refs, HTML tags, newlines, truncate to 120 chars
    - Parse last entries to determine live state via `parseLiveState()`
@@ -136,9 +159,11 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
   - Responding → trailing snippet of the response text
 - Displayed via `LiveStateView`: pulsing dot + SF Symbol icon + uppercase label + detail line (mono, dimmed)
 - Note: thinking text is redacted in JSONL (always empty), so `.thinking` state has no detail
+- **CPU override:** If CPU < 0.5% but JSONL says active (responding/thinking/toolUse), override to `.waitingForUser` — prevents stale JSONL from showing false activity
 
 **UI display:**
 - Agents grouped by type using `AgentGroupView` with collapsible chevron toggle (when >1 agent)
+- Collapse state persisted in `NotchViewModel.collapsedGroups` (survives hover/collapse cycles)
 - Each session shows: project name (bold), live state indicator (if active), last prompt (secondary text), elapsed time
 - CPU/MEM stats shown on hover or in expanded agents view
 - Sorted by most recently active (JSONL modification time) — active sessions float to top
@@ -147,6 +172,18 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 - Cursor: `Cursor.app/Contents/MacOS/Cursor` main process
 - Codex: `codex` + `app-server` in args
 - Windsurf: `Windsurf.app/Contents/MacOS/Windsurf`
+
+### Chat Input & Tasks
+
+**Chat flow:**
+1. User types in `chatInputBar` on HOME tab (or triggered via ⌘+Shift+Space)
+2. `sendChat(message:)` in ViewModel creates optimistic `SubagentTask` with `session_id`
+3. POSTs to backend `http://localhost:3001/api/chat` with `{ message, session_id }`
+4. Backend streams response via WebSocket → existing `processEvent` pipeline updates the task
+5. View switches to AGENTS tab, task appears in `tasksSection`
+6. Clicking a task opens `AgentChatView` with full conversation
+
+**Tasks section** appears below Claude Code agent groups in both HOME and AGENTS tabs, styled as a grouped card matching `AgentGroupView`.
 
 ### Models
 

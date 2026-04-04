@@ -150,34 +150,62 @@ struct NotchContentView: View {
         .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Full agents column
+    // MARK: - Full agents column (conversations only)
 
     private var agentsColumn: some View {
         VStack(alignment: .leading, spacing: DN.spaceSM) {
-            HStack(spacing: 0) {
-                Text("AGENTS")
+            HStack(spacing: DN.spaceSM) {
+                Image(systemName: "bubble.left.and.text.bubble.right")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DN.textSecondary)
+
+                Text("CONVERSATIONS")
                     .font(DN.label(9))
                     .tracking(1.5)
                     .foregroundColor(DN.textSecondary)
 
                 Spacer()
 
-                agentStatusCounts
+                HStack(spacing: DN.spaceXS) {
+                    IconActionButton(icon: "clock.arrow.circlepath", label: "HISTORY") {
+                        // TODO: hook up history view
+                    }
+
+                    IconActionButton(icon: "plus", label: "NEW") {
+                        withAnimation(DN.transition) {
+                            viewModel.viewState = .overview
+                            viewModel.shouldFocusChatInput = true
+                        }
+                    }
+                }
             }
 
-            if viewModel.agentMonitor.agents.isEmpty && viewModel.tasks.isEmpty {
-                emptyAgentState
+            if viewModel.tasks.isEmpty {
+                VStack(spacing: DN.spaceSM) {
+                    Spacer().frame(height: DN.spaceLG)
+                    Text("NO CONVERSATIONS")
+                        .font(DN.label(9))
+                        .tracking(0.8)
+                        .foregroundColor(DN.textDisabled)
+                    Text("Start a chat from the HOME tab")
+                        .font(DN.body(10))
+                        .foregroundColor(DN.textDisabled.opacity(0.7))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: DN.spaceSM) {
-                        ForEach(viewModel.agentMonitor.groupedAgents) { group in
-                            AgentGroupView(group: group, isCompact: false, collapsedGroups: $viewModel.collapsedGroups) { agent in
-                                viewModel.agentMonitor.activateAgent(agent)
+                    VStack(spacing: DN.spaceXS) {
+                        ForEach(viewModel.tasks) { task in
+                            AgentRow(
+                                task: task,
+                                isCompact: false,
+                                activityText: viewModel.activityText(for: task)
+                            ) {
+                                withAnimation(DN.transition) {
+                                    viewModel.viewState = .agentChat(task.id)
+                                }
                             }
-                        }
-
-                        if !viewModel.tasks.isEmpty {
-                            tasksSection(compact: false)
                         }
                     }
                 }
@@ -190,8 +218,12 @@ struct NotchContentView: View {
 
     private var chatInputBar: some View {
         HStack(spacing: DN.spaceSM) {
-            TextField("", text: $chatInputText, prompt: Text("ASK ANYTHING...")
-                .font(DN.label(9))
+            Image(systemName: "sparkle")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(isChatInputFocused ? DN.textSecondary : DN.textDisabled)
+
+            TextField("", text: $chatInputText, prompt: Text("Ask anything...")
+                .font(DN.body(11))
                 .foregroundColor(DN.textDisabled)
             )
             .textFieldStyle(.plain)
@@ -203,27 +235,31 @@ struct NotchContentView: View {
             }
             .onSubmit { submitChat() }
 
-            Button(action: { submitChat() }) {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(chatInputText.isEmpty ? DN.textDisabled : DN.textDisplay)
-                    .frame(width: 20, height: 20)
-                    .overlay(
-                        Circle().stroke(
-                            chatInputText.isEmpty ? DN.borderVisible : DN.textDisplay,
-                            lineWidth: 1
-                        )
-                    )
+            if !chatInputText.isEmpty {
+                Button(action: { submitChat() }) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(DN.black)
+                        .frame(width: 18, height: 18)
+                        .background(DN.textDisplay)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
             }
-            .buttonStyle(.plain)
-            .disabled(chatInputText.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .padding(.horizontal, DN.spaceSM + DN.spaceXS)
-        .padding(.vertical, DN.spaceSM)
+        .padding(.vertical, DN.spaceXS + 2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(DN.surface)
+        )
         .overlay(
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(isChatInputFocused ? DN.borderVisible : DN.border, lineWidth: 1)
         )
+        .animation(.easeOut(duration: DN.microDuration), value: chatInputText.isEmpty)
+        .animation(.easeOut(duration: DN.microDuration), value: isChatInputFocused)
     }
 
     private func submitChat() {
@@ -295,6 +331,42 @@ struct NotchContentView: View {
 
     private var agentStatusCounts: some View {
         EmptyView()
+    }
+}
+
+// MARK: - Icon Action Button (icon only, label on hover)
+
+struct IconActionButton: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 9, weight: .bold))
+
+                if isHovering {
+                    Text(label)
+                        .font(DN.label(7))
+                        .tracking(0.6)
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
+            }
+            .foregroundColor(isHovering ? DN.textPrimary : DN.textDisabled)
+            .padding(.horizontal, isHovering ? DN.spaceSM : 5)
+            .padding(.vertical, 3)
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(isHovering ? DN.borderVisible : DN.border, lineWidth: 1)
+            )
+            .animation(.easeOut(duration: DN.microDuration), value: isHovering)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
     }
 }
 

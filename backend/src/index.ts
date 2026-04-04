@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import { NotchBridge } from './events/notch.js';
 import { createTaskRoutes } from './routes/tasks.js';

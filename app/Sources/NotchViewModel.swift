@@ -2,6 +2,18 @@ import Foundation
 import SwiftUI
 import Combine
 
+class NotchSettings: ObservableObject {
+    @Published var tapAgentNavigates: Bool = true
+    @Published var showCalendar: Bool = true
+    @Published var largeCalendar: Bool = false
+    @Published var showMusic: Bool = true
+    @Published var showBattery: Bool = true
+    @Published var expandOnHover: Bool = true
+    @Published var showAgentLiveState: Bool = true
+    @Published var showDotGrid: Bool = true
+    @Published var compactAgentRows: Bool = false
+}
+
 class NotchViewModel: ObservableObject {
     @Published var tasks: [SubagentTask] = []
     @Published var currentTime: Date = Date()
@@ -14,10 +26,12 @@ class NotchViewModel: ObservableObject {
     @Published var collapsedGroups: Set<String> = [] // agent group IDs that are collapsed
     var mouseInContent = false
 
+    @Published var settings = NotchSettings()
     @Published var agentMonitor = AgentMonitor()
     private var clockTimer: Timer?
     private var shimmerTimer: Timer?
     private var agentMonitorCancellable: AnyCancellable?
+    private var settingsCancellable: AnyCancellable?
 
     var delegatedCount: Int { tasks.filter { $0.status == .running || $0.status == .pending }.count }
     var approvalCount: Int { tasks.filter { $0.status == .awaitingApproval }.count }
@@ -63,6 +77,9 @@ class NotchViewModel: ObservableObject {
         startShimmerCycle()
         // Forward agent monitor changes to trigger view updates
         agentMonitorCancellable = agentMonitor.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
     }
@@ -135,20 +152,23 @@ class NotchViewModel: ObservableObject {
     }
 
     private func upsertTask(from data: [String: Any], sessionId: String) {
-        let task = SubagentTask(
-            id: sessionId,
-            task: data["task"] as? String ?? "Unknown task",
-            description: data["description"] as? String,
-            status: TaskStatus(rawValue: data["status"] as? String ?? "pending") ?? .pending,
-            toolCallsCount: data["tool_calls_count"] as? Int ?? 0,
-            streamingText: "",
-            createdAt: Date(),
-            activitySteps: [],
-            chatHistory: []
-        )
         if let idx = tasks.firstIndex(where: { $0.id == sessionId }) {
-            tasks[idx] = task
+            // Update existing task — preserve chatHistory
+            tasks[idx].status = TaskStatus(rawValue: data["status"] as? String ?? "running") ?? .running
+            if let desc = data["description"] as? String { tasks[idx].description = desc }
+            if let count = data["tool_calls_count"] as? Int { tasks[idx].toolCallsCount = count }
         } else {
+            let task = SubagentTask(
+                id: sessionId,
+                task: data["task"] as? String ?? "Unknown task",
+                description: data["description"] as? String,
+                status: TaskStatus(rawValue: data["status"] as? String ?? "pending") ?? .pending,
+                toolCallsCount: data["tool_calls_count"] as? Int ?? 0,
+                streamingText: "",
+                createdAt: Date(),
+                activitySteps: [],
+                chatHistory: []
+            )
             withAnimation(.snappy(duration: 0.3)) { tasks.append(task) }
         }
     }
@@ -188,8 +208,21 @@ class NotchViewModel: ObservableObject {
             tasks[idx].status = TaskStatus(rawValue: statusStr) ?? .completed
             tasks[idx].completedAt = Date()
             tasks[idx].currentToolName = nil
-            if let result = data["result"] as? String { tasks[idx].result = result }
-            if let error = data["error"] as? String { tasks[idx].error = error }
+            if let result = data["result"] as? String {
+                tasks[idx].result = result
+                // Add agent response to chat history
+                tasks[idx].chatHistory.append(ChatMessage(
+                    id: UUID().uuidString, role: "agent", content: result,
+                    toolName: nil, draftCard: nil, timestamp: Date()
+                ))
+            }
+            if let error = data["error"] as? String {
+                tasks[idx].error = error
+                tasks[idx].chatHistory.append(ChatMessage(
+                    id: UUID().uuidString, role: "agent", content: "Error: \(error)",
+                    toolName: nil, draftCard: nil, timestamp: Date()
+                ))
+            }
         }
     }
 
@@ -217,29 +250,46 @@ class NotchViewModel: ObservableObject {
 
     // MARK: - Chat
 
-    func sendChat(message: String) {
-        let sessionId = UUID().uuidString
+    func sendChat(message: String, sessionId: String? = nil) {
+        let sid = sessionId ?? UUID().uuidString
+        let isFollowUp = sessionId != nil
 
-        // Optimistically create a task so it shows immediately
-        let task = SubagentTask(
-            id: sessionId,
-            task: message,
-            description: String(message.prefix(60)),
-            status: .running,
-            toolCallsCount: 0,
-            streamingText: "",
-            createdAt: Date(),
-            activitySteps: ["Sending to Claude..."],
-            chatHistory: [
-                ChatMessage(
-                    id: UUID().uuidString, role: "user", content: message,
-                    toolName: nil, draftCard: nil, timestamp: Date()
-                )
-            ]
-        )
-        withAnimation(.snappy(duration: 0.3)) {
-            tasks.insert(task, at: 0)
-            viewState = .taskList
+        if isFollowUp {
+            // Follow-up: add user message to existing task
+            if let idx = tasks.firstIndex(where: { $0.id == sid }) {
+                withAnimation(.snappy(duration: 0.3)) {
+                    tasks[idx].chatHistory.append(ChatMessage(
+                        id: UUID().uuidString, role: "user", content: message,
+                        toolName: nil, draftCard: nil, timestamp: Date()
+                    ))
+                    tasks[idx].status = .running
+                    tasks[idx].streamingText = ""
+                    tasks[idx].result = nil
+                    tasks[idx].error = nil
+                }
+            }
+        } else {
+            // New task
+            let task = SubagentTask(
+                id: sid,
+                task: message,
+                description: String(message.prefix(60)),
+                status: .running,
+                toolCallsCount: 0,
+                streamingText: "",
+                createdAt: Date(),
+                activitySteps: ["Sending to Claude..."],
+                chatHistory: [
+                    ChatMessage(
+                        id: UUID().uuidString, role: "user", content: message,
+                        toolName: nil, draftCard: nil, timestamp: Date()
+                    )
+                ]
+            )
+            withAnimation(.snappy(duration: 0.3)) {
+                tasks.insert(task, at: 0)
+                viewState = .taskList
+            }
         }
 
         // POST to backend
@@ -247,7 +297,7 @@ class NotchViewModel: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-        let body: [String: Any] = ["message": message, "session_id": sessionId]
+        let body: [String: Any] = ["message": message, "session_id": sid]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: request) { [weak self] _, _, error in
