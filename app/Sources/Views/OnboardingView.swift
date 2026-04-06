@@ -58,7 +58,7 @@ struct NotchAuthView: View {
                     .foregroundColor(DN.black)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
-                    .background(DN.textDisplay)
+                    .background(DN.accent)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
@@ -104,13 +104,13 @@ struct NotchAuthView: View {
                         } else {
                             Text(isSignup ? "SIGN UP" : "SIGN IN")
                                 .font(DN.label(10))
-                                .tracking(2)
-                                .foregroundColor(DN.black)
+                                .tracking(1.5)
+                                .foregroundColor(Color(hex: 0x050A07))
                         }
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
-                    .background(canSubmit ? DN.textDisplay : DN.surface)
+                    .background(canSubmit ? DN.accent : DN.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)

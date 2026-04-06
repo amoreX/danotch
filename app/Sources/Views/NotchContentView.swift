@@ -113,7 +113,7 @@ struct NotchContentView: View {
         VStack(alignment: .leading, spacing: DN.spaceSM) {
             Text("AGENTS")
                 .font(DN.label(9))
-                .tracking(1.5)
+                .tracking(0.8)
                 .foregroundColor(DN.textSecondary)
 
             if viewModel.agentMonitor.agents.isEmpty && viewModel.tasks.isEmpty {
@@ -177,7 +177,7 @@ struct NotchContentView: View {
 
                 Text("CONVERSATIONS")
                     .font(DN.label(9))
-                    .tracking(1.5)
+                    .tracking(0.8)
                     .foregroundColor(DN.textSecondary)
 
                 Spacer()
@@ -322,7 +322,7 @@ struct NotchContentView: View {
         HStack(spacing: DN.spaceSM) {
             Image(systemName: "sparkle")
                 .font(.system(size: 9, weight: .medium))
-                .foregroundColor(isChatInputFocused ? DN.textSecondary : DN.textDisabled)
+                .foregroundColor(isChatInputFocused ? DN.accent.opacity(0.8) : DN.textDisabled)
 
             TextField("", text: $chatInputText, prompt: Text("Ask anything...")
                 .font(DN.body(11))
@@ -343,7 +343,7 @@ struct NotchContentView: View {
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(DN.black)
                         .frame(width: 18, height: 18)
-                        .background(DN.textDisplay)
+                        .background(DN.accent)
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -358,7 +358,10 @@ struct NotchContentView: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(isChatInputFocused ? DN.borderVisible : DN.border, lineWidth: 1)
+                .stroke(
+                    isChatInputFocused ? DN.accent.opacity(0.4) : DN.border,
+                    lineWidth: 1
+                )
         )
         .animation(.easeOut(duration: DN.microDuration), value: chatInputText.isEmpty)
         .animation(.easeOut(duration: DN.microDuration), value: isChatInputFocused)
@@ -1151,7 +1154,7 @@ struct MiniCalendarView: View {
             HStack {
                 Text(monthName)
                     .font(DN.label(8))
-                    .tracking(1.5)
+                    .tracking(0.8)
                     .foregroundColor(DN.textSecondary)
                 Spacer()
                 Text(yearString)

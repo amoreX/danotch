@@ -1,26 +1,27 @@
 import SwiftUI
 
-// MARK: - Nothing-Inspired Design Tokens
+// MARK: - Terminal Pro Design Tokens (Option A)
 
 enum DN {
-    // MARK: Colors (Dark Mode — OLED instrument panel)
+    // MARK: Colors — warmer OLED black, electric green-teal accent
 
-    static let black           = Color(hex: 0x000000)
-    static let surface         = Color(hex: 0x111111)
-    static let surfaceRaised   = Color(hex: 0x1A1A1A)
-    static let border          = Color(hex: 0x222222)
-    static let borderVisible   = Color(hex: 0x333333)
-    static let textDisabled    = Color(hex: 0x666666)
-    static let textSecondary   = Color(hex: 0x999999)
-    static let textPrimary     = Color(hex: 0xE8E8E8)
-    static let textDisplay     = Color.white
+    static let black           = Color(hex: 0x080808)   // warmer, not pure OLED
+    static let surface         = Color(hex: 0x101010)   // elevated surface
+    static let surfaceRaised   = Color(hex: 0x161616)   // further raised
+    static let border          = Color(hex: 0x1E1E1E)   // subtle border
+    static let borderVisible   = Color(hex: 0x2A2A2A)   // visible border
+    static let textDisabled    = Color(hex: 0x555555)   // dimmed
+    static let textSecondary   = Color(hex: 0x999999)   // secondary
+    static let textPrimary     = Color(hex: 0xDDDDDD)   // readable
+    static let textDisplay     = Color(hex: 0xF8F8F8)   // near-white
 
-    static let accent          = Color(hex: 0xD71921)  // Signal red — one per screen
-    static let accentSubtle    = Color(hex: 0xD71921).opacity(0.15)
-    static let success         = Color(hex: 0x4A9E5C)
-    static let warning         = Color(hex: 0xD4A843)
+    static let accent          = Color(hex: 0x00E5A0)   // electric green-teal — one per screen
+    static let accentSubtle    = Color(hex: 0x00E5A0).opacity(0.12)
+    static let success         = Color(hex: 0x00E5A0)   // unified with accent
+    static let warning         = Color(hex: 0xD4A843)   // amber — agent running
+    static let error           = Color(hex: 0xE05252)   // red — errors only
 
-    // MARK: Typography
+    // MARK: Typography — monospace identity, tightened hierarchy
 
     static func display(_ size: CGFloat) -> Font {
         .system(size: size, weight: .light, design: .monospaced)
@@ -51,10 +52,10 @@ enum DN {
     static let spaceLG:  CGFloat = 24
     static let spaceXL:  CGFloat = 32
 
-    // MARK: Motion
+    // MARK: Motion — easeOut only, crisp and fast
 
-    static let microDuration: Double = 0.2
-    static let transitionDuration: Double = 0.35
+    static let microDuration:      Double = 0.15
+    static let transitionDuration: Double = 0.28
 
     static var microAnimation: Animation {
         .easeOut(duration: microDuration)
@@ -71,7 +72,7 @@ enum DN {
         case .running:          return warning
         case .completed:        return success
         case .awaitingApproval: return accent
-        case .failed:           return accent
+        case .failed:           return error
         case .cancelled:        return textDisabled
         case .pending:          return textDisabled
         }

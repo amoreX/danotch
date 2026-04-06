@@ -71,8 +71,8 @@ class NotchSettings: ObservableObject {
         showDotGrid = true
         showAgentLiveState = true
         compactAgentRows = false
-        dotGridColor = "#FFFFFF"
-        dotGridOpacity = 0.6
+        dotGridColor = "#00E5A0"   // Option A: default to accent teal
+        dotGridOpacity = 0.35      // more subtle than before
         collapsedGroups = []
 
         // Then load from file

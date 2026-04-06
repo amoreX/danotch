@@ -123,6 +123,7 @@ struct NotchShellView: View {
             style: .continuous
         )
         .fill(DN.black)
+        // Outer border — only when expanded
         .overlay(
             UnevenRoundedRectangle(
                 topLeadingRadius: 0,
@@ -133,6 +134,29 @@ struct NotchShellView: View {
             )
             .stroke(expanded ? DN.border : .clear, lineWidth: 1)
         )
+        // Inner highlight — subtle top edge refraction, gives the panel depth
+        .overlay(
+            UnevenRoundedRectangle(
+                topLeadingRadius: 0,
+                bottomLeadingRadius: bottomRadius,
+                bottomTrailingRadius: bottomRadius,
+                topTrailingRadius: 0,
+                style: .continuous
+            )
+            .stroke(
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(expanded ? 0.07 : 0),
+                        Color.white.opacity(0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .center
+                ),
+                lineWidth: 1
+            )
+            .padding(1)
+        )
+        // Seal the physical notch edge
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(DN.black)
@@ -199,26 +223,22 @@ struct NotchShellView: View {
                         viewModel.viewState = .settings
                     }
                 }) {
-                    HStack(spacing: 2) {
-                        if settingsActive {
-                            Text("[")
-                                .font(DN.label(10))
-                                .foregroundColor(DN.textDisplay)
-                        }
+                    VStack(spacing: 3) {
                         Image(systemName: settingsActive ? "gearshape.fill" : "gearshape")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(settingsActive ? DN.textDisplay : DN.textDisabled)
-                        if settingsActive {
-                            Text("]")
-                                .font(DN.label(10))
-                                .foregroundColor(DN.textDisplay)
-                        }
+
+                        Rectangle()
+                            .fill(settingsActive ? DN.accent : Color.clear)
+                            .frame(height: 1.5)
+                            .cornerRadius(1)
                     }
-                    .padding(.horizontal, DN.spaceXS)
-                    .padding(.vertical, DN.spaceXS)
+                    .padding(.horizontal, DN.spaceSM)
+                    .padding(.vertical, 2)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .animation(.easeOut(duration: DN.microDuration), value: settingsActive)
 
                 if viewModel.settings.showBattery {
                     BatteryView()
@@ -232,15 +252,24 @@ struct NotchShellView: View {
 
     private func tabButton(label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(isActive ? "[ \(label) ]" : label)
-                .font(DN.label(10))
-                .tracking(1.2)
-                .foregroundColor(isActive ? DN.textDisplay : DN.textDisabled)
-                .padding(.horizontal, DN.spaceXS)
-                .padding(.vertical, DN.spaceXS)
-                .contentShape(Rectangle())
+            VStack(spacing: 3) {
+                Text(label)
+                    .font(DN.label(10))
+                    .tracking(0.8)
+                    .foregroundColor(isActive ? DN.textDisplay : DN.textDisabled)
+
+                // 2px underline indicator — replaces bracket notation
+                Rectangle()
+                    .fill(isActive ? DN.accent : Color.clear)
+                    .frame(height: 1.5)
+                    .cornerRadius(1)
+            }
+            .padding(.horizontal, DN.spaceSM)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .animation(.easeOut(duration: DN.microDuration), value: isActive)
     }
 }
 
@@ -449,12 +478,13 @@ struct SettingsToggleRow: View {
     let title: String
     let subtitle: String
     @Binding var isOn: Bool
+    @State private var isPressed = false
 
     var body: some View {
         HStack(spacing: DN.spaceSM) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundColor(isOn ? DN.textPrimary : DN.textDisabled)
+                .foregroundColor(isOn ? DN.accent : DN.textDisabled)
                 .frame(width: 18)
 
             VStack(alignment: .leading, spacing: 1) {
@@ -474,12 +504,23 @@ struct SettingsToggleRow: View {
         .padding(.horizontal, DN.spaceSM)
         .padding(.vertical, 6)
         .background(DN.surface)
+        .scaleEffect(isPressed ? 0.98 : 1.0)
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.easeOut(duration: DN.microDuration)) {
                 isOn.toggle()
             }
         }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in
+                    withAnimation(.easeOut(duration: 0.08)) { isPressed = true }
+                }
+                .onEnded { _ in
+                    withAnimation(.easeOut(duration: 0.12)) { isPressed = false }
+                }
+        )
+        .animation(.easeOut(duration: DN.microDuration), value: isPressed)
     }
 }
 
@@ -591,14 +632,14 @@ struct SettingsColorRow: View {
     @Binding var selectedHex: String
 
     private let presets: [(String, String)] = [
+        ("#00E5A0", "Teal"),    // Option A accent — first slot
         ("#FFFFFF", "White"),
         ("#D97757", "Orange"),
         ("#00B4D8", "Cyan"),
-        ("#D71921", "Red"),
+        ("#D4A843", "Amber"),
         ("#4A9E5C", "Green"),
-        ("#D4A843", "Yellow"),
         ("#A855F7", "Purple"),
-        ("#10A37F", "Teal"),
+        ("#E05252", "Red"),
     ]
 
     var body: some View {
@@ -658,7 +699,7 @@ struct SettingsToggle: View {
     var body: some View {
         ZStack(alignment: isOn ? .trailing : .leading) {
             Capsule()
-                .fill(isOn ? DN.success.opacity(0.8) : DN.border)
+                .fill(isOn ? DN.accent.opacity(0.75) : DN.border)
                 .frame(width: 32, height: 18)
 
             Circle()
