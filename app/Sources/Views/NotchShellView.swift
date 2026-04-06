@@ -5,13 +5,18 @@ import IOKit.ps
 struct NotchShellView: View {
     @ObservedObject var viewModel: NotchViewModel
 
+    // Separate width/height expansion state so they can be staggered
+    @State private var wideExpanded = false
+    @State private var tallExpanded = false
+
     private var screen: NSScreen { NSScreen.main ?? NSScreen.screens[0] }
     private var notchW: CGFloat { screen.notchWidth }
     private var notchH: CGFloat { screen.notchHeight }
     private var expanded: Bool { viewModel.isExpanded }
 
     private var shapeWidth: CGFloat {
-        if !expanded { return notchW }
+        if !wideExpanded { return notchW }
+        if !viewModel.isAuthenticated { return 520 }
         switch viewModel.viewState {
         case .taskList, .agentChat: return 540
         case .processList: return 540
@@ -22,7 +27,8 @@ struct NotchShellView: View {
     }
 
     private var shapeHeight: CGFloat {
-        if !expanded { return notchH }
+        if !tallExpanded { return notchH }
+        if !viewModel.isAuthenticated { return notchH + 260 }
         switch viewModel.viewState {
         case .overview: return notchH + 260
         case .taskList: return notchH + 260
@@ -34,7 +40,7 @@ struct NotchShellView: View {
     }
 
     private var bottomRadius: CGFloat {
-        expanded ? 16 : 8
+        wideExpanded ? 16 : 8
     }
 
     var body: some View {
@@ -42,7 +48,6 @@ struct NotchShellView: View {
             notchShape
 
             if expanded {
-                // Interactive dot grid behind content
                 if viewModel.settings.showDotGrid {
                     DotGridView(dotColor: viewModel.settings.dotGridSwiftColor)
                         .padding(.top, notchH)
@@ -50,14 +55,23 @@ struct NotchShellView: View {
                         .allowsHitTesting(false)
                 }
 
-                expandedTopBar
-                    .transition(.opacity)
+                if viewModel.isAuthenticated {
+                    expandedTopBar
+                        .transition(.opacity)
 
-                expandedContent
-                    .padding(.top, notchH + 1)
-                    .padding(.horizontal, DN.spaceMD)
-                    .padding(.bottom, DN.spaceSM)
-                    .frame(width: shapeWidth, alignment: .top)
+                    expandedContent
+                        .padding(.top, notchH + 1)
+                        .padding(.horizontal, DN.spaceMD)
+                        .padding(.bottom, DN.spaceSM)
+                        .frame(width: shapeWidth, alignment: .top)
+                } else {
+                    NotchAuthView(auth: AuthManager.shared)
+                        .padding(.top, notchH + 1)
+                        .padding(.horizontal, DN.spaceMD)
+                        .padding(.bottom, DN.spaceSM)
+                        .frame(width: 520, alignment: .top)
+                        .transition(.opacity)
+                }
             }
         }
         .frame(width: shapeWidth, height: shapeHeight)
@@ -74,8 +88,30 @@ struct NotchShellView: View {
             viewModel.mouseInContent = hovering
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(.easeOut(duration: 0.35), value: expanded)
-        .animation(.easeOut(duration: DN.transitionDuration), value: viewModel.viewState)
+        // Width: snappy spring, expands first / collapses last
+        // Width: easeOut only — spring would undershoot and expose background behind the panel
+        .animation(.easeOut(duration: 0.2), value: wideExpanded)
+        // Height: spring for the jelly feel — undershoot here is hidden by the menu bar
+        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: tallExpanded)
+        // Content fade + border
+        .animation(.easeOut(duration: 0.15), value: expanded)
+        // Tab / view state switches
+        .animation(.easeOut(duration: 0.18), value: viewModel.viewState)
+        .onChange(of: viewModel.isExpanded) { _, isNowExpanded in
+            if isNowExpanded {
+                // Width opens first, height follows 50ms later
+                wideExpanded = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    tallExpanded = true
+                }
+            } else {
+                // Height closes first, width follows 40ms later
+                tallExpanded = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                    wideExpanded = false
+                }
+            }
+        }
     }
 
     private var notchShape: some View {
@@ -97,6 +133,11 @@ struct NotchShellView: View {
             )
             .stroke(expanded ? DN.border : .clear, lineWidth: 1)
         )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(DN.black)
+                .frame(height: 1)
+        }
     }
 
     // MARK: - Expanded Content

@@ -136,6 +136,7 @@ class NotchViewModel: ObservableObject {
     var lastViewBeforeCollapse: NotchViewState = .overview
 
     var authManager: AuthManager?
+    @Published var isAuthenticated: Bool = AuthManager.shared.isAuthenticated
 
     @Published var settings = NotchSettings()
     @Published var agentMonitor = AgentMonitor()
@@ -199,6 +200,12 @@ class NotchViewModel: ObservableObject {
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        AuthManager.shared.$isAuthenticated
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] value in
+                self?.isAuthenticated = value
+            }
+            .store(in: &cancellables)
     }
 
     func startClock() {

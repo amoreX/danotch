@@ -1,54 +1,49 @@
 import SwiftUI
 
-enum OnboardingStep {
+// MARK: - Notch-native auth view (compact, fits within the notch expanded area)
+
+enum AuthStep {
     case welcome
     case signup
     case login
 }
 
-struct OnboardingView: View {
+struct NotchAuthView: View {
     @ObservedObject var auth: AuthManager
-    let onComplete: () -> Void
 
-    @State private var step: OnboardingStep = .welcome
+    @State private var step: AuthStep = .welcome
     @State private var email = ""
     @State private var password = ""
     @State private var fullName = ""
 
     var body: some View {
-        ZStack {
-            DN.black.ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                switch step {
-                case .welcome:
-                    welcomeStep
-                case .signup:
-                    authStep(isSignup: true)
-                case .login:
-                    authStep(isSignup: false)
-                }
-            }
-            .frame(width: 360, height: 440)
+        switch step {
+        case .welcome:
+            welcomeStep
+        case .signup:
+            authStep(isSignup: true)
+        case .login:
+            authStep(isSignup: false)
         }
-        .frame(width: 360, height: 440)
     }
 
     // MARK: - Welcome
 
     private var welcomeStep: some View {
-        VStack(spacing: DN.spaceLG) {
+        VStack(spacing: 0) {
             Spacer()
 
-            Text("DANOTCH")
-                .font(DN.display(28))
-                .tracking(6)
-                .foregroundColor(DN.textDisplay)
+            VStack(spacing: DN.spaceSM) {
+                Text("DANOTCH")
+                    .font(DN.display(26))
+                    .tracking(6)
+                    .foregroundColor(DN.textDisplay)
 
-            Text("WELCOME TO THE NOTCH")
-                .font(DN.label(10))
-                .tracking(2)
-                .foregroundColor(DN.textDisabled)
+                Text("WELCOME TO THE NOTCH")
+                    .font(DN.label(9))
+                    .tracking(2)
+                    .foregroundColor(DN.textDisabled)
+            }
 
             Spacer()
 
@@ -57,53 +52,44 @@ struct OnboardingView: View {
                     step = .signup
                 }
             }) {
-                Text("START")
-                    .font(DN.label(11))
+                Text("GET STARTED")
+                    .font(DN.label(10))
                     .tracking(2)
                     .foregroundColor(DN.black)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
+                    .padding(.vertical, 12)
                     .background(DN.textDisplay)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, DN.spaceXL)
-            .padding(.bottom, DN.spaceXL)
         }
     }
 
     // MARK: - Auth (signup / login)
 
     private func authStep(isSignup: Bool) -> some View {
-        VStack(spacing: DN.spaceMD) {
-            Spacer().frame(height: DN.spaceLG)
-
+        VStack(spacing: DN.spaceSM) {
             Text(isSignup ? "CREATE ACCOUNT" : "SIGN IN")
-                .font(DN.label(12))
+                .font(DN.label(11))
                 .tracking(2)
                 .foregroundColor(DN.textDisplay)
 
-            Text(isSignup ? "Get started with Danotch" : "Welcome back")
-                .font(DN.body(12))
-                .foregroundColor(DN.textDisabled)
+            Spacer().frame(height: 2)
 
-            Spacer().frame(height: DN.spaceSM)
-
-            VStack(spacing: DN.spaceSM) {
+            VStack(spacing: 6) {
                 if isSignup {
                     inputField("Full Name", text: $fullName, icon: "person")
                 }
                 inputField("Email", text: $email, icon: "envelope")
                 inputField("Password", text: $password, icon: "lock", isSecure: true)
             }
-            .padding(.horizontal, DN.spaceXL)
 
             if let error = auth.error {
                 Text(error)
                     .font(DN.mono(9))
                     .foregroundColor(DN.accent)
-                    .padding(.horizontal, DN.spaceXL)
                     .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
 
             Spacer()
@@ -117,14 +103,14 @@ struct OnboardingView: View {
                                 .tint(DN.black)
                         } else {
                             Text(isSignup ? "SIGN UP" : "SIGN IN")
-                                .font(DN.label(11))
+                                .font(DN.label(10))
                                 .tracking(2)
                                 .foregroundColor(DN.black)
                         }
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(canSubmit ? DN.textDisplay : DN.textDisabled)
+                    .padding(.vertical, 11)
+                    .background(canSubmit ? DN.textDisplay : DN.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
@@ -133,17 +119,15 @@ struct OnboardingView: View {
                 Button(action: {
                     withAnimation(.easeOut(duration: DN.microDuration)) {
                         auth.error = nil
-                        if isSignup { step = .login } else { step = .signup }
+                        step = isSignup ? .login : .signup
                     }
                 }) {
-                    Text(isSignup ? "Already have an account? **Sign in**" : "New here? **Sign up**")
-                        .font(DN.body(11))
+                    Text(isSignup ? "Already have an account? Sign in" : "New here? Sign up")
+                        .font(DN.body(10))
                         .foregroundColor(DN.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, DN.spaceXL)
-            .padding(.bottom, DN.spaceXL)
         }
     }
 
@@ -153,15 +137,12 @@ struct OnboardingView: View {
 
     private func performAuth(isSignup: Bool) {
         Task {
-            let success: Bool
             if isSignup {
-                success = await auth.signup(email: email, password: password, fullName: fullName)
+                _ = await auth.signup(email: email, password: password, fullName: fullName)
             } else {
-                success = await auth.login(email: email, password: password)
+                _ = await auth.login(email: email, password: password)
             }
-            if success {
-                await MainActor.run { onComplete() }
-            }
+            // View reactively dismisses when auth.isAuthenticated flips
         }
     }
 
@@ -170,9 +151,9 @@ struct OnboardingView: View {
     private func inputField(_ placeholder: String, text: Binding<String>, icon: String, isSecure: Bool = false) -> some View {
         HStack(spacing: DN.spaceSM) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundColor(DN.textDisabled)
-                .frame(width: 16)
+                .frame(width: 14)
 
             if isSecure {
                 SecureField(placeholder, text: text)
@@ -186,12 +167,12 @@ struct OnboardingView: View {
                     .foregroundColor(DN.textPrimary)
             }
         }
-        .padding(.horizontal, DN.spaceSM + 4)
-        .padding(.vertical, 12)
+        .padding(.horizontal, DN.spaceSM + 2)
+        .padding(.vertical, 9)
         .background(DN.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 7)
                 .stroke(DN.border, lineWidth: 1)
         )
     }

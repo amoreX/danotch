@@ -85,6 +85,13 @@ class NotchWindowController: NSObject {
         startMouseTracking()
         startKeyboardShortcut()
 
+        // Auto-expand on first launch for unauthenticated users
+        if !viewModel.isAuthenticated {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.expand()
+            }
+        }
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(screenChanged),
@@ -127,8 +134,9 @@ class NotchWindowController: NSObject {
                 self?.handleGlobalShortcut()
                 return nil
             }
-            // Escape to collapse
+            // Escape to collapse — blocked during auth
             if event.keyCode == 53 && self?.viewModel.isExpanded == true {
+                guard self?.viewModel.isAuthenticated == true else { return nil }
                 self?.collapse()
                 return nil
             }
@@ -140,6 +148,8 @@ class NotchWindowController: NSObject {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             if self.viewModel.isExpanded {
+                // Block collapse via keyboard shortcut during auth
+                guard self.viewModel.isAuthenticated else { return }
                 self.collapse()
             } else {
                 self.expand()
@@ -221,8 +231,10 @@ class NotchWindowController: NSObject {
                 viewModel.isChatInputActive = false
                 viewModel.shouldFocusChatInput = false
             }
-            // Don't auto-collapse if in a chat and setting is on
-            if case .agentChat = viewModel.viewState, viewModel.settings.keepOpenInChat {
+            // Don't auto-collapse if in a chat and setting is on (only when authenticated)
+            if viewModel.isAuthenticated,
+               case .agentChat = viewModel.viewState,
+               viewModel.settings.keepOpenInChat {
                 return
             }
             scheduleCollapse()
@@ -232,17 +244,13 @@ class NotchWindowController: NSObject {
     private func expand() {
         panel.ignoresMouseEvents = false
         viewModel.restoreOrResetView()
-        withAnimation(.snappy(duration: 0.35)) {
-            viewModel.isExpanded = true
-        }
+        viewModel.isExpanded = true
     }
 
     private func collapse() {
-        withAnimation(.snappy(duration: 0.3)) {
-            viewModel.isExpanded = false
-            viewModel.isChatInputActive = false
-            viewModel.resetView()
-        }
+        viewModel.isExpanded = false
+        viewModel.isChatInputActive = false
+        viewModel.resetView()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
             guard let self = self else { return }
             if !self.viewModel.isExpanded {
