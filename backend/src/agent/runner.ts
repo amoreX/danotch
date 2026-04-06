@@ -5,6 +5,7 @@ import type { Task, ChatMessage } from '../types.js';
 import { config } from '../config.js';
 import { supabase } from '../lib/supabase.js';
 import { scheduledTaskTools, executeScheduledTool } from '../tools/scheduled.js';
+import { localTools, executeLocalTool } from '../tools/local.js';
 
 const anthropic = new Anthropic();
 
@@ -141,7 +142,7 @@ export async function runChat(
   });
 
   let fullText = '';
-  const toolsUsed: { name: string; timestamp: string }[] = [];
+  const toolsUsed: { name: string; input?: string; timestamp: string }[] = [];
 
   try {
     // Build conversation from in-memory history
@@ -153,7 +154,11 @@ export async function runChat(
       }));
 
     // Include scheduled task tools if user is authenticated
-    const tools = userId ? scheduledTaskTools : [];
+    // All tools: local (bash, web) always, scheduled only if authed
+    const tools: Anthropic.Tool[] = [
+      ...localTools,
+      ...(userId ? scheduledTaskTools : []),
+    ];
 
     // Tool-use loop: stream → handle tool calls → stream again
     let maxLoops = 5;
@@ -181,32 +186,55 @@ export async function runChat(
         (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
       );
 
-      if (toolUseBlocks.length > 0 && userId) {
+      if (toolUseBlocks.length > 0) {
         // Add assistant message with tool calls to conversation
         apiMessages.push({ role: 'assistant', content: finalMessage.content });
 
         // Execute each tool and collect results
         const toolResults: Anthropic.ToolResultBlockParam[] = [];
         for (const toolBlock of toolUseBlocks) {
+          const toolInput = toolBlock.input as Record<string, unknown>;
+          const inputSummary = summarizeToolInput(toolBlock.name, toolInput);
+
           task.toolCallsCount++;
           task.currentToolName = toolBlock.name;
-          toolsUsed.push({ name: toolBlock.name, timestamp: new Date().toISOString() });
+          toolsUsed.push({ name: toolBlock.name, input: inputSummary, timestamp: new Date().toISOString() });
 
-          notch.sendProgress(id, { type: 'tool_start', tool_name: toolBlock.name });
-          console.log(`[chat] Tool call: ${toolBlock.name}`, JSON.stringify(toolBlock.input).slice(0, 200));
+          notch.sendProgress(id, {
+            type: 'tool_start',
+            tool_name: toolBlock.name,
+            tool_input: inputSummary,
+          });
+          console.log(`[chat] Tool call: ${toolBlock.name} → ${inputSummary}`);
 
-          task.chatHistory.push({
-            id: uuid(), role: 'tool', content: `Using ${toolBlock.name}`,
-            toolName: toolBlock.name, timestamp: new Date(),
+          // Route to correct handler
+          let result: string;
+          const scheduledToolNames = ['create_scheduled_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task'];
+          if (scheduledToolNames.includes(toolBlock.name) && userId) {
+            result = await executeScheduledTool(toolBlock.name, toolInput, userId);
+          } else {
+            result = await executeLocalTool(toolBlock.name, toolInput);
+          }
+
+          const resultSummary = result.slice(0, 300);
+          console.log(`[chat] Tool result: ${resultSummary.slice(0, 150)}`);
+
+          // Send tool result to notch app
+          notch.sendProgress(id, {
+            type: 'tool_result',
+            tool_name: toolBlock.name,
+            tool_input: inputSummary,
+            tool_output: resultSummary,
           });
 
-          const result = await executeScheduledTool(
-            toolBlock.name,
-            toolBlock.input as Record<string, unknown>,
-            userId
-          );
+          // Add to chat history with detail
+          task.chatHistory.push({
+            id: uuid(), role: 'tool',
+            content: resultSummary,
+            toolName: toolBlock.name,
+            timestamp: new Date(),
+          });
 
-          console.log(`[chat] Tool result: ${result.slice(0, 200)}`);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: toolBlock.id,
@@ -335,6 +363,19 @@ export async function deleteThread(userId: string, threadId: string) {
 }
 
 // ── Helpers ──
+
+function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'bash_execute': return (input.command as string)?.slice(0, 80) ?? '';
+    case 'web_search': return (input.query as string) ?? '';
+    case 'web_fetch': return (input.url as string) ?? '';
+    case 'create_scheduled_task': return (input.name as string) ?? '';
+    case 'list_scheduled_tasks': return '';
+    case 'update_scheduled_task': return (input.id as string)?.slice(0, 8) ?? '';
+    case 'delete_scheduled_task': return (input.id as string)?.slice(0, 8) ?? '';
+    default: return JSON.stringify(input).slice(0, 80);
+  }
+}
 
 function createOrUpdateTask(id: string, message: string): Task {
   let task = tasks.get(id);

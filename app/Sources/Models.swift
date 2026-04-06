@@ -20,8 +20,10 @@ struct DraftCard {
 struct ChatMessage: Identifiable {
     let id: String
     let role: String
-    let content: String
+    var content: String
     let toolName: String?
+    var toolInput: String?
+    var toolOutput: String?
     let draftCard: DraftCard?
     let timestamp: Date
 }

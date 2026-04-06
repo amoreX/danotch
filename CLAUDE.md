@@ -212,6 +212,7 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 - **SubagentTask**: id, task, description, status, toolCallsCount, streamingText, chatHistory, threadId, isFromHistory — used for WebSocket-driven tasks and loaded DB threads. `threadId` links to Supabase thread for follow-ups. `isFromHistory` = true for loaded threads (hidden from recents until user sends a message)
 - **TaskStatus**: pending, running, completed, failed, cancelled, awaitingApproval
 - **ScheduledTask**: id, name, prompt, taskType, scheduleHuman, enabled, lastRunAt, nextRunAt, runCount, lastStatus, lastResultSummary, notifyUser — loaded from `GET /api/scheduled`, displayed on HOME tab. Expandable to show last output as markdown. Bell icon shown for `notifyUser=true` tasks
+- **ChatMessage**: id, role, content, toolName?, toolInput?, toolOutput?, draftCard?, timestamp — tool messages now carry input summary and output preview for richer display
 - **NotificationItem**: id, title, body, source, sourceId, read, createdAt — from `GET /api/notifications`. Grouped by sourceId in notifications panel
 
 ### Settings (`NotchSettings`)
@@ -304,7 +305,8 @@ backend/src/
 ├── agent/
 │   └── runner.ts     — runChat() with tool-use loop, DB persistence, thread management
 ├── tools/
-│   └── scheduled.ts  — Anthropic tool definitions + handlers for scheduled task CRUD
+│   ├── scheduled.ts  — Anthropic tool definitions + handlers for scheduled task CRUD
+│   └── local.ts      — bash_execute (shell commands), web_search (DuckDuckGo), web_fetch (URL content)
 ├── scheduler/
 │   ├── index.ts      — 30s tick loop: picks up due tasks, runs Claude, creates notifications
 │   └── compute-next.ts — cron-parser wrapper: computeNextRun(), isValidCron(), cronToHuman()
@@ -357,11 +359,20 @@ Single execution mode in `runner.ts`:
 
 **Tool-use loop**: Stream → if Claude returns `tool_use` blocks → execute each tool → add tool results to conversation → stream again. Max 5 loops. Tool calls tracked in `toolsUsed` array and sent to notch as `tool_start` progress events.
 
+**Local tools** (defined in `src/tools/local.ts`):
+- `bash_execute` — runs shell command via `child_process.exec()`, 30s timeout, 1MB buffer. Returns stdout + stderr, truncated to 5000 chars
+- `web_search` — queries DuckDuckGo HTML lite, parses result snippets (title + description), returns top 5. No API key needed
+- `web_fetch` — fetches URL content, strips HTML tags for readability. Handles JSON (pretty-prints) and HTML (text extraction). 15s timeout, 5000 char limit
+
 **Scheduled task tools** (defined in `src/tools/scheduled.ts`):
 - `create_scheduled_task` — params: name, prompt, task_type, cron?, interval_ms?, target_app?, `notify_user?`. Validates cron/interval, inserts row, computes next_run_at. Claude sets `notify_user: true` for conditional alerts ("notify me when...") and `false` (default) for silent background tasks
 - `list_scheduled_tasks` — returns all tasks with human-readable schedule + notify_user flag
 - `update_scheduled_task` — updates fields, recomputes next_run_at if schedule changed
 - `delete_scheduled_task` — deletes by id (scoped to userId)
+
+**Tool routing**: `summarizeToolInput()` generates display summaries per tool type (command for bash, query for search, etc.). Scheduled tools routed to `executeScheduledTool()` (requires userId), local tools to `executeLocalTool()`. All tools always available; scheduled tools only functional when authenticated.
+
+**Tool WebSocket events**: `tool_start` includes `tool_name` + `tool_input` (summary). `tool_result` includes `tool_name` + `tool_input` + `tool_output` (summary). Swift side adds tool messages to chatHistory on `tool_start`, updates with output on `tool_result`.
 
 **DB persistence pattern**: User message save is `await`ed (must be in DB before streaming). Assistant message save is fire-and-forget (`dbSave()` wraps in `.catch()` — never blocks streaming). On errors, partial content + tools_used + error message are all saved with `status: "failed"` and `partial: true` in metadata.
 

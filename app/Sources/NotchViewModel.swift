@@ -662,10 +662,24 @@ class NotchViewModel: ObservableObject {
             case "token":
                 if let text = data["text"] as? String { tasks[idx].streamingText += text }
             case "tool_start":
-                tasks[idx].currentToolName = data["tool_name"] as? String
+                let toolName = data["tool_name"] as? String
+                let toolInput = data["tool_input"] as? String
+                tasks[idx].currentToolName = toolName
+                // Add tool call to chat history (will be updated with output on tool_result)
+                tasks[idx].chatHistory.append(ChatMessage(
+                    id: UUID().uuidString, role: "tool", content: "",
+                    toolName: toolName, toolInput: toolInput, toolOutput: nil,
+                    draftCard: nil, timestamp: Date()
+                ))
             case "tool_result":
                 tasks[idx].toolCallsCount += 1
                 tasks[idx].currentToolName = nil
+                let toolOutput = data["tool_output"] as? String
+                // Update the last tool message with output
+                if let lastToolIdx = tasks[idx].chatHistory.lastIndex(where: { $0.role == "tool" }) {
+                    tasks[idx].chatHistory[lastToolIdx].toolOutput = toolOutput
+                    tasks[idx].chatHistory[lastToolIdx].content = toolOutput ?? ""
+                }
             case "thinking_complete":
                 if let text = data["text"] as? String { tasks[idx].streamingText = text }
             default: break
