@@ -20,8 +20,10 @@ struct DraftCard {
 struct ChatMessage: Identifiable {
     let id: String
     let role: String
-    let content: String
+    var content: String
     let toolName: String?
+    var toolInput: String?
+    var toolOutput: String?
     let draftCard: DraftCard?
     let timestamp: Date
 }
@@ -42,6 +44,7 @@ struct SubagentTask: Identifiable {
     var draftCard: DraftCard?
     var chatHistory: [ChatMessage]
     var threadId: String?
+    var isFromHistory: Bool = false
 
     var isActive: Bool {
         status == .running || status == .pending || status == .awaitingApproval
@@ -223,6 +226,7 @@ enum NotchViewState: Equatable {
     case stats
     case processList
     case settings
+    case notifications
 
     static func == (lhs: NotchViewState, rhs: NotchViewState) -> Bool {
         switch (lhs, rhs) {
@@ -232,7 +236,35 @@ enum NotchViewState: Equatable {
         case (.stats, .stats): return true
         case (.processList, .processList): return true
         case (.settings, .settings): return true
+        case (.notifications, .notifications): return true
         default: return false
         }
     }
+}
+
+// MARK: - Scheduled Tasks
+
+struct ScheduledTask: Identifiable {
+    let id: String
+    let name: String
+    let prompt: String
+    let taskType: String
+    let scheduleHuman: String
+    var enabled: Bool
+    let lastRunAt: String?
+    let nextRunAt: String?
+    let runCount: Int
+    let lastStatus: String?
+    let lastResultSummary: String?
+    let notifyUser: Bool
+}
+
+struct NotificationItem: Identifiable {
+    let id: String
+    let title: String
+    let body: String?
+    let source: String
+    let sourceId: String?
+    var read: Bool
+    let createdAt: String
 }

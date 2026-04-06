@@ -41,6 +41,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func startNotch() {
         windowController = NotchWindowController(viewModel: viewModel)
         windowController?.show()
+
+        // Load initial data
+        viewModel.loadUnreadCount()
+
         NSApp.setActivationPolicy(.accessory)
         print("[Danotch] Ready — hover over the notch to expand")
     }

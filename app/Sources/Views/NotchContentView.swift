@@ -95,7 +95,7 @@ struct NotchContentView: View {
             agentsColumn
         case .agentChat(let taskId):
             AgentChatView(viewModel: viewModel, taskId: taskId)
-        case .stats, .processList, .settings:
+        case .stats, .processList, .settings, .notifications:
             EmptyView()
         }
     }
@@ -109,7 +109,7 @@ struct NotchContentView: View {
                 .tracking(0.8)
                 .foregroundColor(DN.textSecondary)
 
-            if viewModel.agentMonitor.agents.isEmpty && viewModel.tasks.isEmpty {
+            if viewModel.agentMonitor.agents.isEmpty && activeTasks.isEmpty && viewModel.scheduledTasks.isEmpty {
                 emptyAgentState
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
@@ -120,8 +120,13 @@ struct NotchContentView: View {
                             }
                         }
 
+                        // Scheduled tasks
+                        if !viewModel.scheduledTasks.isEmpty {
+                            ScheduledTasksSection(viewModel: viewModel)
+                        }
+
                         // User tasks from chat
-                        if !viewModel.tasks.isEmpty {
+                        if !activeTasks.isEmpty {
                             tasksSection(compact: viewModel.settings.compactAgentRows)
                         }
                     }
@@ -132,6 +137,9 @@ struct NotchContentView: View {
             chatInputBar
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear {
+            viewModel.loadScheduledTasks()
+        }
         .onChange(of: viewModel.shouldFocusChatInput) { _, shouldFocus in
             if shouldFocus {
                 isChatInputFocused = true
@@ -188,7 +196,7 @@ struct NotchContentView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: DN.spaceXS) {
                     // Active / recent in-memory tasks
-                    ForEach(viewModel.tasks) { task in
+                    ForEach(viewModel.tasks.filter { !$0.isFromHistory }) { task in
                         AgentRow(
                             task: task,
                             isCompact: false,
@@ -222,7 +230,7 @@ struct NotchContentView: View {
                         }
                     }
 
-                    if viewModel.tasks.isEmpty && viewModel.threadHistory.isEmpty {
+                    if activeTasks.isEmpty && viewModel.threadHistory.isEmpty {
                         VStack(spacing: DN.spaceSM) {
                             Spacer().frame(height: DN.spaceLG)
                             Text("NO CONVERSATIONS")
@@ -241,6 +249,7 @@ struct NotchContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             viewModel.loadThreadHistory()
+            viewModel.loadScheduledTasks()
         }
     }
 
@@ -370,6 +379,10 @@ struct NotchContentView: View {
 
     // MARK: - Tasks Section
 
+    private var activeTasks: [SubagentTask] {
+        viewModel.tasks.filter { !$0.isFromHistory }
+    }
+
     private func tasksSection(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: DN.spaceSM) {
@@ -383,13 +396,13 @@ struct NotchContentView: View {
                     .tracking(1.0)
                     .foregroundColor(DN.textSecondary)
 
-                Text("\(viewModel.tasks.count)")
+                Text("\(activeTasks.count)")
                     .font(DN.mono(9, weight: .medium))
                     .foregroundColor(DN.textDisabled)
 
                 Spacer()
 
-                let active = viewModel.tasks.filter { $0.isActive }.count
+                let active = activeTasks.filter { $0.isActive }.count
                 if active > 0 {
                     HStack(spacing: 3) {
                         Circle().fill(DN.warning).frame(width: 4, height: 4)
@@ -404,7 +417,7 @@ struct NotchContentView: View {
             .padding(.vertical, DN.spaceXS + 1)
 
             VStack(spacing: 1) {
-                ForEach(viewModel.tasks) { task in
+                ForEach(activeTasks) { task in
                     AgentRow(
                         task: task,
                         isCompact: compact,
@@ -1060,6 +1073,171 @@ struct NowPlayingView: View {
                 .foregroundColor(accentColor)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Scheduled Tasks Section
+
+struct ScheduledTasksSection: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @State private var isExpanded = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            // Header
+            Button(action: {
+                withAnimation(.easeOut(duration: DN.microDuration)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: DN.spaceSM) {
+                    Image(systemName: "clock.arrow.2.circlepath")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(DN.warning)
+
+                    Text("SCHEDULED")
+                        .font(DN.label(8))
+                        .tracking(1.2)
+                        .foregroundColor(DN.textSecondary)
+
+                    Text("\(viewModel.scheduledTasks.filter { $0.enabled }.count)")
+                        .font(DN.mono(8))
+                        .foregroundColor(DN.textDisabled)
+
+                    Spacer()
+
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(DN.textDisabled)
+                }
+                .padding(.horizontal, DN.spaceSM)
+                .padding(.vertical, DN.spaceXS)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(spacing: 1) {
+                    ForEach(viewModel.scheduledTasks) { task in
+                        ScheduledTaskRow(task: task, viewModel: viewModel)
+                    }
+                }
+            }
+        }
+        .background(DN.surface.opacity(0.4))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(DN.border, lineWidth: 0.5)
+        )
+    }
+}
+
+struct ScheduledTaskRow: View {
+    let task: ScheduledTask
+    @ObservedObject var viewModel: NotchViewModel
+    @State private var isHovering = false
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Main row
+            HStack(spacing: DN.spaceSM) {
+                Circle()
+                    .fill(task.enabled ? DN.warning : DN.textDisabled)
+                    .frame(width: 5, height: 5)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(task.name)
+                        .font(DN.body(10, weight: .medium))
+                        .foregroundColor(task.enabled ? DN.textPrimary : DN.textDisabled)
+                        .lineLimit(1)
+
+                    HStack(spacing: DN.spaceXS) {
+                        if task.notifyUser {
+                            Image(systemName: "bell.fill")
+                                .font(.system(size: 7))
+                                .foregroundColor(DN.accent.opacity(0.7))
+                        }
+
+                        Text(task.scheduleHuman)
+                            .font(DN.mono(8))
+                            .foregroundColor(DN.textDisabled)
+
+                        if let lastStatus = task.lastStatus {
+                            Text("·")
+                                .foregroundColor(DN.textDisabled)
+                            Text(lastStatus == "completed" ? "✓" : "✗")
+                                .font(DN.mono(8))
+                                .foregroundColor(lastStatus == "completed" ? DN.success : DN.accent)
+                        }
+
+                        if task.runCount > 0 {
+                            Text("·")
+                                .foregroundColor(DN.textDisabled)
+                            Text("\(task.runCount)×")
+                                .font(DN.mono(8))
+                                .foregroundColor(DN.textDisabled)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                if isHovering {
+                    Button(action: {
+                        viewModel.toggleScheduledTask(task.id, enabled: !task.enabled)
+                    }) {
+                        Image(systemName: task.enabled ? "pause.circle" : "play.circle")
+                            .font(.system(size: 12))
+                            .foregroundColor(task.enabled ? DN.warning : DN.success)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: {
+                        withAnimation(.easeOut(duration: DN.microDuration)) {
+                            viewModel.deleteScheduledTask(task.id)
+                        }
+                    }) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                            .foregroundColor(DN.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, DN.spaceSM)
+            .padding(.vertical, DN.spaceXS + 1)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if task.lastResultSummary != nil {
+                    withAnimation(.easeOut(duration: DN.microDuration)) {
+                        isExpanded.toggle()
+                    }
+                }
+            }
+
+            // Expanded: show last result
+            if isExpanded, let summary = task.lastResultSummary {
+                VStack(alignment: .leading, spacing: DN.spaceXS) {
+                    Divider().background(DN.border)
+
+                    Text("LAST OUTPUT")
+                        .font(DN.label(7))
+                        .tracking(1)
+                        .foregroundColor(DN.textDisabled)
+
+                    MarkdownView(text: summary, isFinal: true)
+                        .lineLimit(10)
+                }
+                .padding(.horizontal, DN.spaceSM)
+                .padding(.bottom, DN.spaceXS + 1)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(isHovering || isExpanded ? DN.surface : .clear)
+        .animation(.easeOut(duration: DN.microDuration), value: isHovering)
+        .onHover { isHovering = $0 }
     }
 }
 

@@ -1,10 +1,11 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuid } from 'uuid';
 import type { NotchBridge } from '../events/notch.js';
 import type { Task, ChatMessage } from '../types.js';
 import { config } from '../config.js';
 import { supabase } from '../lib/supabase.js';
+import { scheduledTaskTools, executeScheduledTool } from '../tools/scheduled.js';
+import { localTools, executeLocalTool } from '../tools/local.js';
 
 const anthropic = new Anthropic();
 
@@ -78,137 +79,44 @@ async function updateThreadTimestamp(threadId: string) {
     .eq('id', threadId);
 }
 
-// ── Agent runner (Claude Agent SDK with tools) ──
-
-export async function runAgent(
-  message: string,
-  notch: NotchBridge,
-  options?: { sessionId?: string; cwd?: string; userId?: string; threadId?: string }
-): Promise<Task & { threadId: string }> {
-  const id = options?.sessionId ?? uuid();
-  const userId = options?.userId;
-
-  let threadId = id;
-  if (userId) {
-    threadId = await ensureThread(userId, options?.threadId, message);
-    // Save user message (awaited — we want it in DB before streaming starts)
-    await saveMessage(threadId, userId, 'user', message);
-  }
-
-  const task = createOrUpdateTask(id, message);
-  notch.sendStatus(id, {
-    task: task.task,
-    description: task.description,
-    status: 'running',
-    tool_calls_count: task.toolCallsCount,
-  });
-
-  let lastText = '';
-  const toolsUsed: { name: string; timestamp: string }[] = [];
-
+async function generateThreadTitle(
+  threadId: string, sessionId: string, userMessage: string, assistantResponse: string, notch: NotchBridge
+) {
   try {
-    const agentQuery = query({
-      prompt: message,
-      options: {
-        model: config.agent.model,
-        maxTurns: config.agent.maxTurns,
-        systemPrompt: config.agent.systemPrompt,
-        permissionMode: config.agent.permissionMode,
-        cwd: options?.cwd || process.cwd(),
-      },
+    const resp = await anthropic.messages.create({
+      model: config.api.model,
+      max_tokens: 30,
+      system: 'Generate a very short title (3-6 words max) for this conversation. Return ONLY the title, nothing else. No quotes.',
+      messages: [
+        { role: 'user', content: userMessage },
+        { role: 'assistant', content: assistantResponse.slice(0, 300) },
+        { role: 'user', content: 'Title:' },
+      ],
     });
+    const title = resp.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim()
+      .slice(0, 80);
 
-    for await (const event of agentQuery) {
-      switch (event.type) {
-        case 'assistant': {
-          const msg = event.message;
-          for (const block of msg.content) {
-            if (block.type === 'text') {
-              lastText = block.text;
-              notch.sendProgress(id, { type: 'token', text: block.text });
-            }
-            if (block.type === 'tool_use') {
-              task.toolCallsCount++;
-              task.currentToolName = block.name;
-              toolsUsed.push({ name: block.name, timestamp: new Date().toISOString() });
-              notch.sendProgress(id, { type: 'tool_start', tool_name: block.name });
-              task.chatHistory.push({
-                id: uuid(), role: 'tool', content: `Using ${block.name}`,
-                toolName: block.name, timestamp: new Date(),
-              });
-            }
-          }
-          break;
-        }
-        case 'result': {
-          if (event.subtype === 'success') lastText = event.result;
-          break;
-        }
-        case 'stream_event': {
-          const streamEvent = event.event;
-          if (streamEvent.type === 'content_block_delta') {
-            const delta = streamEvent.delta;
-            if ('text' in delta && delta.text) {
-              task.streamingText += delta.text;
-              notch.sendProgress(id, { type: 'token', text: delta.text });
-            }
-          }
-          break;
-        }
-        default:
-          break;
-      }
-    }
-
-    // Success
-    task.chatHistory.push({ id: uuid(), role: 'agent', content: lastText, timestamp: new Date() });
-    task.status = 'completed';
-    task.result = lastText;
-    task.completedAt = new Date();
-    task.currentToolName = undefined;
-    task.streamingText = '';
-
-    // Fire-and-forget DB save
-    if (userId) {
-      dbSave(async () => {
-        await saveMessage(threadId, userId, 'assistant', lastText, {
-          tools_used: toolsUsed,
-          model: config.agent.model,
-          status: 'completed',
-        });
-        await updateThreadTimestamp(threadId);
+    if (title) {
+      await supabase.from('threads').update({ title }).eq('id', threadId);
+      console.log(`[runner] Thread title: "${title}"`);
+      // Push title update to app
+      notch.send({
+        type: 'subagent_event',
+        session_id: sessionId,
+        event_type: 'status',
+        data: { title, description: title },
       });
     }
-
-    notch.sendDone(id, { status: 'completed', result: lastText });
-    return { ...task, threadId };
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-    task.status = 'failed';
-    task.error = errorMsg;
-    task.completedAt = new Date();
-
-    // Save error + whatever partial content and tools we accumulated
-    if (userId) {
-      const partialText = lastText || task.streamingText || '';
-      dbSave(async () => {
-        await saveMessage(threadId, userId, 'assistant', partialText || '[No response — request failed]', {
-          tools_used: toolsUsed,
-          model: config.agent.model,
-          status: 'failed',
-          error: errorMsg,
-          partial: partialText.length > 0,
-        });
-        await updateThreadTimestamp(threadId);
-      });
-    }
-
-    notch.sendDone(id, { status: 'failed', error: errorMsg });
-    return { ...task, threadId };
+  } catch (e) {
+    // Non-critical, ignore
   }
 }
 
-// ── Chat runner (Anthropic API, no tools) ──
+// ── Chat runner (Anthropic API with tool use) ──
 
 export async function runChat(
   message: string,
@@ -234,57 +142,157 @@ export async function runChat(
   });
 
   let fullText = '';
+  const toolsUsed: { name: string; input?: string; timestamp: string }[] = [];
 
   try {
-    const messages: Anthropic.MessageParam[] = task.chatHistory
+    // Build conversation from in-memory history
+    const apiMessages: Anthropic.MessageParam[] = task.chatHistory
       .filter((m) => m.role === 'user' || m.role === 'agent')
       .map((m) => ({
         role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
         content: m.content,
       }));
 
-    const stream = await anthropic.messages.stream({
-      model: config.api.model,
-      max_tokens: config.api.maxTokens,
-      system: config.api.systemPrompt,
-      messages,
-    });
+    // Include scheduled task tools if user is authenticated
+    // All tools: local (bash, web) always, scheduled only if authed
+    const tools: Anthropic.Tool[] = [
+      ...localTools,
+      ...(userId ? scheduledTaskTools : []),
+    ];
 
-    stream.on('text', (text) => {
-      fullText += text;
-      task.streamingText = fullText;
-      notch.sendProgress(id, { type: 'token', text });
-    });
-
-    const finalMessage = await stream.finalMessage();
-    const inputTokens = finalMessage.usage?.input_tokens ?? 0;
-    const outputTokens = finalMessage.usage?.output_tokens ?? 0;
-
-    const responseText = finalMessage.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
-
-    task.chatHistory.push({ id: uuid(), role: 'agent', content: responseText, timestamp: new Date() });
-    task.status = 'completed';
-    task.result = responseText;
-    task.completedAt = new Date();
-    task.streamingText = '';
-
-    // Fire-and-forget DB save
-    if (userId) {
-      dbSave(async () => {
-        await saveMessage(threadId, userId, 'assistant', responseText, {
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-          model: config.api.model,
-          status: 'completed',
-        });
-        await updateThreadTimestamp(threadId);
+    // Tool-use loop: stream → handle tool calls → stream again
+    let maxLoops = 5;
+    while (maxLoops-- > 0) {
+      const stream = await anthropic.messages.stream({
+        model: config.api.model,
+        max_tokens: config.api.maxTokens,
+        system: config.api.systemPrompt,
+        messages: apiMessages,
+        ...(tools.length > 0 ? { tools } : {}),
       });
+
+      let loopText = '';
+      stream.on('text', (text) => {
+        loopText += text;
+        fullText += text;
+        task.streamingText = fullText;
+        notch.sendProgress(id, { type: 'token', text });
+      });
+
+      const finalMessage = await stream.finalMessage();
+
+      // Check for tool use
+      const toolUseBlocks = finalMessage.content.filter(
+        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
+      );
+
+      if (toolUseBlocks.length > 0) {
+        // Add assistant message with tool calls to conversation
+        apiMessages.push({ role: 'assistant', content: finalMessage.content });
+
+        // Execute each tool and collect results
+        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        for (const toolBlock of toolUseBlocks) {
+          const toolInput = toolBlock.input as Record<string, unknown>;
+          const inputSummary = summarizeToolInput(toolBlock.name, toolInput);
+
+          task.toolCallsCount++;
+          task.currentToolName = toolBlock.name;
+          toolsUsed.push({ name: toolBlock.name, input: inputSummary, timestamp: new Date().toISOString() });
+
+          notch.sendProgress(id, {
+            type: 'tool_start',
+            tool_name: toolBlock.name,
+            tool_input: inputSummary,
+          });
+          console.log(`[chat] Tool call: ${toolBlock.name} → ${inputSummary}`);
+
+          // Route to correct handler
+          let result: string;
+          const scheduledToolNames = ['create_scheduled_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task'];
+          if (scheduledToolNames.includes(toolBlock.name) && userId) {
+            result = await executeScheduledTool(toolBlock.name, toolInput, userId);
+          } else {
+            result = await executeLocalTool(toolBlock.name, toolInput);
+          }
+
+          const resultSummary = result.slice(0, 300);
+          console.log(`[chat] Tool result: ${resultSummary.slice(0, 150)}`);
+
+          // Send tool result to notch app
+          notch.sendProgress(id, {
+            type: 'tool_result',
+            tool_name: toolBlock.name,
+            tool_input: inputSummary,
+            tool_output: resultSummary,
+          });
+
+          // Add to chat history with detail
+          task.chatHistory.push({
+            id: uuid(), role: 'tool',
+            content: resultSummary,
+            toolName: toolBlock.name,
+            timestamp: new Date(),
+          });
+
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: toolBlock.id,
+            content: result,
+          });
+        }
+
+        // Add tool results to conversation and loop for Claude's response
+        apiMessages.push({ role: 'user', content: toolResults });
+        task.currentToolName = undefined;
+        continue;
+      }
+
+      // No tool use — we're done
+      const responseText = finalMessage.content
+        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+        .map((b) => b.text)
+        .join('');
+
+      const inputTokens = finalMessage.usage?.input_tokens ?? 0;
+      const outputTokens = finalMessage.usage?.output_tokens ?? 0;
+
+      const finalResponseText = responseText || fullText;
+
+      task.chatHistory.push({ id: uuid(), role: 'agent', content: finalResponseText, timestamp: new Date() });
+      task.status = 'completed';
+      task.result = finalResponseText;
+      task.completedAt = new Date();
+      task.streamingText = '';
+      task.currentToolName = undefined;
+
+      if (userId) {
+        dbSave(async () => {
+          await saveMessage(threadId, userId, 'assistant', finalResponseText, {
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            tools_used: toolsUsed,
+            model: config.api.model,
+            status: 'completed',
+          });
+          await updateThreadTimestamp(threadId);
+          // Generate title for new threads (first message only)
+          if (!options?.threadId) {
+            await generateThreadTitle(threadId, id, message, finalResponseText, notch);
+          }
+        });
+      }
+
+      notch.sendDone(id, { status: 'completed', result: finalResponseText });
+      return { ...task, threadId };
     }
 
-    notch.sendDone(id, { status: 'completed', result: responseText });
+    // Exhausted loop — shouldn't happen but handle gracefully
+    const fallback = fullText || 'Completed (max tool calls reached)';
+    task.status = 'completed';
+    task.result = fallback;
+    task.completedAt = new Date();
+    notch.sendDone(id, { status: 'completed', result: fallback });
     return { ...task, threadId };
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : 'Unknown error';
@@ -292,11 +300,11 @@ export async function runChat(
     task.error = errorMsg;
     task.completedAt = new Date();
 
-    // Save error + whatever partial streaming text we got
     if (userId) {
       const partialText = fullText || task.streamingText || '';
       dbSave(async () => {
         await saveMessage(threadId, userId, 'assistant', partialText || '[No response — request failed]', {
+          tools_used: toolsUsed,
           model: config.api.model,
           status: 'failed',
           error: errorMsg,
@@ -355,6 +363,19 @@ export async function deleteThread(userId: string, threadId: string) {
 }
 
 // ── Helpers ──
+
+function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'bash_execute': return (input.command as string)?.slice(0, 80) ?? '';
+    case 'web_search': return (input.query as string) ?? '';
+    case 'web_fetch': return (input.url as string) ?? '';
+    case 'create_scheduled_task': return (input.name as string) ?? '';
+    case 'list_scheduled_tasks': return '';
+    case 'update_scheduled_task': return (input.id as string)?.slice(0, 8) ?? '';
+    case 'delete_scheduled_task': return (input.id as string)?.slice(0, 8) ?? '';
+    default: return JSON.stringify(input).slice(0, 80);
+  }
+}
 
 function createOrUpdateTask(id: string, message: string): Task {
   let task = tasks.get(id);

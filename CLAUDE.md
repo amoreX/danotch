@@ -48,7 +48,7 @@ No unit tests in either package.
 
 - **OnboardingView** (`Views/OnboardingView.swift`): Two-step onboarding flow shown in a centered borderless NSWindow (no close/min/max buttons, dark theme). Step 1: "DANOTCH / WELCOME TO THE NOTCH" + START button. Step 2: Signup form (name, email, password) or login form with toggle. On success calls `onComplete` closure which starts the notch. AppDelegate creates the window via `NSWindow` with `titlebarAppearsTransparent`, hidden standard buttons, `isMovableByWindowBackground`. Temporarily sets activation policy to `.regular` for focus, reverts to `.accessory` after.
 
-- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor`, `NotchSettings`, `NowPlayingMonitor`, and `SystemStatsMonitor` (shared instance used by both StatsPanel and ProcessListPanel). Has `authManager` reference set by AppDelegate after auth. Forwards nested ObservableObjects via Combine. Runs clock timer (1s) and shimmer cycle timer (4s) for activity text rotation. `activityText()` prioritizes streaming text snippet (last 60 chars) over cycling activity steps. New tasks get shuffled goofy loading phrases (`goofyLoadingPhrases`) as activity steps. Has `sendChat(message:)` that POSTs to backend `/api/chat` with Bearer token and `thread_id`, optimistically creates a task (navigates to chat if `openChatOnSend`), captures `thread_id` from response for follow-ups. Thread history: `loadThreadHistory()` fetches `GET /api/threads`, `loadThread(threadId)` fetches messages and creates a SubagentTask from them. Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
+- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor`, `NotchSettings`, `NowPlayingMonitor`, and `SystemStatsMonitor` (shared instance used by both StatsPanel and ProcessListPanel). Has `authManager` reference set by AppDelegate after auth. Forwards nested ObservableObjects via Combine. Runs clock timer (1s) and shimmer cycle timer (4s) for activity text rotation. `activityText()` prioritizes streaming text snippet (last 60 chars) over cycling activity steps. New tasks get shuffled goofy loading phrases (`goofyLoadingPhrases`) as activity steps. Has `sendChat(message:)` that POSTs to backend `/api/chat` with Bearer token and `thread_id`, optimistically creates a task (navigates to chat if `openChatOnSend`), captures `thread_id` from response for follow-ups. New tasks show "New Chat" initially; backend generates title via `generateThreadTitle()` and pushes it via WebSocket status event with `title` field → app updates task description. Thread history: `loadThreadHistory()` fetches `GET /api/threads`, `loadThread(threadId)` fetches messages and creates a SubagentTask with `isFromHistory=true` (hidden from recents). Sending a follow-up in a history thread flips `isFromHistory=false` (promotes to recents). `activeTasks` computed property filters out history tasks for UI display. Scheduled tasks: `loadScheduledTasks()` fetches `GET /api/scheduled`, `toggleScheduledTask()` optimistic update + PATCH, `deleteScheduledTask()` optimistic remove + DELETE. Notifications: `loadNotifications()` fetches all, `loadUnreadCount()` on startup, `markNotificationRead(id)` marks individual, `markAllRead()` marks all. `processNotification()` handles silent WebSocket events. `processPeekNotification()` handles `peek_notification` events — soft peek (notch grows slightly, not full expand), shows `isPeeking` state with title + exclamation. Hover expands to show body + "VIEW ALL" link. Auto-dismisses after 4s, 2s after hover leaves. Both handlers insert into notifications array + increment badge + refresh scheduled tasks. Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
 
 - **AgentMonitor** (`AgentMonitor.swift`): Standalone `ObservableObject` that scans for AI agent processes every 3s. Currently only displays Claude Code sessions (filtered because Cursor/Codex/Windsurf don't expose prompt data). Enriches each session with project name (from `~/.claude/sessions/{pid}.json` cwd), last user prompt (from conversation JSONL in `~/.claude/projects/`), and working directory (via `lsof`). Can activate the terminal app for a session via `NSWorkspace`. Provides `groupedAgents` computed property for grouped display.
 
@@ -73,14 +73,15 @@ let data = pipe.fileHandleForReading.readDataToEndOfFile()
 ### View State Machine
 
 `NotchViewState` enum drives all navigation:
-- `.overview` → left column (time, date, calendar) + right column (grouped Claude Code agents with prompts, chat input bar at bottom)
-- `.taskList` → full scrollable agent list (grouped agents + delegated tasks)
+- `.overview` → left column (time, date, calendar) + right column (agents, scheduled tasks, chat input bar)
+- `.taskList` → full scrollable conversation list + thread history
 - `.agentChat(taskId)` → task detail with chat history, tool calls, draft cards
 - `.stats` → bento grid: CPU/RAM arc gauges with sparklines, network up/down with stepped graphs, disk ring, process count, uptime
 - `.processList` → sortable process table (by CPU/MEM/name) with app icons, expandable rows, force-quit capability
+- `.notifications` → grouped notification list from scheduled task runs
 - `.settings` → app configuration
 
-Top bar has four tabs: `[ HOME ]  AGENTS  |  STATS  [ ⚙ ]` plus battery indicator. Settings tab uses a gear icon (`gearshape` / `gearshape.fill`) with bracket wrapping when active, matching the text tab style.
+Top bar: `[ HOME ]  AGENTS  |  STATS  🔔  [ ⚙ ]` + battery. Bell icon shows red dot badge when unread > 0. Clicking opens notifications panel.
 
 ### View Hierarchy
 
@@ -91,7 +92,9 @@ OnboardingView (centered borderless NSWindow, shown on first launch / logged out
 
 NotchShellView (root: notch shape, top bar tabs, dot grid background)
 ├── DotGridView (animated dot matrix, configurable color + opacity via settings)
-├── expandedTopBar (HOME / AGENTS / STATS / ⚙ tabs + BatteryView if enabled)
+├── expandedTopBar (HOME / AGENTS / STATS / 🔔 / ⚙ tabs + BatteryView if enabled)
+│   └── Bell icon with red dot badge for unread notifications
+├── peekBar (shown instead of expandedContent during peek: red dot + title + body + VIEW button, auto-dismisses 4s)
 └── expandedContent (routes by viewState)
     ├── NotchContentView (overview + taskList + agentChat routing)
     │   ├── leftColumn ("Hi, {name}" greeting, time, date, calendar, NowPlayingView)
@@ -104,9 +107,14 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
     │       ├── chatInputBar (TextField + submit button, sends to backend POST /api/chat with auth)
     │       ├── tasksSection (grouped user tasks from chat, clickable → AgentChatView)
     │       ├── AgentRow (WebSocket task rows with status dot, activity text)
-    │       └── threadHistory (HISTORY section: past threads from Supabase, threadRow with relative dates)
+    │       ├── ScheduledTasksSection (HOME tab only, collapsible, clock icon, yellow accent)
+    │       │   └── ScheduledTaskRow (expandable: status dot, name, schedule, run count, last output as markdown, hover: pause/delete)
+    │       └── threadHistory (HISTORY section in AGENTS tab: past threads from Supabase, threadRow with relative dates)
     ├── StatsPanel (bento grid: ArcGaugeCell, SparklineGraph, network rows, disk ring)
     ├── ProcessListPanel (sorted process table with ProcessIconView, kill actions)
+    ├── NotificationsPanel (bell icon in top bar, grouped by sourceId)
+    │   ├── NotificationGroupRow (title, count badge, unread dot, expand to see runs, pause/delete source task)
+    │   └── NotificationRunRow (timestamp, unread dot, expand for markdown body, marks read individually on expand)
     └── SettingsPanel (scrollable sections: Chat, Display, Agents)
         ├── SettingsSection (titled group with DN styling)
         ├── SettingsToggleRow (icon + title + subtitle + capsule toggle)
@@ -201,8 +209,11 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 - **AgentGroup**: id, type, agents array — with computed `runningCount`, `totalCpu`, `totalMem`
 - **AgentType**: claudeCode, cursor, codex, windsurf — each with `icon`, `brandColor`, `rawValue` display name
 - **AgentStatus**: running (warning color), idle (disabled color)
-- **SubagentTask**: id, task, description, status, toolCallsCount, streamingText, chatHistory, threadId — used for WebSocket-driven tasks and loaded DB threads. `threadId` links to Supabase thread for follow-up messages
+- **SubagentTask**: id, task, description, status, toolCallsCount, streamingText, chatHistory, threadId, isFromHistory — used for WebSocket-driven tasks and loaded DB threads. `threadId` links to Supabase thread for follow-ups. `isFromHistory` = true for loaded threads (hidden from recents until user sends a message)
 - **TaskStatus**: pending, running, completed, failed, cancelled, awaitingApproval
+- **ScheduledTask**: id, name, prompt, taskType, scheduleHuman, enabled, lastRunAt, nextRunAt, runCount, lastStatus, lastResultSummary, notifyUser — loaded from `GET /api/scheduled`, displayed on HOME tab. Expandable to show last output as markdown. Bell icon shown for `notifyUser=true` tasks
+- **ChatMessage**: id, role, content, toolName?, toolInput?, toolOutput?, draftCard?, timestamp — tool messages now carry input summary and output preview for richer display
+- **NotificationItem**: id, title, body, source, sourceId, read, createdAt — from `GET /api/notifications`. Grouped by sourceId in notifications panel
 
 ### Settings (`NotchSettings`)
 
@@ -283,21 +294,29 @@ TypeScript ESM service (`"type": "module"`). Run with `npm run dev` (tsx watch).
 
 ```
 backend/src/
-├── index.ts          — Express on :3001, request logging middleware, connects NotchBridge
+├── index.ts          — Express on :3001, request logging, connects NotchBridge, starts scheduler
 ├── config.ts         — All config: port, model, max turns, permission mode (env-overridable)
-├── prompts.ts        — System prompts: CHAT_SYSTEM_PROMPT (plain text/markdown only) + AGENT_SYSTEM_PROMPT (tool-aware)
+├── prompts.ts        — CHAT_SYSTEM_PROMPT (includes scheduled task tool guidance)
 ├── types.ts          — Task, ChatMessage, WebSocket event types
 ├── lib/
 │   └── supabase.ts   — Supabase service-role client (bypasses RLS)
 ├── middleware/
 │   └── auth.ts       — requireAuth (via supabase.auth.getUser), extractUserId (optional auth)
 ├── agent/
-│   └── runner.ts     — Two modes: runChat() + runAgent(), DB persistence, thread management
+│   └── runner.ts     — runChat() with tool-use loop, DB persistence, thread management
+├── tools/
+│   ├── scheduled.ts  — Anthropic tool definitions + handlers for scheduled task CRUD
+│   └── local.ts      — bash_execute (shell commands), web_search (DuckDuckGo), web_fetch (URL content)
+├── scheduler/
+│   ├── index.ts      — 30s tick loop: picks up due tasks, runs Claude, creates notifications
+│   └── compute-next.ts — cron-parser wrapper: computeNextRun(), isValidCron(), cronToHuman()
 ├── events/
 │   └── notch.ts      — WebSocket client to notch app :7778, auto-reconnect every 3s
 └── routes/
     ├── auth.ts       — Signup (admin.createUser + auto-login), login, refresh, /me
-    └── tasks.ts      — Chat/agent endpoints (auth optional), thread CRUD (auth required)
+    ├── tasks.ts      — Chat/agent endpoints (auth optional), thread CRUD (auth required)
+    ├── scheduled.ts  — Scheduled task REST CRUD + run-now endpoint
+    └── notifications.ts — Notification list, unread count, mark read, delete all
 ```
 
 ### Auth
@@ -316,21 +335,44 @@ backend/src/
 | `POST` | `/auth/login` | No | Sign in |
 | `POST` | `/auth/refresh` | No | Refresh JWT tokens |
 | `GET` | `/auth/me` | Yes | Current user profile |
-| `POST` | `/api/chat` | Optional | Claude conversation (no tools), persists to DB if authed |
-| `POST` | `/api/agent` | Optional | Claude Agent SDK (tools), persists to DB if authed |
+| `POST` | `/api/chat` | Optional | Claude conversation (with tool use if authed), persists to DB |
 | `GET` | `/api/tasks` | No | List in-memory tasks |
 | `GET` | `/api/tasks/:id` | No | Get specific in-memory task |
 | `GET` | `/api/threads` | Yes | List conversation threads from DB |
 | `GET` | `/api/threads/:id` | Yes | Get thread messages from DB |
 | `DELETE` | `/api/threads/:id` | Yes | Delete thread + messages |
+| `GET` | `/api/scheduled` | Yes | List user's scheduled tasks |
+| `PATCH` | `/api/scheduled/:id` | Yes | Update scheduled task (toggle, edit) |
+| `DELETE` | `/api/scheduled/:id` | Yes | Delete scheduled task |
+| `POST` | `/api/scheduled/:id/run` | Yes | Trigger immediate run (sets next_run_at to now) |
+| `GET` | `/api/notifications` | Yes | List notifications (newest first, limit 50) |
+| `GET` | `/api/notifications/unread-count` | Yes | Unread notification count |
+| `POST` | `/api/notifications/:id/read` | Yes | Mark notification as read |
+| `POST` | `/api/notifications/read-all` | Yes | Mark all as read |
+| `DELETE` | `/api/notifications/all` | Yes | Delete all notifications |
 
 ### Agent Runner
 
-Two execution modes in `runner.ts`:
+Single execution mode in `runner.ts`:
 
-- **`runChat(message, notch, { sessionId?, userId?, threadId? })`** — Direct Anthropic API call with streaming. No tools. Uses `CHAT_SYSTEM_PROMPT`. When `userId` is present: creates/reuses thread in Supabase, saves user message (awaited), saves assistant response with metadata (fire-and-forget via `dbSave()`). On error: saves failed message with partial content + error details.
+- **`runChat(message, notch, { sessionId?, userId?, threadId? })`** — Anthropic Messages API with streaming and **tool-use loop** (max 5 iterations). When authenticated, includes `scheduledTaskTools` (create/list/update/delete scheduled tasks). Streams text tokens, handles `tool_use` blocks by executing via `executeScheduledTool()` and sending results back to Claude. Uses `CHAT_SYSTEM_PROMPT`. DB persistence: user message awaited, assistant response fire-and-forget.
 
-- **`runAgent(message, notch, { sessionId?, cwd?, userId?, threadId? })`** — Uses `@anthropic-ai/claude-agent-sdk` `query()` function. Full Claude Code capabilities. Uses `AGENT_SYSTEM_PROMPT`. Same DB persistence pattern as chat. Accumulates `toolsUsed` array, saved in metadata on completion or error.
+**Tool-use loop**: Stream → if Claude returns `tool_use` blocks → execute each tool → add tool results to conversation → stream again. Max 5 loops. Tool calls tracked in `toolsUsed` array and sent to notch as `tool_start` progress events.
+
+**Local tools** (defined in `src/tools/local.ts`):
+- `bash_execute` — runs shell command via `child_process.exec()`, 30s timeout, 1MB buffer. Returns stdout + stderr, truncated to 5000 chars
+- `web_search` — queries DuckDuckGo HTML lite, parses result snippets (title + description), returns top 5. No API key needed
+- `web_fetch` — fetches URL content, strips HTML tags for readability. Handles JSON (pretty-prints) and HTML (text extraction). 15s timeout, 5000 char limit
+
+**Scheduled task tools** (defined in `src/tools/scheduled.ts`):
+- `create_scheduled_task` — params: name, prompt, task_type, cron?, interval_ms?, target_app?, `notify_user?`. Validates cron/interval, inserts row, computes next_run_at. Claude sets `notify_user: true` for conditional alerts ("notify me when...") and `false` (default) for silent background tasks
+- `list_scheduled_tasks` — returns all tasks with human-readable schedule + notify_user flag
+- `update_scheduled_task` — updates fields, recomputes next_run_at if schedule changed
+- `delete_scheduled_task` — deletes by id (scoped to userId)
+
+**Tool routing**: `summarizeToolInput()` generates display summaries per tool type (command for bash, query for search, etc.). Scheduled tools routed to `executeScheduledTool()` (requires userId), local tools to `executeLocalTool()`. All tools always available; scheduled tools only functional when authenticated.
+
+**Tool WebSocket events**: `tool_start` includes `tool_name` + `tool_input` (summary). `tool_result` includes `tool_name` + `tool_input` + `tool_output` (summary). Swift side adds tool messages to chatHistory on `tool_start`, updates with output on `tool_result`.
 
 **DB persistence pattern**: User message save is `await`ed (must be in DB before streaming). Assistant message save is fire-and-forget (`dbSave()` wraps in `.catch()` — never blocks streaming). On errors, partial content + tools_used + error message are all saved with `status: "failed"` and `partial: true` in metadata.
 
@@ -342,6 +384,31 @@ Both modes also store tasks in-memory (`Map<string, Task>`) and push status/prog
 
 **Thread queries**: `getThreads(userId)`, `getThreadMessages(userId, threadId)`, `deleteThread(userId, threadId)` — all scoped by userId.
 
+### Scheduler
+
+30s tick loop in `src/scheduler/index.ts`. Started on server boot via `startScheduler(notch)`. `stopScheduler()` called on SIGINT/SIGTERM. Shutdown uses 500ms `setTimeout` + `process.exit(0)` to force-kill dangling connections.
+
+**Tick flow**:
+1. Query `scheduled_tasks WHERE enabled = true AND next_run_at <= NOW()`
+2. For each due task: update `next_run_at` immediately (prevents double-pickup), then fire `executeTask()` in background
+3. `executeTask()`: re-fetches task to verify still exists and enabled (race condition safety), then runs based on `notify_user` mode
+
+**Two notification modes** (`notify_user` column on `scheduled_tasks`):
+
+- **Silent** (`notify_user = false`, default): Runs Claude, saves `last_result` on the task row. No notification created, no WebSocket push. User sees output by expanding the task on HOME tab.
+- **Conditional notify** (`notify_user = true`): Wraps the prompt with `[NOTIFY]/[SKIP]` instructions. Claude evaluates the condition and prefixes response:
+  - `[NOTIFY]` → strips prefix, creates notification row, pushes `peek_notification` via WebSocket → notch expands briefly with peek bar
+  - `[SKIP]` → strips prefix, saves result silently, no notification
+  - No prefix → defaults to notify (safer)
+
+**WebSocket events**:
+- `peek_notification`: `{ type: "peek_notification", data: { id, title, body, source, source_id, status, created_at } }` — triggers notch peek animation
+- `notification`: same structure but for regular (non-peek) notifications
+
+**Thread titles**: After first message in a new thread, `generateThreadTitle()` makes a fire-and-forget Claude call (max 30 tokens) to generate a 3-6 word title, saves to Supabase `threads.title`.
+
+`computeNextRun()` uses `cron-parser` (`CronExpressionParser.parse()`) for cron → next Date. `cronToHuman()` converts common cron patterns to readable strings ("Daily at 09:00", "Every 30 minutes", "Weekdays at 09:00").
+
 ### Request Logging
 
 All requests logged with timestamp, method, path, and auth status. Route handlers log detailed info (message preview, userId, threadId, result status).
@@ -351,9 +418,7 @@ All requests logged with timestamp, method, path, and auth status. Route handler
 All settings env-overridable:
 - `PORT` — server port (default: 3001)
 - `NOTCH_WS_URL` — notch app WebSocket (default: ws://localhost:7778/ws)
-- `CLAUDE_MODEL` — agent SDK model (default: claude-sonnet-4-20250514)
-- `CLAUDE_API_MODEL` — direct API model (default: claude-sonnet-4-20250514)
-- `MAX_TURNS` — agent max turns (default: 10)
+- `CLAUDE_MODEL` — Claude model (default: claude-sonnet-4-20250514)
 - `MAX_TOKENS` — API max tokens (default: 4096)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET` — Supabase credentials (in `.env`, gitignored)
 
@@ -361,4 +426,4 @@ All settings env-overridable:
 
 **App**: Swifter (1.5.0) for HTTP/WebSocket. Swift 6.0 toolchain, macOS 14+, Swift 5 language mode.
 
-**Backend**: Express (4.x), `@anthropic-ai/sdk`, `@anthropic-ai/claude-agent-sdk`, `@supabase/supabase-js`, `jsonwebtoken`, ws, uuid. TypeScript with tsx for dev.
+**Backend**: Express (4.x), `@anthropic-ai/sdk`, `@supabase/supabase-js`, `jsonwebtoken`, `cron-parser`, ws, uuid. TypeScript with tsx for dev.

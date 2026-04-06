@@ -4,35 +4,37 @@ import SwiftUI
 
 private func toolCompletedText(_ name: String) -> String {
     let map: [String: String] = [
+        "bash_execute": "Ran command",
+        "web_search": "Searched web",
+        "web_fetch": "Fetched page",
+        "create_scheduled_task": "Created task",
+        "list_scheduled_tasks": "Listed tasks",
+        "update_scheduled_task": "Updated task",
+        "delete_scheduled_task": "Deleted task",
         "gmail_search": "Searched Gmail",
         "gmail_read_email": "Read email",
         "gmail_create_draft": "Created draft",
         "gmail_send": "Sent email",
         "gmail_reply": "Replied to email",
         "notion_create_page": "Created Notion page",
-        "notion_append_block": "Updated Notion page",
         "notion_search": "Searched Notion",
-        "linear_list_issues": "Fetched Linear issues",
-        "linear_update_issue": "Updated Linear issue",
-        "linear_add_comment": "Added comment on Linear",
-        "linear_create_issue": "Created Linear issue",
+        "linear_list_issues": "Fetched issues",
+        "linear_create_issue": "Created issue",
         "calendar_list_events": "Checked calendar",
         "calendar_create_event": "Created event",
-        "slack_send_message": "Sent Slack message",
-        "slack_search": "Searched Slack",
-        "web_search": "Searched the web",
-        "drive_search": "Searched Drive",
     ]
     return map[name] ?? name.replacingOccurrences(of: "_", with: " ").capitalized
 }
 
 private func toolIcon(_ name: String) -> String {
+    if name == "bash_execute" { return "terminal" }
+    if name.hasPrefix("web") { return "globe" }
+    if name.contains("scheduled") { return "clock.arrow.2.circlepath" }
     if name.hasPrefix("gmail") { return "envelope" }
     if name.hasPrefix("notion") { return "doc.text" }
     if name.hasPrefix("linear") { return "checklist" }
     if name.hasPrefix("calendar") { return "calendar" }
     if name.hasPrefix("slack") { return "number" }
-    if name.hasPrefix("web") { return "globe" }
     if name.hasPrefix("drive") { return "folder" }
     return "gearshape"
 }
@@ -201,29 +203,46 @@ struct AgentChatView: View {
 
     private func toolCallBubble(_ msg: ChatMessage) -> some View {
         let name = msg.toolName ?? "tool"
-        return HStack(spacing: DN.spaceXS + DN.space2xs) {
-            Text("\u{2713}")
-                .font(DN.mono(8, weight: .bold))
-                .foregroundColor(DN.success)
+        let hasOutput = msg.toolOutput != nil && !(msg.toolOutput?.isEmpty ?? true)
 
-            Image(systemName: toolIcon(name))
-                .font(.system(size: 9, weight: .regular))
-                .foregroundColor(DN.textDisabled)
+        return VStack(alignment: .leading, spacing: DN.space2xs) {
+            // Tool header: icon + name + input summary
+            HStack(spacing: DN.spaceXS) {
+                Image(systemName: hasOutput ? "checkmark.circle.fill" : "circle.dotted")
+                    .font(.system(size: 9))
+                    .foregroundColor(hasOutput ? DN.success : DN.warning)
 
-            Text(toolCompletedText(name))
-                .font(DN.mono(10))
-                .foregroundColor(DN.textSecondary)
-
-            if !msg.content.isEmpty {
-                Text("\u{00B7}")
+                Image(systemName: toolIcon(name))
+                    .font(.system(size: 9))
                     .foregroundColor(DN.textDisabled)
-                Text(msg.content)
-                    .font(DN.body(10))
+
+                Text(toolCompletedText(name))
+                    .font(DN.mono(9, weight: .medium))
+                    .foregroundColor(DN.textSecondary)
+            }
+
+            // Input line
+            if let input = msg.toolInput, !input.isEmpty {
+                Text(input)
+                    .font(DN.mono(9))
                     .foregroundColor(DN.textDisabled)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .padding(.leading, DN.spaceMD + DN.spaceXS)
+            }
+
+            // Output preview (collapsed)
+            if let output = msg.toolOutput, !output.isEmpty {
+                Text(output)
+                    .font(DN.mono(8))
+                    .foregroundColor(DN.textDisabled.opacity(0.7))
+                    .lineLimit(3)
+                    .padding(.leading, DN.spaceMD + DN.spaceXS)
             }
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, DN.space2xs)
+        .padding(.horizontal, DN.spaceXS)
+        .background(DN.surface.opacity(0.4))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
     // MARK: - Input Bar

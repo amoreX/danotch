@@ -19,15 +19,22 @@ struct NotchShellView: View {
     private let expandedHeight: CGFloat = 320
 
     private var shapeWidth: CGFloat {
-        wideExpanded ? expandedWidth : notchW
+        if viewModel.isPeeking {
+            return viewModel.peekHovering ? notchW + 200 : notchW + 140
+        }
+        return wideExpanded ? expandedWidth : notchW
     }
 
     private var shapeHeight: CGFloat {
-        tallExpanded ? notchH + expandedHeight : notchH
+        if viewModel.isPeeking {
+            return viewModel.peekHovering ? notchH + 80 : notchH + 28
+        }
+        return tallExpanded ? notchH + expandedHeight : notchH
     }
 
     private var bottomRadius: CGFloat {
-        wideExpanded ? 16 : 8
+        if viewModel.isPeeking { return 12 }
+        return wideExpanded ? 16 : 8
     }
 
     var body: some View {
@@ -55,7 +62,16 @@ struct NotchShellView: View {
             ZStack(alignment: .top) {
                 notchShape
 
-                if expanded {
+                // Peek state — soft grow, just title + optional body on hover
+                if viewModel.isPeeking {
+                    peekContent
+                        .padding(.top, notchH)
+                        .padding(.horizontal, DN.spaceSM)
+                        .frame(width: shapeWidth, alignment: .top)
+                        .transition(.opacity)
+                }
+
+                if expanded && !viewModel.isPeeking {
                     if viewModel.settings.showDotGrid {
                         DotGridView(dotColor: viewModel.settings.dotGridSwiftColor)
                             .padding(.top, notchH)
@@ -95,29 +111,33 @@ struct NotchShellView: View {
         }
         .onHover { hovering in
             viewModel.mouseInContent = hovering
+            if viewModel.isPeeking {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    viewModel.peekHovering = hovering
+                }
+                // If user stops hovering peek, dismiss after 2s
+                if !hovering {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak viewModel] in
+                        guard let vm = viewModel, vm.isPeeking, !vm.peekHovering else { return }
+                        vm.dismissPeek()
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Width: easeOut only — spring would undershoot and expose background behind the panel
         .animation(.easeOut(duration: 0.2), value: wideExpanded)
-        // Height: spring for the jelly feel — undershoot here is hidden by the menu bar
         .animation(.spring(response: 0.28, dampingFraction: 0.8), value: tallExpanded)
-        // Content fade + border
         .animation(.easeOut(duration: 0.15), value: expanded)
-        // Tab / view state switches
+        .animation(.easeOut(duration: 0.25), value: viewModel.isPeeking)
+        .animation(.easeOut(duration: 0.2), value: viewModel.peekHovering)
         .animation(.easeOut(duration: 0.18), value: viewModel.viewState)
         .onChange(of: viewModel.isExpanded) { _, isNowExpanded in
             if isNowExpanded {
-                // Width opens first, height follows 50ms later
                 wideExpanded = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    tallExpanded = true
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { tallExpanded = true }
             } else {
-                // Height closes first, width follows 40ms later
                 tallExpanded = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
-                    wideExpanded = false
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { wideExpanded = false }
             }
         }
     }
@@ -152,6 +172,51 @@ struct NotchShellView: View {
             ProcessListPanel(viewModel: viewModel)
         case .settings:
             SettingsPanel(viewModel: viewModel)
+        case .notifications:
+            NotificationsPanel(viewModel: viewModel)
+        }
+    }
+
+    @ViewBuilder
+    private var peekContent: some View {
+        VStack(alignment: .leading, spacing: DN.spaceXS) {
+            // Compact title line — always visible
+            HStack(spacing: DN.spaceXS) {
+                Text("❗")
+                    .font(.system(size: 9))
+
+                Text(viewModel.peekTitle)
+                    .font(DN.body(10, weight: .semibold))
+                    .foregroundColor(DN.textDisplay)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, DN.spaceXS)
+            .padding(.top, 4)
+
+            // Body — only on hover
+            if viewModel.peekHovering {
+                MarkdownView(text: viewModel.peekBody, isFinal: true)
+                    .padding(.horizontal, DN.spaceXS)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        viewModel.dismissPeek()
+                        withAnimation(DN.transition) {
+                            viewModel.isExpanded = true
+                            viewModel.viewState = .notifications
+                        }
+                    }) {
+                        Text("VIEW ALL")
+                            .font(DN.label(7))
+                            .tracking(0.8)
+                            .foregroundColor(DN.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, DN.spaceXS)
+            }
         }
     }
 
@@ -191,6 +256,31 @@ struct NotchShellView: View {
                         viewModel.viewState = .stats
                     }
                 }
+
+                // Bell icon
+                let notifsActive = viewModel.viewState == .notifications
+                Button(action: {
+                    withAnimation(DN.transition) {
+                        viewModel.viewState = .notifications
+                    }
+                }) {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: notifsActive ? "bell.fill" : "bell")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(notifsActive ? DN.textDisplay : DN.textDisabled)
+
+                        if viewModel.unreadCount > 0 {
+                            Circle()
+                                .fill(DN.accent)
+                                .frame(width: 6, height: 6)
+                                .offset(x: 2, y: -2)
+                        }
+                    }
+                    .padding(.horizontal, DN.spaceXS)
+                    .padding(.vertical, DN.spaceXS)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
 
                 let settingsActive = viewModel.viewState == .settings
                 Button(action: {
@@ -349,6 +439,261 @@ struct BatteryView: View {
             if let charging = desc[kIOPSIsChargingKey] as? Bool { isCharging = charging }
         }
     }
+}
+
+// MARK: - Settings
+
+// MARK: - Notifications Panel
+
+struct NotificationsPanel: View {
+    @ObservedObject var viewModel: NotchViewModel
+
+    // Group notifications by sourceId (or by id if no sourceId)
+    private var grouped: [(key: String, title: String, items: [NotificationItem])] {
+        var dict: [(key: String, title: String, items: [NotificationItem])] = []
+        var seen: [String: Int] = [:]
+
+        for notif in viewModel.notifications {
+            let groupKey = notif.sourceId ?? notif.id
+            if let idx = seen[groupKey] {
+                dict[idx].items.append(notif)
+            } else {
+                seen[groupKey] = dict.count
+                dict.append((key: groupKey, title: notif.title, items: [notif]))
+            }
+        }
+        return dict
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DN.spaceSM) {
+            HStack {
+                Text("NOTIFICATIONS")
+                    .font(DN.label(10))
+                    .tracking(1.5)
+                    .foregroundColor(DN.textSecondary)
+
+                Spacer()
+
+                if viewModel.unreadCount > 0 {
+                    Button(action: { viewModel.markAllRead() }) {
+                        Text("MARK ALL READ")
+                            .font(DN.label(7))
+                            .tracking(0.8)
+                            .foregroundColor(DN.textDisabled)
+                            .padding(.horizontal, DN.spaceSM)
+                            .padding(.vertical, 3)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(DN.border, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.bottom, DN.spaceXS)
+
+            if viewModel.notifications.isEmpty {
+                VStack(spacing: DN.spaceSM) {
+                    Spacer().frame(height: DN.spaceLG)
+                    Text("NO NOTIFICATIONS")
+                        .font(DN.label(9))
+                        .tracking(0.8)
+                        .foregroundColor(DN.textDisabled)
+                    Text("Scheduled task results will appear here")
+                        .font(DN.body(10))
+                        .foregroundColor(DN.textDisabled.opacity(0.7))
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: DN.spaceXS) {
+                        ForEach(grouped, id: \.key) { group in
+                            NotificationGroupRow(
+                                title: group.title,
+                                items: group.items,
+                                viewModel: viewModel
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        .onAppear {
+            viewModel.loadNotifications()
+        }
+    }
+}
+
+struct NotificationGroupRow: View {
+    let title: String
+    let items: [NotificationItem]
+    @ObservedObject var viewModel: NotchViewModel
+    @State private var isExpanded = false
+
+    private var unreadCount: Int { items.filter { !$0.read }.count }
+    private var latest: NotificationItem { items.first! }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Group header
+            HStack(spacing: DN.spaceSM) {
+                Circle()
+                    .fill(unreadCount > 0 ? DN.accent : .clear)
+                    .frame(width: 5, height: 5)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: DN.spaceXS) {
+                        Text(title)
+                            .font(DN.body(11, weight: unreadCount > 0 ? .medium : .regular))
+                            .foregroundColor(unreadCount > 0 ? DN.textPrimary : DN.textSecondary)
+                            .lineLimit(1)
+
+                        if items.count > 1 {
+                            Text("\(items.count)")
+                                .font(DN.mono(8))
+                                .foregroundColor(DN.textDisabled)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(DN.border)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                        }
+                    }
+
+                    HStack(spacing: DN.spaceXS) {
+                        Text("Scheduled")
+                            .font(DN.mono(8))
+                            .foregroundColor(DN.textDisabled)
+                        Text("·")
+                            .foregroundColor(DN.textDisabled)
+                        Text(notifDate(latest.createdAt))
+                            .font(DN.mono(8))
+                            .foregroundColor(DN.textDisabled)
+                    }
+                }
+
+                Spacer()
+
+                if isExpanded {
+                    // Pause/resume the source task
+                    if let sourceId = latest.sourceId {
+                        Button(action: {
+                            let task = viewModel.scheduledTasks.first { $0.id == sourceId }
+                            viewModel.toggleScheduledTask(sourceId, enabled: !(task?.enabled ?? true))
+                        }) {
+                            let task = viewModel.scheduledTasks.first { $0.id == latest.sourceId }
+                            Image(systemName: task?.enabled != false ? "pause.circle" : "play.circle")
+                                .font(.system(size: 12))
+                                .foregroundColor(task?.enabled != false ? DN.warning : DN.success)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button(action: {
+                            withAnimation(.easeOut(duration: DN.microDuration)) {
+                                viewModel.deleteScheduledTask(sourceId)
+                            }
+                        }) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 10))
+                                .foregroundColor(DN.accent)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(DN.textDisabled)
+            }
+            .padding(.horizontal, DN.spaceSM)
+            .padding(.vertical, DN.spaceXS + 2)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeOut(duration: DN.microDuration)) {
+                    isExpanded.toggle()
+                }
+            }
+
+            // Expanded: show each run
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(items) { notif in
+                        NotificationRunRow(notif: notif, viewModel: viewModel)
+                    }
+                }
+                .padding(.leading, DN.spaceMD + DN.spaceSM)
+                .padding(.trailing, DN.spaceSM)
+                .padding(.bottom, DN.spaceXS)
+                .transition(.opacity)
+            }
+        }
+        .background(isExpanded ? DN.surface.opacity(0.5) : (unreadCount > 0 ? DN.surface.opacity(0.3) : .clear))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+struct NotificationRunRow: View {
+    let notif: NotificationItem
+    @ObservedObject var viewModel: NotchViewModel
+    @State private var showBody = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: DN.spaceXS) {
+                Circle()
+                    .fill(notif.read ? DN.textDisabled : DN.accent)
+                    .frame(width: 3, height: 3)
+
+                Text(notifDate(notif.createdAt))
+                    .font(DN.mono(8))
+                    .foregroundColor(notif.read ? DN.textDisabled : DN.textSecondary)
+
+                Spacer()
+
+                if notif.body != nil {
+                    Image(systemName: showBody ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 7))
+                        .foregroundColor(DN.textDisabled)
+                }
+            }
+            .padding(.vertical, DN.spaceXS)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if notif.body != nil {
+                    withAnimation(.easeOut(duration: DN.microDuration)) {
+                        showBody.toggle()
+                    }
+                    if !notif.read {
+                        viewModel.markNotificationRead(notif.id)
+                    }
+                }
+            }
+
+            if showBody, let body = notif.body, !body.isEmpty {
+                MarkdownView(text: body, isFinal: true)
+                    .padding(.bottom, DN.spaceXS)
+                    .transition(.opacity)
+            }
+        }
+    }
+}
+
+private func notifDate(_ iso: String) -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let date = formatter.date(from: iso) ?? {
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: iso)
+    }()
+    guard let d = date else { return "" }
+    let interval = Date().timeIntervalSince(d)
+    if interval < 60 { return "just now" }
+    if interval < 3600 { return "\(Int(interval / 60))m ago" }
+    if interval < 86400 { return "\(Int(interval / 3600))h ago" }
+    let df = DateFormatter()
+    df.dateFormat = "MMM d, h:mm a"
+    return df.string(from: d)
 }
 
 // MARK: - Settings
