@@ -92,7 +92,16 @@ async function executeTask(task: Record<string, unknown>, notch: NotchBridge) {
     // For conditional notify tasks, add [NOTIFY]/[SKIP] instruction
     let actualPrompt = prompt;
     if (notifyUser) {
-      actualPrompt = `${prompt}\n\nIMPORTANT: After completing the task, decide whether the user needs to be notified right now.\n- If the condition IS met or something noteworthy happened, start your response with [NOTIFY] then explain.\n- If nothing noteworthy or the condition is NOT met, start with [SKIP] then briefly note the current state.\nOnly use [NOTIFY] when the user actually needs to know.`;
+      // Check if the prompt implies a condition (contains words like "if", "when", "threshold", "above", "below", "reaches")
+      const conditionWords = /\b(if|when|unless|threshold|above|below|reaches|exceeds|drops|falls|greater|less|more than|fewer)\b/i;
+      const isConditional = conditionWords.test(prompt);
+
+      if (isConditional) {
+        actualPrompt = `${prompt}\n\nIMPORTANT: Evaluate the condition in the task. If the condition IS met, start your response with [NOTIFY]. If NOT met, start with [SKIP] and briefly note the current state.`;
+      } else {
+        // Non-conditional notify task — always notify (e.g. "give me fun facts", "write me a poem")
+        actualPrompt = `${prompt}\n\nStart your response with [NOTIFY] — the user wants to be notified with your output.`;
+      }
     }
 
     const response = await anthropic.messages.create({

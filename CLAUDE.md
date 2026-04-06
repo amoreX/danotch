@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 app/       — macOS Swift app (notch overlay)
 backend/   — Node.js Express backend (Supabase + Claude API)
-docs/      — Planning docs (PLAN.md, SCHEMA.md)
+site/      — React+TS+Tailwind landing page (10 design versions)
+docs/      — Planning docs (PLAN.md, SCHEMA.md, SCHEDULED-TASKS.md, NOTIFY-MODES.md, SESSION-SUMMARY.md)
 ```
 
 ## Build & Run
@@ -396,10 +397,10 @@ Both modes also store tasks in-memory (`Map<string, Task>`) and push status/prog
 **Two notification modes** (`notify_user` column on `scheduled_tasks`):
 
 - **Silent** (`notify_user = false`, default): Runs Claude, saves `last_result` on the task row. No notification created, no WebSocket push. User sees output by expanding the task on HOME tab.
-- **Conditional notify** (`notify_user = true`): Wraps the prompt with `[NOTIFY]/[SKIP]` instructions. Claude evaluates the condition and prefixes response:
-  - `[NOTIFY]` → strips prefix, creates notification row, pushes `peek_notification` via WebSocket → notch expands briefly with peek bar
-  - `[SKIP]` → strips prefix, saves result silently, no notification
-  - No prefix → defaults to notify (safer)
+- **Notify** (`notify_user = true`): Scheduler auto-detects whether the prompt is **conditional** (contains "if", "when", "threshold", "above", "below", "reaches", etc.) or **non-conditional**:
+  - **Conditional** (e.g. "notify when stock drops below $200"): Wraps with `[NOTIFY]/[SKIP]` instructions. Claude evaluates and prefixes response. `[NOTIFY]` → creates notification + peek. `[SKIP]` → saves silently.
+  - **Non-conditional** (e.g. "give me fun facts"): Always prefixes with `[NOTIFY]` — every run creates a notification + peek.
+  - No prefix in response → defaults to notify (safer)
 
 **WebSocket events**:
 - `peek_notification`: `{ type: "peek_notification", data: { id, title, body, source, source_id, status, created_at } }` — triggers notch peek animation
@@ -422,8 +423,33 @@ All settings env-overridable:
 - `MAX_TOKENS` — API max tokens (default: 4096)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET` — Supabase credentials (in `.env`, gitignored)
 
+## Landing Page Site
+
+React + TypeScript + Tailwind CSS v4 + Framer Motion + Lucide React. Run with `cd site && npm run dev`.
+
+10 design versions, each a self-contained component in `site/src/versions/`:
+
+| Version | Style | Key Elements |
+|---------|-------|-------------|
+| V1 | OLED Black | Nothing-inspired, matches app aesthetic, monospace, white-on-black |
+| V2 | Gradient | Purple-to-black, floating gradient orbs, gradient text, glow effects |
+| V3 | Brutalist | Off-white #F5F0EB, thick borders, harsh shadows, red accent, rotated cards |
+| V4 | Glass | Dark navy #0B1120, frosted glass cards, backdrop-blur, blue accent, grid overlay |
+| V5 | Neon | Cyberpunk, green #39FF14 glow, scanlines, monospace, terminal aesthetic |
+| V6 | Warm | Cream #FDFBF7, Georgia serif, orange-rust #D97757, soft organic feel |
+| V7 | Split | Fixed black left panel + scrollable white right, red accent, editorial |
+| V8 | Aurora | Northern lights animated gradient, floating particles, ethereal premium |
+| V9 | Mono | Pure monochrome Swiss design, Helvetica, numbered features, zero color |
+| V10 | Retro | Green-on-black terminal, CRT scanlines, typewriter effect, ASCII art |
+
+**Shared components**: `FeatureCard.tsx` (5 variants: default/glass/border/gradient/minimal), `Features.tsx` (8 feature definitions), `NotchMockup.tsx` (animated notch shape).
+
+**Version switcher**: `App.tsx` has a picker overlay on load (2x5 grid) + floating number bar at bottom to switch. Lazy-loaded versions via `React.lazy()`.
+
 ## Dependencies
 
 **App**: Swifter (1.5.0) for HTTP/WebSocket. Swift 6.0 toolchain, macOS 14+, Swift 5 language mode.
 
 **Backend**: Express (4.x), `@anthropic-ai/sdk`, `@supabase/supabase-js`, `jsonwebtoken`, `cron-parser`, ws, uuid. TypeScript with tsx for dev.
+
+**Site**: React 19, Vite, Tailwind CSS v4, Framer Motion, Lucide React.
