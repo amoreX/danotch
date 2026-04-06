@@ -78,6 +78,43 @@ async function updateThreadTimestamp(threadId: string) {
     .eq('id', threadId);
 }
 
+async function generateThreadTitle(
+  threadId: string, sessionId: string, userMessage: string, assistantResponse: string, notch: NotchBridge
+) {
+  try {
+    const resp = await anthropic.messages.create({
+      model: config.api.model,
+      max_tokens: 30,
+      system: 'Generate a very short title (3-6 words max) for this conversation. Return ONLY the title, nothing else. No quotes.',
+      messages: [
+        { role: 'user', content: userMessage },
+        { role: 'assistant', content: assistantResponse.slice(0, 300) },
+        { role: 'user', content: 'Title:' },
+      ],
+    });
+    const title = resp.content
+      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      .map((b) => b.text)
+      .join('')
+      .trim()
+      .slice(0, 80);
+
+    if (title) {
+      await supabase.from('threads').update({ title }).eq('id', threadId);
+      console.log(`[runner] Thread title: "${title}"`);
+      // Push title update to app
+      notch.send({
+        type: 'subagent_event',
+        session_id: sessionId,
+        event_type: 'status',
+        data: { title, description: title },
+      });
+    }
+  } catch (e) {
+    // Non-critical, ignore
+  }
+}
+
 // ── Chat runner (Anthropic API with tool use) ──
 
 export async function runChat(
@@ -211,6 +248,10 @@ export async function runChat(
             status: 'completed',
           });
           await updateThreadTimestamp(threadId);
+          // Generate title for new threads (first message only)
+          if (!options?.threadId) {
+            await generateThreadTitle(threadId, id, message, finalResponseText, notch);
+          }
         });
       }
 

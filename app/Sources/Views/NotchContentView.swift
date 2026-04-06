@@ -116,7 +116,7 @@ struct NotchContentView: View {
                 .tracking(1.5)
                 .foregroundColor(DN.textSecondary)
 
-            if viewModel.agentMonitor.agents.isEmpty && viewModel.tasks.isEmpty && viewModel.scheduledTasks.isEmpty {
+            if viewModel.agentMonitor.agents.isEmpty && activeTasks.isEmpty && viewModel.scheduledTasks.isEmpty {
                 emptyAgentState
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
@@ -133,7 +133,7 @@ struct NotchContentView: View {
                         }
 
                         // User tasks from chat
-                        if !viewModel.tasks.isEmpty {
+                        if !activeTasks.isEmpty {
                             tasksSection(compact: viewModel.settings.compactAgentRows)
                         }
                     }
@@ -203,7 +203,7 @@ struct NotchContentView: View {
             ScrollView(.vertical, showsIndicators: false) {
                 VStack(spacing: DN.spaceXS) {
                     // Active / recent in-memory tasks
-                    ForEach(viewModel.tasks) { task in
+                    ForEach(viewModel.tasks.filter { !$0.isFromHistory }) { task in
                         AgentRow(
                             task: task,
                             isCompact: false,
@@ -237,7 +237,7 @@ struct NotchContentView: View {
                         }
                     }
 
-                    if viewModel.tasks.isEmpty && viewModel.threadHistory.isEmpty {
+                    if activeTasks.isEmpty && viewModel.threadHistory.isEmpty {
                         VStack(spacing: DN.spaceSM) {
                             Spacer().frame(height: DN.spaceLG)
                             Text("NO CONVERSATIONS")
@@ -383,6 +383,10 @@ struct NotchContentView: View {
 
     // MARK: - Tasks Section
 
+    private var activeTasks: [SubagentTask] {
+        viewModel.tasks.filter { !$0.isFromHistory }
+    }
+
     private func tasksSection(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: DN.spaceSM) {
@@ -396,13 +400,13 @@ struct NotchContentView: View {
                     .tracking(1.0)
                     .foregroundColor(DN.textSecondary)
 
-                Text("\(viewModel.tasks.count)")
+                Text("\(activeTasks.count)")
                     .font(DN.mono(9, weight: .medium))
                     .foregroundColor(DN.textDisabled)
 
                 Spacer()
 
-                let active = viewModel.tasks.filter { $0.isActive }.count
+                let active = activeTasks.filter { $0.isActive }.count
                 if active > 0 {
                     HStack(spacing: 3) {
                         Circle().fill(DN.warning).frame(width: 4, height: 4)
@@ -417,7 +421,7 @@ struct NotchContentView: View {
             .padding(.vertical, DN.spaceXS + 1)
 
             VStack(spacing: 1) {
-                ForEach(viewModel.tasks) { task in
+                ForEach(activeTasks) { task in
                     AgentRow(
                         task: task,
                         isCompact: compact,
@@ -1154,6 +1158,12 @@ struct ScheduledTaskRow: View {
                         .lineLimit(1)
 
                     HStack(spacing: DN.spaceXS) {
+                        if task.notifyUser {
+                            Image(systemName: "bell.fill")
+                                .font(.system(size: 7))
+                                .foregroundColor(DN.accent.opacity(0.7))
+                        }
+
                         Text(task.scheduleHuman)
                             .font(DN.mono(8))
                             .foregroundColor(DN.textDisabled)

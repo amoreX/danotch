@@ -34,6 +34,10 @@ export const scheduledTaskTools: Anthropic.Tool[] = [
           type: 'string',
           description: 'Optional: the app this task targets (gmail, googlecalendar, googledocs, linear). Null for general tasks.',
         },
+        notify_user: {
+          type: 'boolean',
+          description: 'If true, Claude will decide each run whether to actually notify the user (for conditional alerts like "tell me when stock hits X", "notify me if new email from Y"). If false (default), runs silently — results saved but no notification/peek. Set true when user says "notify me when...", "alert me if...", "let me know when...".',
+        },
       },
       required: ['name', 'prompt', 'task_type'],
     },
@@ -103,6 +107,7 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
   const cron = input.cron as string | undefined;
   const intervalMs = input.interval_ms as number | undefined;
   const targetApp = input.target_app as string | undefined;
+  const notifyUser = (input.notify_user as boolean) ?? false;
 
   // Validate
   if (!name || !prompt || !taskType) {
@@ -127,6 +132,7 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
       cron: cron ?? null,
       interval_ms: intervalMs ?? null,
       target_app: targetApp ?? null,
+      notify_user: notifyUser,
       enabled: true,
       next_run_at: nextRunAt.toISOString(),
     })
@@ -148,14 +154,15 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
     name,
     schedule,
     next_run: nextRunAt.toISOString(),
-    message: `Scheduled task "${name}" created. ${schedule}. Next run: ${nextRunAt.toLocaleString()}.`,
+    notify_user: notifyUser,
+    message: `Scheduled task "${name}" created. ${schedule}. ${notifyUser ? 'Will notify you when condition is met.' : 'Runs silently.'} Next run: ${nextRunAt.toLocaleString()}.`,
   });
 }
 
 async function listTasks(userId: string): Promise<string> {
   const { data, error } = await supabase
     .from('scheduled_tasks')
-    .select('id, name, prompt, task_type, cron, interval_ms, enabled, last_run_at, next_run_at, run_count, last_result')
+    .select('id, name, prompt, task_type, cron, interval_ms, enabled, notify_user, last_run_at, next_run_at, run_count, last_result')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 

@@ -384,7 +384,8 @@ class NotchViewModel: ObservableObject {
                     createdAt: Date(),
                     activitySteps: [],
                     chatHistory: chatHistory,
-                    threadId: threadId
+                    threadId: threadId,
+                    isFromHistory: true
                 )
 
                 withAnimation(.snappy(duration: 0.3)) {
@@ -517,7 +518,8 @@ class NotchViewModel: ObservableObject {
                     nextRunAt: t["next_run_at"] as? String,
                     runCount: t["run_count"] as? Int ?? 0,
                     lastStatus: (t["last_result"] as? [String: Any])?["status"] as? String,
-                    lastResultSummary: (t["last_result"] as? [String: Any])?["summary"] as? String
+                    lastResultSummary: (t["last_result"] as? [String: Any])?["summary"] as? String,
+                    notifyUser: t["notify_user"] as? Bool ?? false
                 )
             }
 
@@ -596,6 +598,7 @@ class NotchViewModel: ObservableObject {
         case "subagent_event": processSubagentEvent(json)
         case "task_summary": processBulkUpdate(json)
         case "notification": processNotification(json)
+        case "peek_notification": processPeekNotification(json)
         default: break
         }
     }
@@ -615,6 +618,14 @@ class NotchViewModel: ObservableObject {
     private func upsertTask(from data: [String: Any], sessionId: String) {
         if let idx = tasks.firstIndex(where: { $0.id == sessionId }) {
             // Update existing task — preserve chatHistory
+            // If this is a title-only update (has "title" key), only update description
+            if let title = data["title"] as? String {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    tasks[idx].task = title
+                    tasks[idx].description = title
+                }
+                return
+            }
             tasks[idx].status = TaskStatus(rawValue: data["status"] as? String ?? "running") ?? .running
             if let desc = data["description"] as? String { tasks[idx].description = desc }
             if let count = data["tool_calls_count"] as? Int { tasks[idx].toolCallsCount = count }
@@ -729,8 +740,59 @@ class NotchViewModel: ObservableObject {
             unreadCount += 1
         }
 
-        // Also refresh scheduled tasks to update run counts
         loadScheduledTasks()
+    }
+
+    // MARK: - Peek Notification
+
+    @Published var isPeeking = false
+    @Published var peekTitle: String = ""
+    @Published var peekBody: String = ""
+    @Published var peekHovering = false
+
+    private func processPeekNotification(_ json: [String: Any]) {
+        guard let data = json["data"] as? [String: Any],
+              let id = data["id"] as? String,
+              let title = data["title"] as? String else { return }
+
+        let body = data["body"] as? String ?? ""
+
+        let item = NotificationItem(
+            id: id,
+            title: title,
+            body: body,
+            source: data["source"] as? String ?? "system",
+            sourceId: data["source_id"] as? String,
+            read: false,
+            createdAt: data["created_at"] as? String ?? ""
+        )
+
+        withAnimation(.snappy(duration: 0.3)) {
+            notifications.insert(item, at: 0)
+            unreadCount += 1
+        }
+
+        // Soft peek — don't fully expand, just grow the notch slightly
+        withAnimation(.snappy(duration: 0.35)) {
+            peekTitle = title
+            peekBody = String(body.prefix(300))
+            isPeeking = true
+        }
+
+        // Auto-dismiss after 4 seconds unless hovering
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self, !self.peekHovering else { return }
+            self.dismissPeek()
+        }
+
+        loadScheduledTasks()
+    }
+
+    func dismissPeek() {
+        withAnimation(.easeOut(duration: 0.25)) {
+            isPeeking = false
+            peekHovering = false
+        }
     }
 
     // MARK: - Goofy Loading Phrases
@@ -835,6 +897,8 @@ class NotchViewModel: ObservableObject {
                     tasks[idx].streamingText = ""
                     tasks[idx].result = nil
                     tasks[idx].error = nil
+                    // Promote to active if it was from history
+                    tasks[idx].isFromHistory = false
                 }
             }
         } else {
@@ -842,7 +906,7 @@ class NotchViewModel: ObservableObject {
             let task = SubagentTask(
                 id: sid,
                 task: message,
-                description: String(message.prefix(60)),
+                description: "New Chat",
                 status: .running,
                 toolCallsCount: 0,
                 streamingText: "",

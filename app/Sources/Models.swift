@@ -42,6 +42,7 @@ struct SubagentTask: Identifiable {
     var draftCard: DraftCard?
     var chatHistory: [ChatMessage]
     var threadId: String?
+    var isFromHistory: Bool = false
 
     var isActive: Bool {
         status == .running || status == .pending || status == .awaitingApproval
@@ -253,6 +254,7 @@ struct ScheduledTask: Identifiable {
     let runCount: Int
     let lastStatus: String?
     let lastResultSummary: String?
+    let notifyUser: Bool
 }
 
 struct NotificationItem: Identifiable {

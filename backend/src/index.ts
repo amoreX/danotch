@@ -40,14 +40,13 @@ app.listen(config.port, () => {
   startScheduler(notch);
 });
 
-process.on('SIGINT', () => {
+function shutdown() {
+  console.log('\n[danotch-backend] Shutting down...');
   stopScheduler();
   notch.disconnect();
-  process.exit(0);
-});
+  // Force exit — don't wait for dangling connections
+  setTimeout(() => process.exit(0), 500);
+}
 
-process.on('SIGTERM', () => {
-  stopScheduler();
-  notch.disconnect();
-  process.exit(0);
-});
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

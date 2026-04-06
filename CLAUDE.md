@@ -48,7 +48,7 @@ No unit tests in either package.
 
 - **OnboardingView** (`Views/OnboardingView.swift`): Two-step onboarding flow shown in a centered borderless NSWindow (no close/min/max buttons, dark theme). Step 1: "DANOTCH / WELCOME TO THE NOTCH" + START button. Step 2: Signup form (name, email, password) or login form with toggle. On success calls `onComplete` closure which starts the notch. AppDelegate creates the window via `NSWindow` with `titlebarAppearsTransparent`, hidden standard buttons, `isMovableByWindowBackground`. Temporarily sets activation policy to `.regular` for focus, reverts to `.accessory` after.
 
-- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor`, `NotchSettings`, `NowPlayingMonitor`, and `SystemStatsMonitor` (shared instance used by both StatsPanel and ProcessListPanel). Has `authManager` reference set by AppDelegate after auth. Forwards nested ObservableObjects via Combine. Runs clock timer (1s) and shimmer cycle timer (4s) for activity text rotation. `activityText()` prioritizes streaming text snippet (last 60 chars) over cycling activity steps. New tasks get shuffled goofy loading phrases (`goofyLoadingPhrases`) as activity steps. Has `sendChat(message:)` that POSTs to backend `/api/chat` with Bearer token and `thread_id`, optimistically creates a task (navigates to chat if `openChatOnSend`), captures `thread_id` from response for follow-ups. Thread history: `loadThreadHistory()` fetches `GET /api/threads`, `loadThread(threadId)` fetches messages and creates a SubagentTask from them. Scheduled tasks: `loadScheduledTasks()` fetches `GET /api/scheduled`, `toggleScheduledTask()` optimistic update + PATCH, `deleteScheduledTask()` optimistic remove + DELETE. Notifications: `loadNotifications()` fetches all, `loadUnreadCount()` on startup, `markNotificationRead(id)` marks individual, `markAllRead()` marks all. `processNotification()` handles WebSocket push events — inserts into array + increments badge + refreshes scheduled tasks. Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
+- **NotchViewModel**: Central state container. Processes WebSocket JSON events (`status`/`progress`/`done`) into `SubagentTask` model updates. Owns `AgentMonitor`, `NotchSettings`, `NowPlayingMonitor`, and `SystemStatsMonitor` (shared instance used by both StatsPanel and ProcessListPanel). Has `authManager` reference set by AppDelegate after auth. Forwards nested ObservableObjects via Combine. Runs clock timer (1s) and shimmer cycle timer (4s) for activity text rotation. `activityText()` prioritizes streaming text snippet (last 60 chars) over cycling activity steps. New tasks get shuffled goofy loading phrases (`goofyLoadingPhrases`) as activity steps. Has `sendChat(message:)` that POSTs to backend `/api/chat` with Bearer token and `thread_id`, optimistically creates a task (navigates to chat if `openChatOnSend`), captures `thread_id` from response for follow-ups. New tasks show "New Chat" initially; backend generates title via `generateThreadTitle()` and pushes it via WebSocket status event with `title` field → app updates task description. Thread history: `loadThreadHistory()` fetches `GET /api/threads`, `loadThread(threadId)` fetches messages and creates a SubagentTask with `isFromHistory=true` (hidden from recents). Sending a follow-up in a history thread flips `isFromHistory=false` (promotes to recents). `activeTasks` computed property filters out history tasks for UI display. Scheduled tasks: `loadScheduledTasks()` fetches `GET /api/scheduled`, `toggleScheduledTask()` optimistic update + PATCH, `deleteScheduledTask()` optimistic remove + DELETE. Notifications: `loadNotifications()` fetches all, `loadUnreadCount()` on startup, `markNotificationRead(id)` marks individual, `markAllRead()` marks all. `processNotification()` handles silent WebSocket events. `processPeekNotification()` handles `peek_notification` events — soft peek (notch grows slightly, not full expand), shows `isPeeking` state with title + exclamation. Hover expands to show body + "VIEW ALL" link. Auto-dismisses after 4s, 2s after hover leaves. Both handlers insert into notifications array + increment badge + refresh scheduled tasks. Tracks `shouldFocusChatInput`, `isChatInputActive`. `lastViewBeforeCollapse` saved on `resetView()`, restored on expand if `restoreLastView` is enabled via `restoreOrResetView()`.
 
 - **AgentMonitor** (`AgentMonitor.swift`): Standalone `ObservableObject` that scans for AI agent processes every 3s. Currently only displays Claude Code sessions (filtered because Cursor/Codex/Windsurf don't expose prompt data). Enriches each session with project name (from `~/.claude/sessions/{pid}.json` cwd), last user prompt (from conversation JSONL in `~/.claude/projects/`), and working directory (via `lsof`). Can activate the terminal app for a session via `NSWorkspace`. Provides `groupedAgents` computed property for grouped display.
 
@@ -94,6 +94,7 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 ├── DotGridView (animated dot matrix, configurable color + opacity via settings)
 ├── expandedTopBar (HOME / AGENTS / STATS / 🔔 / ⚙ tabs + BatteryView if enabled)
 │   └── Bell icon with red dot badge for unread notifications
+├── peekBar (shown instead of expandedContent during peek: red dot + title + body + VIEW button, auto-dismisses 4s)
 └── expandedContent (routes by viewState)
     ├── NotchContentView (overview + taskList + agentChat routing)
     │   ├── leftColumn ("Hi, {name}" greeting, time, date, calendar, NowPlayingView)
@@ -208,9 +209,9 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 - **AgentGroup**: id, type, agents array — with computed `runningCount`, `totalCpu`, `totalMem`
 - **AgentType**: claudeCode, cursor, codex, windsurf — each with `icon`, `brandColor`, `rawValue` display name
 - **AgentStatus**: running (warning color), idle (disabled color)
-- **SubagentTask**: id, task, description, status, toolCallsCount, streamingText, chatHistory, threadId — used for WebSocket-driven tasks and loaded DB threads. `threadId` links to Supabase thread for follow-up messages
+- **SubagentTask**: id, task, description, status, toolCallsCount, streamingText, chatHistory, threadId, isFromHistory — used for WebSocket-driven tasks and loaded DB threads. `threadId` links to Supabase thread for follow-ups. `isFromHistory` = true for loaded threads (hidden from recents until user sends a message)
 - **TaskStatus**: pending, running, completed, failed, cancelled, awaitingApproval
-- **ScheduledTask**: id, name, prompt, taskType, scheduleHuman, enabled, lastRunAt, nextRunAt, runCount, lastStatus, lastResultSummary — loaded from `GET /api/scheduled`, displayed on HOME tab. Expandable to show last output as markdown
+- **ScheduledTask**: id, name, prompt, taskType, scheduleHuman, enabled, lastRunAt, nextRunAt, runCount, lastStatus, lastResultSummary, notifyUser — loaded from `GET /api/scheduled`, displayed on HOME tab. Expandable to show last output as markdown. Bell icon shown for `notifyUser=true` tasks
 - **NotificationItem**: id, title, body, source, sourceId, read, createdAt — from `GET /api/notifications`. Grouped by sourceId in notifications panel
 
 ### Settings (`NotchSettings`)
@@ -313,7 +314,7 @@ backend/src/
     ├── auth.ts       — Signup (admin.createUser + auto-login), login, refresh, /me
     ├── tasks.ts      — Chat/agent endpoints (auth optional), thread CRUD (auth required)
     ├── scheduled.ts  — Scheduled task REST CRUD + run-now endpoint
-    └── notifications.ts — Notification list, unread count, mark read
+    └── notifications.ts — Notification list, unread count, mark read, delete all
 ```
 
 ### Auth
@@ -346,6 +347,7 @@ backend/src/
 | `GET` | `/api/notifications/unread-count` | Yes | Unread notification count |
 | `POST` | `/api/notifications/:id/read` | Yes | Mark notification as read |
 | `POST` | `/api/notifications/read-all` | Yes | Mark all as read |
+| `DELETE` | `/api/notifications/all` | Yes | Delete all notifications |
 
 ### Agent Runner
 
@@ -356,8 +358,8 @@ Single execution mode in `runner.ts`:
 **Tool-use loop**: Stream → if Claude returns `tool_use` blocks → execute each tool → add tool results to conversation → stream again. Max 5 loops. Tool calls tracked in `toolsUsed` array and sent to notch as `tool_start` progress events.
 
 **Scheduled task tools** (defined in `src/tools/scheduled.ts`):
-- `create_scheduled_task` — validates cron/interval, inserts row, computes next_run_at
-- `list_scheduled_tasks` — returns all tasks with human-readable schedule
+- `create_scheduled_task` — params: name, prompt, task_type, cron?, interval_ms?, target_app?, `notify_user?`. Validates cron/interval, inserts row, computes next_run_at. Claude sets `notify_user: true` for conditional alerts ("notify me when...") and `false` (default) for silent background tasks
+- `list_scheduled_tasks` — returns all tasks with human-readable schedule + notify_user flag
 - `update_scheduled_task` — updates fields, recomputes next_run_at if schedule changed
 - `delete_scheduled_task` — deletes by id (scoped to userId)
 
@@ -373,14 +375,26 @@ Both modes also store tasks in-memory (`Map<string, Task>`) and push status/prog
 
 ### Scheduler
 
-30s tick loop in `src/scheduler/index.ts`. Started on server boot via `startScheduler(notch)`.
+30s tick loop in `src/scheduler/index.ts`. Started on server boot via `startScheduler(notch)`. `stopScheduler()` called on SIGINT/SIGTERM. Shutdown uses 500ms `setTimeout` + `process.exit(0)` to force-kill dangling connections.
 
 **Tick flow**:
 1. Query `scheduled_tasks WHERE enabled = true AND next_run_at <= NOW()`
 2. For each due task: update `next_run_at` immediately (prevents double-pickup), then fire `executeTask()` in background
-3. `executeTask()`: re-fetches task to verify still exists and enabled (race condition safety), runs Claude with task prompt, saves `last_result` + `run_count`, creates notification row, pushes notification via WebSocket
+3. `executeTask()`: re-fetches task to verify still exists and enabled (race condition safety), then runs based on `notify_user` mode
 
-**Notification WebSocket event**: `{ type: "notification", data: { id, title, body, source, source_id, status, created_at } }`
+**Two notification modes** (`notify_user` column on `scheduled_tasks`):
+
+- **Silent** (`notify_user = false`, default): Runs Claude, saves `last_result` on the task row. No notification created, no WebSocket push. User sees output by expanding the task on HOME tab.
+- **Conditional notify** (`notify_user = true`): Wraps the prompt with `[NOTIFY]/[SKIP]` instructions. Claude evaluates the condition and prefixes response:
+  - `[NOTIFY]` → strips prefix, creates notification row, pushes `peek_notification` via WebSocket → notch expands briefly with peek bar
+  - `[SKIP]` → strips prefix, saves result silently, no notification
+  - No prefix → defaults to notify (safer)
+
+**WebSocket events**:
+- `peek_notification`: `{ type: "peek_notification", data: { id, title, body, source, source_id, status, created_at } }` — triggers notch peek animation
+- `notification`: same structure but for regular (non-peek) notifications
+
+**Thread titles**: After first message in a new thread, `generateThreadTitle()` makes a fire-and-forget Claude call (max 30 tokens) to generate a 3-6 word title, saves to Supabase `threads.title`.
 
 `computeNextRun()` uses `cron-parser` (`CronExpressionParser.parse()`) for cron → next Date. `cronToHuman()` converts common cron patterns to readable strings ("Daily at 09:00", "Every 30 minutes", "Weekdays at 09:00").
 

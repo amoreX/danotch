@@ -11,6 +11,9 @@ struct NotchShellView: View {
     private var expanded: Bool { viewModel.isExpanded }
 
     private var shapeWidth: CGFloat {
+        if viewModel.isPeeking {
+            return viewModel.peekHovering ? notchW + 200 : notchW + 140
+        }
         if !expanded { return notchW }
         switch viewModel.viewState {
         case .taskList, .agentChat: return 540
@@ -23,6 +26,9 @@ struct NotchShellView: View {
     }
 
     private var shapeHeight: CGFloat {
+        if viewModel.isPeeking {
+            return viewModel.peekHovering ? notchH + 80 : notchH + 28
+        }
         if !expanded { return notchH }
         switch viewModel.viewState {
         case .overview: return notchH + 260
@@ -36,14 +42,24 @@ struct NotchShellView: View {
     }
 
     private var bottomRadius: CGFloat {
-        expanded ? 16 : 8
+        if viewModel.isPeeking { return 12 }
+        return expanded ? 16 : 8
     }
 
     var body: some View {
         ZStack(alignment: .top) {
             notchShape
 
-            if expanded {
+            // Peek state — soft grow, just title + optional body on hover
+            if viewModel.isPeeking {
+                peekContent
+                    .padding(.top, notchH)
+                    .padding(.horizontal, DN.spaceSM)
+                    .frame(width: shapeWidth, alignment: .top)
+                    .transition(.opacity)
+            }
+
+            if expanded && !viewModel.isPeeking {
                 // Interactive dot grid behind content
                 if viewModel.settings.showDotGrid {
                     DotGridView(dotColor: viewModel.settings.dotGridSwiftColor)
@@ -74,9 +90,23 @@ struct NotchShellView: View {
         )
         .onHover { hovering in
             viewModel.mouseInContent = hovering
+            if viewModel.isPeeking {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    viewModel.peekHovering = hovering
+                }
+                // If user stops hovering peek, dismiss after 2s
+                if !hovering {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak viewModel] in
+                        guard let vm = viewModel, vm.isPeeking, !vm.peekHovering else { return }
+                        vm.dismissPeek()
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.easeOut(duration: 0.35), value: expanded)
+        .animation(.easeOut(duration: 0.25), value: viewModel.isPeeking)
+        .animation(.easeOut(duration: 0.2), value: viewModel.peekHovering)
         .animation(.easeOut(duration: DN.transitionDuration), value: viewModel.viewState)
     }
 
@@ -116,6 +146,49 @@ struct NotchShellView: View {
             SettingsPanel(viewModel: viewModel)
         case .notifications:
             NotificationsPanel(viewModel: viewModel)
+        }
+    }
+
+    @ViewBuilder
+    private var peekContent: some View {
+        VStack(alignment: .leading, spacing: DN.spaceXS) {
+            // Compact title line — always visible
+            HStack(spacing: DN.spaceXS) {
+                Text("❗")
+                    .font(.system(size: 9))
+
+                Text(viewModel.peekTitle)
+                    .font(DN.body(10, weight: .semibold))
+                    .foregroundColor(DN.textDisplay)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, DN.spaceXS)
+            .padding(.top, 4)
+
+            // Body — only on hover
+            if viewModel.peekHovering {
+                MarkdownView(text: viewModel.peekBody, isFinal: true)
+                    .padding(.horizontal, DN.spaceXS)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        viewModel.dismissPeek()
+                        withAnimation(DN.transition) {
+                            viewModel.isExpanded = true
+                            viewModel.viewState = .notifications
+                        }
+                    }) {
+                        Text("VIEW ALL")
+                            .font(DN.label(7))
+                            .tracking(0.8)
+                            .foregroundColor(DN.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, DN.spaceXS)
+            }
         }
     }
 

@@ -70,5 +70,20 @@ export function createNotificationRoutes(): Router {
     res.json({ ok: true });
   });
 
+  // Delete all notifications
+  router.delete('/all', requireAuth, async (req, res) => {
+    const userId = req.user!.sub;
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('user_id', userId);
+
+    if (error) {
+      res.status(500).json({ error: error.message });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
   return router;
 }
