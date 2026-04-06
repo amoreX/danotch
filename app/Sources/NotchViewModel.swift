@@ -395,6 +395,172 @@ class NotchViewModel: ObservableObject {
         }.resume()
     }
 
+    // MARK: - Notifications
+
+    @Published var notifications: [NotificationItem] = []
+    @Published var unreadCount: Int = 0
+
+    func loadNotifications() {
+        guard let auth = authManager else { return }
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else { return }
+
+            var request = URLRequest(url: URL(string: "http://localhost:3001/api/notifications")!)
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let items = json["notifications"] as? [[String: Any]] else { return }
+
+            let parsed: [NotificationItem] = items.compactMap { n in
+                guard let id = n["id"] as? String,
+                      let title = n["title"] as? String else { return nil }
+                return NotificationItem(
+                    id: id, title: title,
+                    body: n["body"] as? String,
+                    source: n["source"] as? String ?? "system",
+                    sourceId: n["source_id"] as? String,
+                    read: n["read"] as? Bool ?? false,
+                    createdAt: n["created_at"] as? String ?? ""
+                )
+            }
+
+            await MainActor.run {
+                self.notifications = parsed
+                self.unreadCount = parsed.filter { !$0.read }.count
+            }
+        }
+    }
+
+    func loadUnreadCount() {
+        guard let auth = authManager else { return }
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else { return }
+
+            var request = URLRequest(url: URL(string: "http://localhost:3001/api/notifications/unread-count")!)
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            guard let (data, _) = try? await URLSession.shared.data(for: request),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let count = json["count"] as? Int else { return }
+
+            await MainActor.run { self.unreadCount = count }
+        }
+    }
+
+    func markNotificationRead(_ id: String) {
+        if let idx = notifications.firstIndex(where: { $0.id == id }) {
+            notifications[idx].read = true
+            unreadCount = notifications.filter { !$0.read }.count
+        }
+        guard let auth = authManager else { return }
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else { return }
+            var request = URLRequest(url: URL(string: "http://localhost:3001/api/notifications/\(id)/read")!)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
+    func markAllRead() {
+        notifications.indices.forEach { notifications[$0].read = true }
+        unreadCount = 0
+        guard let auth = authManager else { return }
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else { return }
+            var request = URLRequest(url: URL(string: "http://localhost:3001/api/notifications/read-all")!)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
+    // MARK: - Scheduled Tasks
+
+    @Published var scheduledTasks: [ScheduledTask] = []
+
+    func loadScheduledTasks() {
+        guard let auth = authManager else { return }
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else { return }
+
+            var request = URLRequest(url: URL(string: "http://localhost:3001/api/scheduled")!)
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let tasks = json["tasks"] as? [[String: Any]] else {
+                print("[Danotch] loadScheduledTasks: failed status=\(status)")
+                return
+            }
+
+            let parsed: [ScheduledTask] = tasks.compactMap { t in
+                guard let id = t["id"] as? String,
+                      let name = t["name"] as? String else { return nil }
+                return ScheduledTask(
+                    id: id,
+                    name: name,
+                    prompt: t["prompt"] as? String ?? "",
+                    taskType: t["task_type"] as? String ?? "scheduled",
+                    scheduleHuman: t["schedule_human"] as? String ?? "",
+                    enabled: t["enabled"] as? Bool ?? true,
+                    lastRunAt: t["last_run_at"] as? String,
+                    nextRunAt: t["next_run_at"] as? String,
+                    runCount: t["run_count"] as? Int ?? 0,
+                    lastStatus: (t["last_result"] as? [String: Any])?["status"] as? String,
+                    lastResultSummary: (t["last_result"] as? [String: Any])?["summary"] as? String
+                )
+            }
+
+            await MainActor.run {
+                self.scheduledTasks = parsed
+                print("[Danotch] loadScheduledTasks: \(parsed.count) tasks")
+            }
+        }
+    }
+
+    func toggleScheduledTask(_ taskId: String, enabled: Bool) {
+        guard let auth = authManager else { return }
+        // Optimistic update
+        if let idx = scheduledTasks.firstIndex(where: { $0.id == taskId }) {
+            scheduledTasks[idx].enabled = enabled
+        }
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken,
+                  let url = URL(string: "http://localhost:3001/api/scheduled/\(taskId)") else { return }
+            var request = URLRequest(url: url)
+            request.httpMethod = "PATCH"
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["enabled": enabled])
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
+    func deleteScheduledTask(_ taskId: String) {
+        guard let auth = authManager else { return }
+        scheduledTasks.removeAll { $0.id == taskId }
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken,
+                  let url = URL(string: "http://localhost:3001/api/scheduled/\(taskId)") else { return }
+            var request = URLRequest(url: url)
+            request.httpMethod = "DELETE"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            _ = try? await URLSession.shared.data(for: request)
+        }
+    }
+
     func resetView() {
         lastViewBeforeCollapse = viewState
         withAnimation(.snappy(duration: 0.25)) {
@@ -419,7 +585,7 @@ class NotchViewModel: ObservableObject {
     }
 
     var isStatsOrSettings: Bool {
-        viewState == .stats || viewState == .settings
+        viewState == .stats || viewState == .settings || viewState == .notifications
     }
 
     // MARK: - Event Processing
@@ -429,6 +595,7 @@ class NotchViewModel: ObservableObject {
         switch type {
         case "subagent_event": processSubagentEvent(json)
         case "task_summary": processBulkUpdate(json)
+        case "notification": processNotification(json)
         default: break
         }
     }
@@ -540,6 +707,30 @@ class NotchViewModel: ObservableObject {
             ))
         }
         withAnimation(.snappy(duration: 0.3)) { tasks = newTasks }
+    }
+
+    private func processNotification(_ json: [String: Any]) {
+        guard let data = json["data"] as? [String: Any],
+              let id = data["id"] as? String,
+              let title = data["title"] as? String else { return }
+
+        let item = NotificationItem(
+            id: id,
+            title: title,
+            body: data["body"] as? String,
+            source: data["source"] as? String ?? "system",
+            sourceId: data["source_id"] as? String,
+            read: false,
+            createdAt: data["created_at"] as? String ?? ""
+        )
+
+        withAnimation(.snappy(duration: 0.3)) {
+            notifications.insert(item, at: 0)
+            unreadCount += 1
+        }
+
+        // Also refresh scheduled tasks to update run counts
+        loadScheduledTasks()
     }
 
     // MARK: - Goofy Loading Phrases

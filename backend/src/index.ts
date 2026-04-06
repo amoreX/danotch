@@ -3,6 +3,9 @@ import express from 'express';
 import { NotchBridge } from './events/notch.js';
 import { createTaskRoutes } from './routes/tasks.js';
 import { createAuthRoutes } from './routes/auth.js';
+import { createScheduledRoutes } from './routes/scheduled.js';
+import { createNotificationRoutes } from './routes/notifications.js';
+import { startScheduler, stopScheduler } from './scheduler/index.js';
 import { config } from './config.js';
 
 const app = express();
@@ -27,17 +30,24 @@ app.get('/health', (_req, res) => {
 // Routes
 app.use('/auth', createAuthRoutes());
 app.use('/api', createTaskRoutes(notch));
+app.use('/api/scheduled', createScheduledRoutes());
+app.use('/api/notifications', createNotificationRoutes());
 
 app.listen(config.port, () => {
   console.log(`[danotch-backend] http://localhost:${config.port}`);
-  console.log(`  POST /auth/signup — create account`);
-  console.log(`  POST /auth/login  — sign in`);
-  console.log(`  POST /api/chat    — Claude conversation`);
-  console.log(`  POST /api/agent   — Claude Agent SDK`);
-  console.log(`  GET  /api/threads — conversation history`);
+
+  // Start scheduler after server is up
+  startScheduler(notch);
 });
 
 process.on('SIGINT', () => {
+  stopScheduler();
+  notch.disconnect();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  stopScheduler();
   notch.disconnect();
   process.exit(0);
 });

@@ -42,6 +42,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = NotchWindowController(viewModel: viewModel)
         windowController?.show()
 
+        // Load initial data
+        viewModel.loadUnreadCount()
+
         // Go back to accessory mode (no dock icon)
         NSApp.setActivationPolicy(.accessory)
         print("[Danotch] Ready — hover over the notch to expand")

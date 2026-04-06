@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { runChat, runAgent, getTask, getAllTasks, getThreads, getThreadMessages, deleteThread } from '../agent/runner.js';
+import { runChat, getTask, getAllTasks, getThreads, getThreadMessages, deleteThread } from '../agent/runner.js';
 import type { NotchBridge } from '../events/notch.js';
 import { requireAuth, extractUserId } from '../middleware/auth.js';
 
@@ -50,34 +50,6 @@ export function createTaskRoutes(notch: NotchBridge): Router {
       });
     } catch (err) {
       console.error(`[chat] Error:`, err);
-      res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
-    }
-  });
-
-  router.post('/agent', async (req, res) => {
-    const { message, session_id, cwd, thread_id } = req.body;
-    if (!message || typeof message !== 'string') {
-      res.status(400).json({ error: 'message is required' });
-      return;
-    }
-
-    const userId = await extractUserId(req.headers.authorization);
-    console.log(`[agent] message="${message.slice(0, 50)}" userId=${userId ?? 'none'} threadId=${thread_id ?? 'new'}`);
-
-    try {
-      const task = await runAgent(message, notch, {
-        sessionId: session_id,
-        cwd,
-        userId,
-        threadId: thread_id,
-      });
-      console.log(`[agent] Done → taskId=${task.id} threadId=${task.threadId} status=${task.status}`);
-      res.json({
-        task: { id: task.id, status: task.status, result: task.result },
-        thread_id: task.threadId,
-      });
-    } catch (err) {
-      console.error(`[agent] Error:`, err);
       res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
     }
   });
