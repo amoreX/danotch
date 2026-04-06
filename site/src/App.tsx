@@ -4,13 +4,15 @@ const versions = [
   { id: 1, name: 'Brutalist', desc: 'Raw neo-brutalism' },
   { id: 2, name: 'Warm', desc: 'Cream & serif organic' },
   { id: 3, name: 'Split', desc: 'Editorial split layout' },
+  { id: 4, name: 'Split + Brutal', desc: 'Raw editorial energy' },
 ];
 
 const V3 = lazy(() => import('./versions/V3Brutalist'));
 const V6 = lazy(() => import('./versions/V6Warm'));
 const V7 = lazy(() => import('./versions/V7Split'));
+const V13 = lazy(() => import('./versions/V13SplitBrutal'));
 
-const components = [V3, V6, V7];
+const components = [V3, V6, V7, V13];
 
 export default function App() {
   const [current, setCurrent] = useState(0);
@@ -19,15 +21,14 @@ export default function App() {
 
   return (
     <div className="relative">
-      {/* Version picker overlay */}
       {showPicker && (
         <div className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-xl flex items-center justify-center">
-          <div className="max-w-2xl w-full px-6">
+          <div className="max-w-3xl w-full px-6">
             <h1 className="text-center text-white text-3xl font-light tracking-tight mb-2">
               Danotch Landing Pages
             </h1>
             <p className="text-center text-white/40 text-sm mb-10">
-              3 design versions. Pick one to preview.
+              6 design versions. Pick one to preview.
             </p>
 
             <div className="grid grid-cols-3 gap-4">
@@ -47,7 +48,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Floating version switcher */}
       {!showPicker && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-2 bg-black/90 backdrop-blur-xl border border-white/10 rounded-full px-2 py-1.5 shadow-2xl">
           {versions.map((v, i) => (
@@ -73,7 +73,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Render current version */}
       <Suspense fallback={
         <div className="min-h-screen bg-black flex items-center justify-center">
           <div className="text-white/30 font-mono text-sm">Loading...</div>
