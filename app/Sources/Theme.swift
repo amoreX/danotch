@@ -5,7 +5,7 @@ import SwiftUI
 enum DN {
     // MARK: Colors — warmer OLED black, electric green-teal accent
 
-    static let black           = Color(hex: 0x080808)   // warmer, not pure OLED
+    static let black           = Color(hex: 0x000000)   // pure OLED black — blends with physical notch
     static let surface         = Color(hex: 0x101010)   // elevated surface
     static let surfaceRaised   = Color(hex: 0x161616)   // further raised
     static let border          = Color(hex: 0x1E1E1E)   // subtle border
@@ -75,6 +75,16 @@ enum DN {
         case .failed:           return error
         case .cancelled:        return textDisabled
         case .pending:          return textDisabled
+        }
+    }
+}
+
+// MARK: - Cursor helper
+
+extension View {
+    func handCursor() -> some View {
+        onHover { inside in
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
     }
 }

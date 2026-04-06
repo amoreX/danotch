@@ -57,7 +57,7 @@ struct NotchAuthView: View {
                     .tracking(2)
                     .foregroundColor(DN.black)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
+                    .padding(.vertical, DN.spaceSM)
                     .background(DN.accent)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
@@ -76,7 +76,7 @@ struct NotchAuthView: View {
 
             Spacer().frame(height: 2)
 
-            VStack(spacing: 6) {
+            VStack(spacing: DN.spaceXS) {
                 if isSignup {
                     inputField("Full Name", text: $fullName, icon: "person")
                 }
@@ -109,7 +109,7 @@ struct NotchAuthView: View {
                         }
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 11)
+                    .padding(.vertical, DN.spaceSM)
                     .background(canSubmit ? DN.accent : DN.surface)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
@@ -167,8 +167,8 @@ struct NotchAuthView: View {
                     .foregroundColor(DN.textPrimary)
             }
         }
-        .padding(.horizontal, DN.spaceSM + 2)
-        .padding(.vertical, 9)
+        .padding(.horizontal, DN.spaceSM)
+        .padding(.vertical, DN.spaceSM)
         .background(DN.surface)
         .clipShape(RoundedRectangle(cornerRadius: 7))
         .overlay(

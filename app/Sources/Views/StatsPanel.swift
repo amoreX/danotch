@@ -342,13 +342,13 @@ struct StatsPanel: View {
             HStack(spacing: gap) {
                 // Network combined
                 VStack(spacing: 0) {
-                    netRow(direction: "\u{2193}", label: "DOWN", value: fmtBytes(monitor.netDown),
+                    netRow(arrowIcon: "arrow.down", label: "DOWN", value: fmtBytes(monitor.netDown),
                            color: DN.success, history: monitor.netDownHistory)
 
                     Rectangle().fill(Color.white.opacity(0.05)).frame(height: 1)
                         .padding(.horizontal, DN.spaceSM)
 
-                    netRow(direction: "\u{2191}", label: "UP", value: fmtBytes(monitor.netUp),
+                    netRow(arrowIcon: "arrow.up", label: "UP", value: fmtBytes(monitor.netUp),
                            color: DN.warning, history: monitor.netUpHistory)
                 }
                 .frame(maxHeight: .infinity)
@@ -398,6 +398,7 @@ struct StatsPanel: View {
                         viewModel.viewState = .processList
                     }
                 }) {
+
                     HStack(spacing: DN.spaceSM) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("PROCESSES")
@@ -428,6 +429,7 @@ struct StatsPanel: View {
                     .glassCell()
                 }
                 .buttonStyle(.plain)
+                .handCursor()
 
                 VStack(spacing: DN.spaceXS) {
                     Image(systemName: "clock")
@@ -448,11 +450,11 @@ struct StatsPanel: View {
         }
     }
 
-    private func netRow(direction: String, label: String, value: String,
+    private func netRow(arrowIcon: String, label: String, value: String,
                         color: Color, history: [Double]) -> some View {
         HStack(spacing: DN.spaceXS) {
-            Text(direction)
-                .font(DN.mono(9, weight: .bold))
+            Image(systemName: arrowIcon)
+                .font(.system(size: 8, weight: .bold))
                 .foregroundColor(color)
                 .frame(width: 12)
 
@@ -474,23 +476,23 @@ struct StatsPanel: View {
                 .frame(width: 70, alignment: .trailing)
         }
         .padding(.horizontal, DN.spaceSM)
-        .padding(.vertical, 6)
+        .padding(.vertical, DN.spaceXS)
     }
 
     private var cpuColor: Color {
-        if monitor.cpuUsage > 80 { return DN.accent }
+        if monitor.cpuUsage > 80 { return DN.error }    // danger = red, not teal
         if monitor.cpuUsage > 50 { return DN.warning }
         return DN.success
     }
 
     private var ramColor: Color {
-        if monitor.ramPercent > 85 { return DN.accent }
+        if monitor.ramPercent > 85 { return DN.error }
         if monitor.ramPercent > 60 { return DN.warning }
         return DN.success
     }
 
     private var diskColor: Color {
-        if monitor.diskPercent > 90 { return DN.accent }
+        if monitor.diskPercent > 90 { return DN.error }
         if monitor.diskPercent > 75 { return DN.warning }
         return DN.textSecondary
     }
@@ -521,11 +523,12 @@ struct ProcessListPanel: View {
                 Button(action: {
                     withAnimation(DN.transition) { viewModel.viewState = .stats }
                 }) {
-                    Text("<")
-                        .font(DN.mono(12, weight: .medium))
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(DN.textSecondary)
                 }
                 .buttonStyle(.plain)
+                .handCursor()
 
                 Text("PROCESSES")
                     .font(DN.label(9))
@@ -547,6 +550,7 @@ struct ProcessListPanel: View {
                         .foregroundColor(DN.textDisabled)
                 }
                 .buttonStyle(.plain)
+                .handCursor()
                 .frame(width: 20)
             }
             .padding(.horizontal, DN.spaceXS)
@@ -583,6 +587,7 @@ struct ProcessListPanel: View {
             }
         }
         .buttonStyle(.plain)
+        .handCursor()
         .frame(width: width, alignment: .trailing)
     }
 
@@ -633,22 +638,24 @@ struct ProcessListPanel: View {
                         Button(action: { monitor.forceKillProcess(pid: proc.pid) }) {
                             Image(systemName: "xmark.circle.fill")
                                 .font(.system(size: 12))
-                                .foregroundColor(DN.accent)
+                                .foregroundColor(DN.error)
                         }
                         .buttonStyle(.plain)
+                        .handCursor()
                         .frame(width: 20)
                     } else {
                         Color.clear.frame(width: 20)
                     }
                 }
                 .padding(.horizontal, DN.spaceSM)
-                .padding(.vertical, isSelected ? 5 : 3)
+                .padding(.vertical, isSelected ? DN.spaceXS : DN.space2xs)
                 .background(isSelected ? DN.surface : .clear)
 
                 Rectangle().fill(DN.border.opacity(0.4)).frame(height: 0.5)
             }
         }
         .buttonStyle(.plain)
+        .handCursor()
     }
 }
 
