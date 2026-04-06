@@ -61,7 +61,7 @@ class NotchWindowController: NSObject {
             return
         }
 
-        let panelWidth: CGFloat = 580
+        let panelWidth: CGFloat = 660
         let panelHeight: CGFloat = 400
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow]
 
@@ -211,9 +211,9 @@ class NotchWindowController: NSObject {
 
         let triggerZone = NSRect(
             x: cx - (nw + 60) / 2,
-            y: screen.frame.maxY - nh - 10,
+            y: screen.frame.maxY - nh - 5,
             width: nw + 60,
-            height: nh + 10
+            height: nh + 5
         )
 
         let inTrigger = triggerZone.contains(mouse)

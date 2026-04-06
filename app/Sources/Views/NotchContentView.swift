@@ -9,39 +9,31 @@ struct NotchContentView: View {
         viewModel.viewState != .overview
     }
 
-    private var leftWidth: CGFloat {
-        isExpanded ? 0 : 185
-    }
-
     var body: some View {
-        HStack(spacing: 0) {
-            leftColumn
-                .frame(width: leftWidth)
-                .opacity(isExpanded ? 0 : 1)
-                .clipped()
+        ZStack {
+            if !isExpanded {
+                HStack(spacing: 0) {
+                    leftColumn
+                        .frame(width: 185)
+                    dividerBar
+                    overviewRightColumn
+                }
+                .transition(.opacity)
+            }
 
-            dividerBar
-                .opacity(isExpanded ? 0 : 1)
-                .scaleEffect(y: isExpanded ? 0.3 : 1)
-                .frame(width: isExpanded ? 0 : nil)
-                .clipped()
-
-            mainColumn
+            if isExpanded {
+                mainColumn
+                    .transition(.opacity)
+            }
         }
-        .animation(.easeOut(duration: DN.transitionDuration), value: isExpanded)
+        .animation(.easeOut(duration: 0.15), value: isExpanded)
+        .animation(.easeOut(duration: 0.15), value: viewModel.viewState)
     }
 
     // MARK: - Left Column
 
     private var leftColumn: some View {
         VStack(alignment: .leading, spacing: DN.spaceXS) {
-            // User greeting
-            if let name = viewModel.authManager?.userName, !name.isEmpty {
-                Text("Hi, \(name)")
-                    .font(DN.body(11, weight: .medium))
-                    .foregroundColor(DN.textDisabled)
-            }
-
             // Time + date
             HStack(alignment: .firstTextBaseline, spacing: DN.space2xs) {
                 Text(viewModel.timeString)
@@ -79,6 +71,7 @@ struct NotchContentView: View {
             }
         }
         .padding(.trailing, DN.spaceSM)
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     // MARK: - Divider

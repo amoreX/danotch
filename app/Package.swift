@@ -17,6 +17,9 @@ let package = Package(
                 .product(name: "Swifter", package: "swifter")
             ],
             path: "Sources",
+            resources: [
+                .copy("Resources/Fonts")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]

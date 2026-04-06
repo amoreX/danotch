@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CoreText
 
 @main
 struct DanotchApp: App {
@@ -19,6 +20,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var wsServer: WebSocketServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        registerFonts()
+
         // Terminate any existing Danotch instances before starting
         let myPID = ProcessInfo.processInfo.processIdentifier
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
@@ -44,5 +47,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         wsServer?.stop()
+    }
+
+    private func registerFonts() {
+        let fontNames = [
+            "Satoshi-Light", "Satoshi-LightItalic",
+            "Satoshi-Regular", "Satoshi-Italic",
+            "Satoshi-Medium", "Satoshi-MediumItalic",
+            "Satoshi-Bold", "Satoshi-BoldItalic",
+            "Satoshi-Black", "Satoshi-BlackItalic",
+        ]
+        for name in fontNames {
+            guard let url = Bundle.module.url(forResource: name, withExtension: "otf",
+                                              subdirectory: "Fonts") else { continue }
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
     }
 }

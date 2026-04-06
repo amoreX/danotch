@@ -14,29 +14,16 @@ struct NotchShellView: View {
     private var notchH: CGFloat { screen.notchHeight }
     private var expanded: Bool { viewModel.isExpanded }
 
+    // Single consistent size for all states — no jarring resize when switching tabs
+    private let expandedWidth:  CGFloat = 540
+    private let expandedHeight: CGFloat = 320
+
     private var shapeWidth: CGFloat {
-        if !wideExpanded { return notchW }
-        if !viewModel.isAuthenticated { return 520 }
-        switch viewModel.viewState {
-        case .taskList, .agentChat: return 540
-        case .processList: return 540
-        case .stats: return 520
-        case .settings: return 520
-        case .overview: return 520
-        }
+        wideExpanded ? expandedWidth : notchW
     }
 
     private var shapeHeight: CGFloat {
-        if !tallExpanded { return notchH }
-        if !viewModel.isAuthenticated { return notchH + 260 }
-        switch viewModel.viewState {
-        case .overview: return notchH + 260
-        case .taskList: return notchH + 260
-        case .agentChat: return notchH + 320
-        case .stats: return notchH + 290
-        case .processList: return notchH + 320
-        case .settings: return notchH + 320
-        }
+        tallExpanded ? notchH + expandedHeight : notchH
     }
 
     private var bottomRadius: CGFloat {
@@ -45,50 +32,71 @@ struct NotchShellView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            notchShape
-
-            if expanded {
-                if viewModel.settings.showDotGrid {
-                    DotGridView(dotColor: viewModel.settings.dotGridSwiftColor)
-                        .padding(.top, notchH)
-                        .opacity(viewModel.settings.dotGridOpacity)
-                        .allowsHitTesting(false)
+            // Fake reverse-bevel corner ears — outside the clip, mimic physical Mac notch
+            if wideExpanded {
+                HStack(spacing: 0) {
+                    Spacer()
+                    NotchCornerLeft()
+                        .fill(DN.black)
+                        .frame(width: 20, height: 20)
+                    Color.clear.frame(width: shapeWidth)
+                    NotchCornerRight()
+                        .fill(DN.black)
+                        .frame(width: 20, height: 20)
+                    Spacer()
                 }
+                .frame(maxWidth: .infinity)
+                .frame(height: 20)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
 
-                if viewModel.isAuthenticated {
-                    expandedTopBar
-                        .transition(.opacity)
+            // Clipped notch panel
+            ZStack(alignment: .top) {
+                notchShape
 
-                    expandedContent
-                        .padding(.top, notchH + 1)
-                        .padding(.horizontal, DN.spaceMD)
-                        .padding(.bottom, DN.spaceSM)
-                        .frame(width: shapeWidth, alignment: .top)
-                } else {
-                    NotchAuthView(auth: AuthManager.shared)
-                        .padding(.top, notchH + 1)
-                        .padding(.horizontal, DN.spaceMD)
-                        .padding(.bottom, DN.spaceSM)
-                        .frame(width: 520, alignment: .top)
-                        .transition(.opacity)
+                if expanded {
+                    if viewModel.settings.showDotGrid {
+                        DotGridView(dotColor: viewModel.settings.dotGridSwiftColor)
+                            .padding(.top, notchH)
+                            .opacity(viewModel.settings.dotGridOpacity)
+                            .allowsHitTesting(false)
+                    }
+
+                    if viewModel.isAuthenticated {
+                        expandedTopBar
+                            .transition(.opacity)
+
+                        expandedContent
+                            .padding(.top, notchH + 1)
+                            .padding(.horizontal, DN.spaceMD)
+                            .padding(.bottom, DN.spaceSM)
+                            .frame(width: shapeWidth, alignment: .top)
+                    } else {
+                        NotchAuthView(auth: AuthManager.shared)
+                            .padding(.top, notchH + 1)
+                            .padding(.horizontal, DN.spaceMD)
+                            .padding(.bottom, DN.spaceSM)
+                            .frame(width: 520, alignment: .top)
+                            .transition(.opacity)
+                    }
                 }
             }
-        }
-        .frame(width: shapeWidth, height: shapeHeight)
-        .clipShape(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: bottomRadius,
-                bottomTrailingRadius: bottomRadius,
-                topTrailingRadius: 0,
-                style: .continuous
+            .frame(width: shapeWidth, height: shapeHeight)
+            .clipShape(
+                UnevenRoundedRectangle(
+                    topLeadingRadius: 0,
+                    bottomLeadingRadius: bottomRadius,
+                    bottomTrailingRadius: bottomRadius,
+                    topTrailingRadius: 0,
+                    style: .continuous
+                )
             )
-        )
+        }
         .onHover { hovering in
             viewModel.mouseInContent = hovering
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Width: snappy spring, expands first / collapses last
         // Width: easeOut only — spring would undershoot and expose background behind the panel
         .animation(.easeOut(duration: 0.2), value: wideExpanded)
         // Height: spring for the jelly feel — undershoot here is hidden by the menu bar
@@ -123,39 +131,6 @@ struct NotchShellView: View {
             style: .continuous
         )
         .fill(DN.black)
-        // Outer border — only when expanded
-        .overlay(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: bottomRadius,
-                bottomTrailingRadius: bottomRadius,
-                topTrailingRadius: 0,
-                style: .continuous
-            )
-            .stroke(expanded ? DN.border : .clear, lineWidth: 1)
-        )
-        // Inner highlight — subtle top edge refraction, gives the panel depth
-        .overlay(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: bottomRadius,
-                bottomTrailingRadius: bottomRadius,
-                topTrailingRadius: 0,
-                style: .continuous
-            )
-            .stroke(
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(expanded ? 0.07 : 0),
-                        Color.white.opacity(0),
-                    ],
-                    startPoint: .top,
-                    endPoint: .center
-                ),
-                lineWidth: 1
-            )
-            .padding(1)
-        )
         // Seal the physical notch edge
         .overlay(alignment: .top) {
             Rectangle()
@@ -247,7 +222,7 @@ struct NotchShellView: View {
             .fixedSize(horizontal: true, vertical: false)
             .frame(maxWidth: .infinity, alignment: .center)
         }
-        .frame(width: shapeWidth, height: notchH)
+        .frame(width: expandedWidth, height: notchH)
     }
 
     private func tabButton(label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
@@ -270,6 +245,47 @@ struct NotchShellView: View {
         }
         .buttonStyle(.plain)
         .animation(.easeOut(duration: DN.microDuration), value: isActive)
+    }
+}
+
+// MARK: - Notch Corner Shapes
+
+/// Black quarter-circle that creates the concave reverse-bevel at the top-left of the notch.
+/// Occupies a small square just to the left of the notch edge; the arc carves out the corner
+/// so the notch appears to smoothly curve into the menu bar like the physical hardware.
+// Left corner piece: concave bite at bottom-LEFT (outer corner, away from notch).
+private struct NotchCornerLeft: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addArc(
+            center: CGPoint(x: rect.minX, y: rect.maxY),
+            radius: rect.width,
+            startAngle: .degrees(-90),
+            endAngle: .degrees(0),
+            clockwise: false
+        )
+        p.closeSubpath()
+        return p
+    }
+}
+
+// Right corner piece: concave bite at bottom-RIGHT (outer corner, away from notch).
+private struct NotchCornerRight: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addArc(
+            center: CGPoint(x: rect.maxX, y: rect.maxY),
+            radius: rect.width,
+            startAngle: .degrees(-90),
+            endAngle: .degrees(180),
+            clockwise: true
+        )
+        p.closeSubpath()
+        return p
     }
 }
 

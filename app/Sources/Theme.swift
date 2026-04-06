@@ -21,22 +21,36 @@ enum DN {
     static let warning         = Color(hex: 0xD4A843)   // amber — agent running
     static let error           = Color(hex: 0xE05252)   // red — errors only
 
-    // MARK: Typography — monospace identity, tightened hierarchy
+    // MARK: Typography — Satoshi
 
     static func display(_ size: CGFloat) -> Font {
-        .system(size: size, weight: .light, design: .monospaced)
+        .custom("Satoshi-Light", size: size)
     }
 
     static func heading(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
-        .system(size: size, weight: weight, design: .default)
+        let name: String
+        switch weight {
+        case .bold, .heavy, .black: name = "Satoshi-Bold"
+        case .semibold, .medium:    name = "Satoshi-Medium"
+        case .light, .thin:         name = "Satoshi-Light"
+        default:                    name = "Satoshi-Regular"
+        }
+        return .custom(name, size: size)
     }
 
     static func label(_ size: CGFloat = 10) -> Font {
-        .system(size: size, weight: .medium, design: .monospaced)
+        .custom("Satoshi-Medium", size: size)
     }
 
     static func body(_ size: CGFloat = 12, weight: Font.Weight = .regular) -> Font {
-        .system(size: size, weight: weight, design: .default)
+        let name: String
+        switch weight {
+        case .bold, .heavy, .black: name = "Satoshi-Bold"
+        case .semibold, .medium:    name = "Satoshi-Medium"
+        case .light, .thin:         name = "Satoshi-Light"
+        default:                    name = "Satoshi-Regular"
+        }
+        return .custom(name, size: size)
     }
 
     static func mono(_ size: CGFloat = 12, weight: Font.Weight = .regular) -> Font {
