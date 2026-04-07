@@ -28,6 +28,40 @@ enum CalendarMode: String, CaseIterable {
     }
 }
 
+enum PinnedWidget: String, CaseIterable, Codable {
+    case calendar = "calendar"
+    case music = "music"
+    case ram = "ram"
+    case disk = "disk"
+    case network = "network"
+    case uptime = "uptime"
+    case processes = "processes"
+
+    var label: String {
+        switch self {
+        case .calendar: return "Calendar"
+        case .music: return "Music Player"
+        case .ram: return "RAM Usage"
+        case .disk: return "Disk Usage"
+        case .network: return "Network"
+        case .uptime: return "Uptime"
+        case .processes: return "Processes"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .calendar: return "calendar"
+        case .music: return "music.note"
+        case .ram: return "memorychip"
+        case .disk: return "internaldrive"
+        case .network: return "network"
+        case .uptime: return "clock"
+        case .processes: return "list.number"
+        }
+    }
+}
+
 class NotchSettings: ObservableObject {
     private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
     private static let configFile = configDir.appendingPathComponent("settings.json")
@@ -37,10 +71,8 @@ class NotchSettings: ObservableObject {
     @Published var restoreLastView: Bool       { didSet { save() } }
     @Published var keepOpenInChat: Bool        { didSet { save() } }
 
-    // Display
-    @Published var calendarMode: CalendarMode  { didSet { save() } }
-    @Published var showMusic: Bool             { didSet { save() } }
-    @Published var musicSize: MusicSize       { didSet { save() } }
+    // Display — pinned widgets
+    @Published var pinnedWidgets: [PinnedWidget] { didSet { save() } }
     @Published var showBattery: Bool           { didSet { save() } }
     @Published var showDotGrid: Bool           { didSet { save() } }
 
@@ -56,6 +88,17 @@ class NotchSettings: ObservableObject {
         Color(hex: UInt32(dotGridColor.dropFirst(), radix: 16) ?? 0xFFFFFF)
     }
 
+    // Computed from pinnedWidgets for backward compatibility
+    var calendarMode: CalendarMode {
+        pinnedWidgets.contains(.calendar) ? .large : .off
+    }
+    var showMusic: Bool {
+        pinnedWidgets.contains(.music)
+    }
+    var musicSize: MusicSize {
+        pinnedWidgets.count > 1 ? .mini : .big
+    }
+
     // UI state (persisted across restarts)
     @Published var collapsedGroups: Set<String> { didSet { save() } }
 
@@ -64,9 +107,7 @@ class NotchSettings: ObservableObject {
         openChatOnSend = true
         restoreLastView = false
         keepOpenInChat = true
-        calendarMode = .large
-        showMusic = true
-        musicSize = .mini
+        pinnedWidgets = [.calendar, .music]
         showBattery = true
         showDotGrid = true
         showAgentLiveState = true
@@ -84,9 +125,7 @@ class NotchSettings: ObservableObject {
             "openChatOnSend": openChatOnSend,
             "keepOpenInChat": keepOpenInChat,
             "restoreLastView": restoreLastView,
-            "calendarMode": calendarMode.rawValue,
-            "showMusic": showMusic,
-            "musicSize": musicSize.rawValue,
+            "pinnedWidgets": pinnedWidgets.map { $0.rawValue },
             "showBattery": showBattery,
             "showDotGrid": showDotGrid,
             "showAgentLiveState": showAgentLiveState,
@@ -111,9 +150,19 @@ class NotchSettings: ObservableObject {
         if let v = json["openChatOnSend"] as? Bool { openChatOnSend = v }
         if let v = json["keepOpenInChat"] as? Bool { keepOpenInChat = v }
         if let v = json["restoreLastView"] as? Bool { restoreLastView = v }
-        if let v = json["calendarMode"] as? String { calendarMode = CalendarMode(rawValue: v) ?? .large }
-        if let v = json["showMusic"] as? Bool { showMusic = v }
-        if let v = json["musicSize"] as? String { musicSize = MusicSize(rawValue: v) ?? .mini }
+        if let v = json["pinnedWidgets"] as? [String] {
+            pinnedWidgets = v.compactMap { PinnedWidget(rawValue: $0) }
+        } else {
+            // Migrate from old settings
+            var migrated: [PinnedWidget] = []
+            if let cm = json["calendarMode"] as? String, cm != "off" {
+                migrated.append(.calendar)
+            }
+            if let sm = json["showMusic"] as? Bool, sm {
+                migrated.append(.music)
+            }
+            if !migrated.isEmpty { pinnedWidgets = migrated }
+        }
         if let v = json["showBattery"] as? Bool { showBattery = v }
         if let v = json["showDotGrid"] as? Bool { showDotGrid = v }
         if let v = json["showAgentLiveState"] as? Bool { showAgentLiveState = v }

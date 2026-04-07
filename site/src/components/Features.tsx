@@ -1,4 +1,4 @@
-import { Bot, Clock, Bell, Music, Terminal, Globe, Calendar, Cpu } from 'lucide-react';
+import { Bot, Clock, Bell, Terminal, Globe, LayoutGrid } from 'lucide-react';
 
 export const FEATURES = [
   {
@@ -27,18 +27,8 @@ export const FEATURES = [
     description: 'Conditional alerts that peek from the notch. Claude decides when to notify you — no spam, only signal.',
   },
   {
-    icon: Music,
-    title: 'Now Playing',
-    description: 'Apple Music and Spotify integration. See what\'s playing, control playback — right from the notch.',
-  },
-  {
-    icon: Calendar,
-    title: 'Mini Calendar',
-    description: 'Compact or full calendar view. See today\'s date at a glance without switching apps.',
-  },
-  {
-    icon: Cpu,
-    title: 'System Stats',
-    description: 'CPU, RAM, network, disk — beautiful arc gauges and sparkline graphs. Process list with force-quit.',
+    icon: LayoutGrid,
+    title: 'Pinnable Utils',
+    description: 'Pin any 2 widgets to your notch: CPU, RAM, network, calendar, music, uptime. Your command center, your layout.',
   },
 ];

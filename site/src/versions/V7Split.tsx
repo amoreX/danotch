@@ -1,12 +1,51 @@
-import { motion } from 'framer-motion';
-import { Terminal, Clock, ArrowDown, ExternalLink, ArrowRight } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowDown, ExternalLink, ArrowRight } from 'lucide-react';
 import { FEATURES } from '../components/Features';
-import { useRef } from 'react';
+import { useRef, useState, useEffect } from 'react';
+import NotchDemo, { type ViewState } from '../components/NotchDemo';
 
-// V7: Split Layout — Fixed black left panel, scrollable white right, bold geometric, red accent
+// V7: Split Layout — Fixed black left panel, scrollable white right, red accent
 export default function V7Split() {
   const accent = '#E53935';
   const rightRef = useRef<HTMLDivElement>(null);
+  const notchSectionRef = useRef<HTMLDivElement>(null);
+  const [notchScrolledPast, setNotchScrolledPast] = useState(false);
+  const [currentFeature, setCurrentFeature] = useState(0);
+
+  // Scroll to top on mount
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    if (rightRef.current) rightRef.current.scrollTop = 0;
+  }, []);
+
+  // Per-feature demo config: view, sequence ID, duration
+  const FEATURE_DEMOS: { view: ViewState; sequence?: string; duration: number }[] = [
+    { view: 'agents',        duration: 4000 },                              // AI Agent Monitor
+    { view: 'chat',          sequence: 'code-exec',    duration: 7000 },    // Local Code Execution
+    { view: 'chat',          sequence: 'web-search',   duration: 7000 },    // Web Search
+    { view: 'overview',      sequence: 'scheduled',    duration: 4000 },    // Scheduled Tasks
+    { view: 'overview',      sequence: 'notif-peek',   duration: 7000 },    // Smart Notifications
+    { view: 'overview',      sequence: 'pin-utils',    duration: 8000 },    // Pinnable Utils
+  ];
+
+  // Detect when the notch demo section scrolls out of view
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => setNotchScrolledPast(!entry.isIntersecting),
+      { threshold: 0.1 }
+    );
+    if (notchSectionRef.current) observer.observe(notchSectionRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // Cycle through features with variable durations
+  useEffect(() => {
+    if (!notchScrolledPast) return;
+    const timeout = setTimeout(() => {
+      setCurrentFeature(prev => (prev + 1) % FEATURES.length);
+    }, FEATURE_DEMOS[currentFeature]?.duration ?? 4000);
+    return () => clearTimeout(timeout);
+  }, [notchScrolledPast, currentFeature]);
 
   return (
     <div className="min-h-screen flex">
@@ -17,71 +56,159 @@ export default function V7Split() {
         <div className="absolute bottom-20 left-10 w-24 h-24 border-2 rotate-45 opacity-10" style={{ borderColor: accent }} />
         <div className="absolute top-1/3 right-16 w-3 h-3 rounded-full opacity-20" style={{ background: accent }} />
 
-        {/* Nav */}
-        <div>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5 }}
-          >
-            <span className="font-mono text-sm tracking-[0.3em] text-white/70">DANOTCH</span>
-          </motion.div>
+        {/* Nav + headline row */}
+        <div className="shrink-0">
+          <div className="flex items-start gap-12">
+            {/* Left: logo + nav links */}
+            <div className="shrink-0">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
+                <span className="font-mono text-sm tracking-[0.3em] text-white/70">DANOTCH</span>
+              </motion.div>
 
-          <nav className="mt-12 space-y-4">
-            {['Features', 'How it Works', 'Download'].map((item, i) => (
-              <motion.a
-                key={item}
-                href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.2 + i * 0.1 }}
-                className="block text-sm text-white/30 hover:text-white transition-colors tracking-wide"
-              >
-                {item}
-              </motion.a>
-            ))}
-          </nav>
+              <nav className="mt-6 space-y-3">
+                {['Features', 'How it Works', 'Download'].map((item, i) => (
+                  <motion.a
+                    key={item}
+                    href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.2 + i * 0.1 }}
+                    className="block text-sm text-white/30 hover:text-white transition-colors tracking-wide"
+                  >
+                    {item}
+                  </motion.a>
+                ))}
+              </nav>
+            </div>
+
+            {/* Right: headline (visible when scrolled past notch) */}
+            <AnimatePresence>
+              {notchScrolledPast && (
+                <motion.div
+                  initial={{ opacity: 0, x: 10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 10 }}
+                  transition={{ duration: 0.3 }}
+                  className="flex-1"
+                >
+                  <div className="w-10 h-[3px] mb-3" style={{ background: accent }} />
+                  <h2 className="text-3xl xl:text-4xl font-extrabold tracking-tight leading-[1.1]">
+                    The notch<br />
+                    is now a<br />
+                    <span style={{ color: accent }}>command<br />center.</span>
+                  </h2>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
 
-        {/* Headline */}
-        <div className="my-auto py-16">
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.3 }}
-          >
-            <div className="w-12 h-1 mb-8" style={{ background: accent }} />
-            <h1 className="text-5xl xl:text-6xl font-bold leading-[1.05] tracking-tight mb-6">
-              The notch<br />
-              is now a<br />
-              <span style={{ color: accent }}>command<br />center.</span>
-            </h1>
-            <p className="text-white/35 text-base leading-relaxed max-w-sm mb-10">
-              AI agents, Claude chat, scheduled tasks, system stats, music, calendar — all from your MacBook notch.
-            </p>
-          </motion.div>
+        {/* Main content area — transitions between headline and notch demo */}
+        <div className="my-auto py-6 relative">
+          <AnimatePresence mode="wait">
+            {!notchScrolledPast ? (
+              /* Initial state: Full headline */
+              <motion.div
+                key="headline"
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.4 }}
+              >
+                <div className="w-12 h-1 mb-8" style={{ background: accent }} />
+                <h1 className="text-5xl xl:text-6xl font-bold leading-[1.05] tracking-tight mb-6">
+                  The notch<br />
+                  is now a<br />
+                  <span style={{ color: accent }}>command<br />center.</span>
+                </h1>
+                <p className="text-white/35 text-base leading-relaxed max-w-sm mb-10">
+                  AI agents, Claude chat, scheduled tasks, system stats, music, calendar — all from your MacBook notch.
+                </p>
 
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.8 }}
-            className="flex items-center gap-5"
-          >
-            <a
-              href="#"
-              className="inline-flex items-center gap-2 px-7 py-3 text-sm font-semibold text-white transition-all duration-300 hover:brightness-110"
-              style={{ background: accent }}
-            >
-              <ArrowDown className="w-4 h-4" /> Download
-            </a>
-            <a href="#" className="flex items-center gap-2 text-white/30 hover:text-white/60 text-sm transition-colors">
-              <ExternalLink className="w-4 h-4" /> Source
-            </a>
-          </motion.div>
+                <div className="flex items-center gap-5">
+                  <a
+                    href="#"
+                    className="inline-flex items-center gap-2 px-7 py-3 text-sm font-semibold text-white transition-all duration-300 hover:brightness-110"
+                    style={{ background: accent }}
+                  >
+                    <ArrowDown className="w-4 h-4" /> Download
+                  </a>
+                  <a href="#" className="flex items-center gap-2 text-white/30 hover:text-white/60 text-sm transition-colors">
+                    <ExternalLink className="w-4 h-4" /> Source
+                  </a>
+                </div>
+              </motion.div>
+            ) : (
+              /* Scrolled state: feature showcase + notch demo */
+              <motion.div
+                key="notch-sticky"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                transition={{ duration: 0.4 }}
+                className="flex flex-col"
+              >
+                {/* Cycling feature card */}
+                <div className="mb-3">
+                  <div className="h-[62px] relative overflow-hidden">
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={currentFeature}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        transition={{ duration: 0.3 }}
+                        className="flex items-start gap-3 absolute inset-0"
+                      >
+                        {(() => {
+                          const Icon = FEATURES[currentFeature].icon;
+                          return (
+                            <>
+                              <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: `${accent}15` }}>
+                                <Icon className="w-4 h-4" style={{ color: accent }} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h3 className="text-sm font-semibold text-white tracking-tight">{FEATURES[currentFeature].title}</h3>
+                                <p className="text-xs text-white/35 leading-relaxed mt-0.5 line-clamp-2">{FEATURES[currentFeature].description}</p>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </motion.div>
+                    </AnimatePresence>
+                  </div>
+
+                  {/* Feature dots */}
+                  <div className="flex gap-1 mt-2">
+                    {FEATURES.map((_, i) => (
+                      <div key={i} className="h-[3px] rounded-full transition-all duration-300" style={{ width: i === currentFeature ? 20 : 6, backgroundColor: i === currentFeature ? accent : 'rgba(255,255,255,0.12)' }} />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Notch demo */}
+                <div className="w-full flex justify-center">
+                  <div className="rounded-xl overflow-hidden pb-2 flex justify-center w-full" style={{ background: '#0a0a0a', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+                    <NotchDemo autoPlay={false} startExpanded compact forceView={FEATURE_DEMOS[currentFeature]?.view} forceSequence={FEATURE_DEMOS[currentFeature]?.sequence} />
+                  </div>
+                </div>
+
+                {/* Download link */}
+                <div className="flex items-center gap-5 mt-4 w-full">
+                  <a href="#" className="inline-flex items-center gap-2 px-6 py-2.5 text-sm font-semibold text-white transition-all duration-300 hover:brightness-110" style={{ background: accent }}>
+                    <ArrowDown className="w-4 h-4" /> Download
+                  </a>
+                  <a href="#" className="flex items-center gap-2 text-white/30 hover:text-white/60 text-sm transition-colors">
+                    <ExternalLink className="w-4 h-4" /> Source
+                  </a>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Footer on left panel */}
-        <div>
+        <div className="shrink-0">
           <p className="text-xs text-white/15 font-mono tracking-wider">macOS 14+ &middot; ARM64 & x86</p>
         </div>
       </div>
@@ -122,8 +249,8 @@ export default function V7Split() {
           </a>
         </section>
 
-        {/* Notch mockup */}
-        <section className="pt-16 lg:pt-24 pb-20 px-8 lg:px-16">
+        {/* Interactive Notch Demo (right panel — scrolls away, then appears on left) */}
+        <section ref={notchSectionRef} className="pt-16 lg:pt-24 pb-20 px-8 lg:px-16">
           <motion.div
             initial={{ opacity: 0, y: 40 }}
             animate={{ opacity: 1, y: 0 }}
@@ -131,46 +258,30 @@ export default function V7Split() {
             className="max-w-2xl"
           >
             <div
-              className="aspect-[16/10] bg-[#0a0a0a] rounded-xl overflow-hidden relative"
-              style={{ boxShadow: '0 30px 80px rgba(0,0,0,0.2)' }}
+              className="rounded-2xl overflow-hidden pt-0 pb-5 flex justify-center relative"
+              style={{ background: '#0a0a0a', boxShadow: '0 30px 80px rgba(0,0,0,0.2)' }}
             >
-              {/* Notch shape */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[180px] h-[30px] bg-black rounded-b-[18px] z-10" />
-
-              {/* Expanded notch */}
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[420px] h-[260px] bg-black rounded-b-2xl border-b border-x border-white/10 overflow-hidden">
-                <div className="pt-9 px-4 space-y-2.5">
-                  <div className="flex justify-between">
-                    <div className="flex gap-5 text-[9px] font-mono tracking-widest text-white/25">
-                      <span className="text-white/80">[ HOME ]</span>
-                      <span>AGENTS</span>
-                      <span>STATS</span>
-                    </div>
-                    <div className="text-[9px] font-mono text-white/15">67%</div>
-                  </div>
-
-                  <div className="flex gap-3 mt-1.5">
-                    <div className="w-[120px] shrink-0">
-                      <p className="text-2xl font-extralight tracking-tight text-white">10:36</p>
-                      <p className="text-[7px] font-mono tracking-widest text-white/25 mt-0.5">MON, APR 7</p>
-                    </div>
-                    <div className="flex-1 space-y-1.5">
-                      <div className="text-[7px] font-mono tracking-widest text-white/20">AGENTS</div>
-                      <div className="bg-white/5 rounded-lg p-2 border border-white/5">
-                        <div className="flex items-center gap-1.5">
-                          <Terminal className="w-2.5 h-2.5" style={{ color: accent }} />
-                          <span className="text-[9px] text-white/60 font-mono">CLAUDE CODE</span>
-                        </div>
-                      </div>
-                      <div className="bg-white/5 rounded-lg p-2 border border-white/5">
-                        <div className="flex items-center gap-1.5">
-                          <Clock className="w-2.5 h-2.5 text-yellow-500/60" />
-                          <span className="text-[9px] text-white/40 font-mono">SCHEDULED</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              {/* Animated gradient blobs */}
+              <motion.div
+                className="absolute pointer-events-none rounded-full blur-[50px]"
+                style={{ width: '55%', height: '55%', background: 'rgba(229,57,53,0.35)' }}
+                animate={{ top: ['5%', '45%', '15%', '5%'], left: ['5%', '50%', '25%', '5%'] }}
+                transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+              />
+              <motion.div
+                className="absolute pointer-events-none rounded-full blur-[50px]"
+                style={{ width: '50%', height: '50%', background: 'rgba(217,119,87,0.25)' }}
+                animate={{ top: ['55%', '5%', '35%', '55%'], left: ['45%', '15%', '65%', '45%'] }}
+                transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
+              />
+              <motion.div
+                className="absolute pointer-events-none rounded-full blur-[40px]"
+                style={{ width: '40%', height: '40%', background: 'rgba(212,168,67,0.18)' }}
+                animate={{ top: ['25%', '55%', '5%', '25%'], left: ['65%', '5%', '45%', '65%'] }}
+                transition={{ duration: 12, repeat: Infinity, ease: 'easeInOut' }}
+              />
+              <div className="relative z-10">
+                <NotchDemo />
               </div>
             </div>
           </motion.div>

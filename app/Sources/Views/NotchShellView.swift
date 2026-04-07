@@ -658,35 +658,23 @@ struct SettingsPanel: View {
                         )
                     }
 
-                    SettingsSection(title: "DISPLAY") {
-                        SettingsPickerRow(
-                            icon: "calendar",
-                            title: "Calendar",
-                            subtitle: "Calendar display in overview",
-                            options: CalendarMode.allCases.map { $0.label },
-                            selection: Binding(
-                                get: { CalendarMode.allCases.firstIndex(of: viewModel.settings.calendarMode) ?? 2 },
-                                set: { viewModel.settings.calendarMode = CalendarMode.allCases[$0] }
-                            )
-                        )
-                        SettingsToggleRow(
-                            icon: "music.note",
-                            title: "Now playing",
-                            subtitle: "Show current music track in overview",
-                            isOn: $viewModel.settings.showMusic
-                        )
-                        if viewModel.settings.showMusic {
-                            SettingsPickerRow(
-                                icon: "rectangle.expand.vertical",
-                                title: "Player size",
-                                subtitle: "Music widget size when space allows",
-                                options: MusicSize.allCases.map { $0.label },
-                                selection: Binding(
-                                    get: { MusicSize.allCases.firstIndex(of: viewModel.settings.musicSize) ?? 0 },
-                                    set: { viewModel.settings.musicSize = MusicSize.allCases[$0] }
-                                )
-                            )
+                    SettingsSection(title: "WIDGETS") {
+                        ForEach(PinnedWidget.allCases, id: \.rawValue) { widget in
+                            widgetToggleRow(widget)
                         }
+
+                        HStack {
+                            Spacer()
+                            Text("MAX 3 WIDGETS")
+                                .font(DN.label(7))
+                                .tracking(0.8)
+                                .foregroundColor(DN.textDisabled)
+                            Spacer()
+                        }
+                        .padding(.vertical, DN.spaceXS)
+                    }
+
+                    SettingsSection(title: "DISPLAY") {
                         SettingsToggleRow(
                             icon: "battery.75percent",
                             title: "Battery indicator",
@@ -732,6 +720,42 @@ struct SettingsPanel: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func widgetToggleRow(_ widget: PinnedWidget) -> some View {
+        let isPinned = viewModel.settings.pinnedWidgets.contains(widget)
+        let atMax = viewModel.settings.pinnedWidgets.count >= 3
+        SettingsToggleRow(
+            icon: widget.icon,
+            title: widget.label,
+            subtitle: widgetSubtitle(widget),
+            isOn: Binding(
+                get: { viewModel.settings.pinnedWidgets.contains(widget) },
+                set: { newValue in
+                    withAnimation(.easeOut(duration: DN.microDuration)) {
+                        if !newValue {
+                            viewModel.settings.pinnedWidgets.removeAll { $0 == widget }
+                        } else if viewModel.settings.pinnedWidgets.count < 3 {
+                            viewModel.settings.pinnedWidgets.append(widget)
+                        }
+                    }
+                }
+            )
+        )
+        .opacity(!isPinned && atMax ? 0.4 : 1.0)
+    }
+
+    private func widgetSubtitle(_ w: PinnedWidget) -> String {
+        switch w {
+        case .calendar: return "Date grid on overview"
+        case .music: return "Now playing controls"
+        case .ram: return "Memory usage gauge"
+        case .disk: return "Storage usage ring"
+        case .network: return "Upload & download speeds"
+        case .uptime: return "System uptime counter"
+        case .processes: return "Running process count"
         }
     }
 }

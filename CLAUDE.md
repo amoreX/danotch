@@ -7,8 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 app/       — macOS Swift app (notch overlay)
 backend/   — Node.js Express backend (Supabase + Claude API)
-site/      — React+TS+Tailwind landing page (10 design versions)
-docs/      — Planning docs (PLAN.md, SCHEMA.md, SCHEDULED-TASKS.md, NOTIFY-MODES.md, SESSION-SUMMARY.md)
+site/      — React+TS+Tailwind landing page (4 design versions)
+docs/      — Planning docs (PLAN.md, SCHEMA.md, SCHEDULED-TASKS.md, NOTIFY-MODES.md, SESSION-SUMMARY.md, CRASH-AUDIT.md)
 ```
 
 ## Build & Run
@@ -106,7 +106,7 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
     │       ├── LiveStateView (pulsing dot + icon + label + detail for active tool/thinking/responding states)
     │       ├── NowPlayingView (Apple Music/Spotify polling, positioned by calendarMode)
     │       ├── chatInputBar (TextField + submit button, sends to backend POST /api/chat with auth)
-    │       ├── tasksSection (grouped user tasks from chat, clickable → AgentChatView)
+    │       ├── tasksSection (collapsible, grouped user tasks from chat, clickable → AgentChatView)
     │       ├── AgentRow (WebSocket task rows with status dot, activity text)
     │       ├── ScheduledTasksSection (HOME tab only, collapsible, clock icon, yellow accent)
     │       │   └── ScheduledTaskRow (expandable: status dot, name, schedule, run count, last output as markdown, hover: pause/delete)
@@ -201,7 +201,7 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 5. View navigates directly to `AgentChatView` for that task (`.agentChat(sid)`)
 6. All agent chat bubbles render as final (bold markdown) — no dimmed intermediate distinction
 
-**Tasks section** appears below Claude Code agent groups in both HOME and AGENTS tabs, styled as a grouped card matching `AgentGroupView`.
+**Tasks section** appears below Claude Code agent groups in both HOME and AGENTS tabs, styled as a grouped card matching `AgentGroupView`. Collapsible with chevron toggle, collapse state persisted via `collapsedGroups` (key: `"tasks"`).
 
 ### Models
 
@@ -239,7 +239,7 @@ Persisted via JSON file at `~/.danotch/settings.json`. All settings survive app 
 - `compactAgentRows` (default: false) — smaller rows in agent list. Applied to both agent groups and tasks section
 
 **UI state (also persisted):**
-- `collapsedGroups` — Set of collapsed agent group IDs
+- `collapsedGroups` — Set of collapsed section IDs. Used by agent groups (keyed by group ID), scheduled tasks (key: `"scheduled"`), and chat tasks (key: `"tasks"`). All persist across app restarts.
 
 Settings UI components: `SettingsToggleRow` (capsule toggle), `SettingsPickerRow` (segmented picker for enums), `SettingsSliderRow` (slider with percentage), `SettingsColorRow` (color dot presets).
 
@@ -427,24 +427,18 @@ All settings env-overridable:
 
 React + TypeScript + Tailwind CSS v4 + Framer Motion + Lucide React. Run with `cd site && npm run dev`.
 
-10 design versions, each a self-contained component in `site/src/versions/`:
+4 design versions, each a self-contained component in `site/src/versions/`:
 
 | Version | Style | Key Elements |
 |---------|-------|-------------|
-| V1 | OLED Black | Nothing-inspired, matches app aesthetic, monospace, white-on-black |
-| V2 | Gradient | Purple-to-black, floating gradient orbs, gradient text, glow effects |
 | V3 | Brutalist | Off-white #F5F0EB, thick borders, harsh shadows, red accent, rotated cards |
-| V4 | Glass | Dark navy #0B1120, frosted glass cards, backdrop-blur, blue accent, grid overlay |
-| V5 | Neon | Cyberpunk, green #39FF14 glow, scanlines, monospace, terminal aesthetic |
 | V6 | Warm | Cream #FDFBF7, Georgia serif, orange-rust #D97757, soft organic feel |
 | V7 | Split | Fixed black left panel + scrollable white right, red accent, editorial |
-| V8 | Aurora | Northern lights animated gradient, floating particles, ethereal premium |
-| V9 | Mono | Pure monochrome Swiss design, Helvetica, numbered features, zero color |
-| V10 | Retro | Green-on-black terminal, CRT scanlines, typewriter effect, ASCII art |
+| V13 | Split+Brutal | Split layout merged with brutalist styling |
 
-**Shared components**: `FeatureCard.tsx` (5 variants: default/glass/border/gradient/minimal), `Features.tsx` (8 feature definitions), `NotchMockup.tsx` (animated notch shape).
+**Shared components**: `Features.tsx` (8 feature definitions), `FeatureCard.tsx` (5 variants).
 
-**Version switcher**: `App.tsx` has a picker overlay on load (2x5 grid) + floating number bar at bottom to switch. Lazy-loaded versions via `React.lazy()`.
+**Version switcher**: `App.tsx` has a picker overlay on load (2x2 grid) + floating number bar at bottom to switch. Lazy-loaded versions via `React.lazy()`.
 
 ## Dependencies
 
