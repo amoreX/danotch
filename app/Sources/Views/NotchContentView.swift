@@ -29,6 +29,12 @@ struct NotchContentView: View {
             mainColumn
         }
         .animation(.easeOut(duration: DN.transitionDuration), value: isExpanded)
+        .onChange(of: viewModel.shouldFocusChatInput) { _, shouldFocus in
+            if shouldFocus {
+                isChatInputFocused = true
+                viewModel.shouldFocusChatInput = false
+            }
+        }
     }
 
     // MARK: - Left Column
@@ -164,12 +170,6 @@ struct NotchContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             viewModel.loadScheduledTasks()
-        }
-        .onChange(of: viewModel.shouldFocusChatInput) { _, shouldFocus in
-            if shouldFocus {
-                isChatInputFocused = true
-                viewModel.shouldFocusChatInput = false
-            }
         }
     }
 

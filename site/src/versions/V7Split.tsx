@@ -231,13 +231,13 @@ export default function V7Split() {
         className="flex-1 lg:ml-[45vw] lg:max-w-none bg-white min-h-screen"
       >
         {/* Mobile hero */}
-        <section className="lg:hidden bg-black text-white pt-20 pb-16 px-6 text-center">
+        <section className="lg:hidden bg-black text-white pt-20 pb-12 px-4 sm:px-6 text-center">
           <div className="w-10 h-1 mx-auto mb-6" style={{ background: accent }} />
-          <h1 className="text-4xl font-bold leading-tight mb-4 tracking-tight">
+          <h1 className="text-3xl sm:text-4xl font-bold leading-tight mb-4 tracking-tight">
             The notch is now a{' '}
             <span style={{ color: accent }}>command center.</span>
           </h1>
-          <p className="text-white/40 text-sm mb-8 max-w-md mx-auto">
+          <p className="text-white/40 text-sm mb-8 max-w-sm mx-auto">
             AI agents, Claude chat, scheduled tasks, system stats, music, calendar.
           </p>
           <a
@@ -250,15 +250,15 @@ export default function V7Split() {
         </section>
 
         {/* Interactive Notch Demo (right panel — scrolls away, then appears on left) */}
-        <section ref={notchSectionRef} className="pt-16 lg:pt-24 pb-20 px-8 lg:px-16">
+        <section ref={notchSectionRef} className="pt-8 sm:pt-16 lg:pt-24 pb-12 sm:pb-20 px-3 sm:px-8 lg:px-16 overflow-hidden">
           <motion.div
             initial={{ opacity: 0, y: 40 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.7, delay: 0.4 }}
-            className="max-w-2xl"
+            className="max-w-2xl mx-auto lg:mx-0"
           >
             <div
-              className="rounded-2xl overflow-hidden pt-0 pb-5 flex justify-center relative"
+              className="rounded-2xl overflow-hidden pt-0 pb-5 flex justify-center relative max-w-full"
               style={{ background: '#0a0a0a', boxShadow: '0 30px 80px rgba(0,0,0,0.2)' }}
             >
               {/* Animated gradient blobs */}
@@ -281,14 +281,15 @@ export default function V7Split() {
                 transition={{ duration: 12, repeat: Infinity, ease: 'easeInOut' }}
               />
               <div className="relative z-10">
-                <NotchDemo />
+                <div className="hidden sm:block"><NotchDemo /></div>
+                <div className="sm:hidden"><NotchDemo compact /></div>
               </div>
             </div>
           </motion.div>
         </section>
 
         {/* Features — horizontal rows */}
-        <section id="features" className="px-8 lg:px-16 pb-20">
+        <section id="features" className="px-4 sm:px-8 lg:px-16 pb-20">
           <motion.div
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
@@ -331,7 +332,7 @@ export default function V7Split() {
         </section>
 
         {/* How it works */}
-        <section id="how-it-works" className="px-8 lg:px-16 py-20 bg-black/[0.02]">
+        <section id="how-it-works" className="px-4 sm:px-8 lg:px-16 py-20 bg-black/[0.02]">
           <div className="max-w-2xl">
             <div className="w-8 h-1 mb-4" style={{ background: accent }} />
             <h2 className="text-3xl font-bold tracking-tight text-black mb-12">How it Works</h2>
@@ -362,7 +363,7 @@ export default function V7Split() {
         </section>
 
         {/* CTA */}
-        <section id="download" className="px-8 lg:px-16 py-24">
+        <section id="download" className="px-4 sm:px-8 lg:px-16 py-24">
           <motion.div
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
@@ -390,7 +391,7 @@ export default function V7Split() {
         </section>
 
         {/* Footer */}
-        <footer className="px-8 lg:px-16 py-8 border-t border-black/5">
+        <footer className="px-4 sm:px-8 lg:px-16 py-8 border-t border-black/5">
           <div className="flex items-center justify-between">
             <span className="font-mono text-xs text-black/20 tracking-wider">DANOTCH</span>
             <span className="text-xs text-black/15">Built for the notch.</span>
