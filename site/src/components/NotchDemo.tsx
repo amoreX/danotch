@@ -67,7 +67,7 @@ const STATS = {
 type DemoChatMsg = { role: 'user' | 'assistant' | 'tool'; content: string; toolName?: string; toolDetail?: string; pending?: boolean };
 export type ViewState = 'overview' | 'agents' | 'stats' | 'chat' | 'notifications' | 'settings';
 type NotchDisplay = 'expanded' | 'collapsed' | 'peek';
-type PinnedWidget = 'calendar' | 'music' | 'ram' | 'network' | 'disk' | 'uptime';
+type PinnedWidget = 'calendar' | 'calendar-mini' | 'music' | 'music-big' | 'ram' | 'network' | 'disk' | 'uptime';
 
 // ─── Demo sequence definitions ───
 const CODE_EXEC_CHAT: DemoChatMsg[] = [
@@ -87,8 +87,10 @@ const WEB_SEARCH_CHAT: DemoChatMsg[] = [
 
 const WIDGET_SETS: PinnedWidget[][] = [
   ['calendar', 'music'],
+  ['calendar-mini', 'music-big'],
   ['ram', 'network'],
   ['disk', 'uptime'],
+  ['music-big'],
 ];
 
 // ─── Sparkline mini component ───
@@ -146,7 +148,29 @@ function PulsingDot({ color, size = 4 }: { color: string; size?: number }) {
 }
 
 // ─── Mini widgets for left column (pinnable utils demo) ───
-function MiniCalendarWidget({ today, calDays }: { today: number; calDays: (number | null)[] }) {
+function MiniCalendarWidget({ today, calDays, compact = false }: { today: number; calDays: (number | null)[]; compact?: boolean }) {
+  if (compact) {
+    // Horizontal strip — show current week around today
+    const todayIdx = calDays.indexOf(today);
+    const start = Math.max(0, todayIdx - 3);
+    const days = calDays.slice(start, start + 9).filter(d => d !== null) as number[];
+    return (
+      <div className="flex items-center gap-1">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S', 'S', 'M'].slice(0, days.length).map((d, i) => (
+          <div key={i} className="flex flex-col items-center" style={{ minWidth: 16 }}>
+            <span style={{ fontSize: 6, fontFamily: 'monospace', color: DN.textDisabled }}>{d}</span>
+            <div className="flex items-center justify-center mt-0.5" style={{
+              width: 16, height: 16, fontSize: 8, fontFamily: 'monospace',
+              color: days[i] === today ? DN.black : DN.textSecondary,
+              fontWeight: days[i] === today ? 700 : 400,
+              backgroundColor: days[i] === today ? DN.textDisplay : 'transparent',
+              borderRadius: '50%',
+            }}>{days[i]}</div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
@@ -165,10 +189,38 @@ function MiniCalendarWidget({ today, calDays }: { today: number; calDays: (numbe
   );
 }
 
-function MiniMusicWidget({ isPlaying, setIsPlaying }: { isPlaying: boolean; setIsPlaying: (v: boolean) => void }) {
+const ALBUM_ART = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#D71921"/><stop offset="50%" stop-color="#8B0000"/><stop offset="100%" stop-color="#1a0000"/></linearGradient></defs><rect width="60" height="60" fill="url(#g)"/><text x="30" y="34" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="sans-serif" font-size="8" font-weight="bold">AFTER</text><text x="30" y="44" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-family="sans-serif" font-size="6">HOURS</text></svg>`);
+
+function MiniMusicWidget({ isPlaying, setIsPlaying, big = false }: { isPlaying: boolean; setIsPlaying: (v: boolean) => void; big?: boolean }) {
+  if (big) {
+    return (
+      <div className="group">
+        <div className="flex items-start gap-2.5">
+          <img src={ALBUM_ART} className="rounded shrink-0" style={{ width: 48, height: 48 }} alt="" />
+          <div className="flex-1 min-w-0 pt-0.5">
+            <div className="truncate" style={{ fontSize: 12, color: DN.textPrimary, fontWeight: 600 }}>Blinding Lights</div>
+            <div className="truncate" style={{ fontSize: 9, fontFamily: 'monospace', color: DN.textDisabled }}>The Weeknd</div>
+            {/* Progress bar */}
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <span style={{ fontSize: 7, fontFamily: 'monospace', color: DN.textDisabled }}>1:52</span>
+              <div className="flex-1 h-[2px] rounded-full" style={{ backgroundColor: DN.border }}>
+                <div className="h-full rounded-full" style={{ width: '75%', backgroundColor: DN.accent }} />
+              </div>
+              <span style={{ fontSize: 7, fontFamily: 'monospace', color: DN.textDisabled }}>2:25</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-center gap-3 mt-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
+          <button className="p-0.5" style={{ color: DN.textSecondary }}><SkipBack size={10} /></button>
+          <button className="p-0.5" style={{ color: DN.textPrimary }} onClick={() => setIsPlaying(!isPlaying)}>{isPlaying ? <Pause size={12} /> : <Play size={12} />}</button>
+          <button className="p-0.5" style={{ color: DN.textSecondary }}><SkipForward size={10} /></button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-2 group">
-      <div className="w-[30px] h-[30px] rounded flex items-center justify-center shrink-0" style={{ backgroundColor: DN.surface }}><Music size={12} style={{ color: DN.textDisabled }} /></div>
+      <img src={ALBUM_ART} className="rounded shrink-0" style={{ width: 30, height: 30 }} alt="" />
       <div className="flex-1 min-w-0">
         <div className="truncate" style={{ fontSize: 10, color: DN.textPrimary, fontWeight: 500 }}>Blinding Lights</div>
         <div className="truncate" style={{ fontSize: 8, fontFamily: 'monospace', color: DN.textDisabled }}>The Weeknd</div>
@@ -347,8 +399,10 @@ export default function NotchDemo({ autoPlay = true, startExpanded = false, forc
     } else if (forceSequence === 'pin-utils') {
       setView('overview');
       setDemoPinnedWidgets(WIDGET_SETS[0]);
-      schedule(2500, () => setDemoPinnedWidgets([...WIDGET_SETS[1]]));
-      schedule(5000, () => setDemoPinnedWidgets([...WIDGET_SETS[2]]));
+      schedule(1800, () => setDemoPinnedWidgets([...WIDGET_SETS[1]]));
+      schedule(3600, () => setDemoPinnedWidgets([...WIDGET_SETS[2]]));
+      schedule(5400, () => setDemoPinnedWidgets([...WIDGET_SETS[3]]));
+      schedule(7000, () => setDemoPinnedWidgets([...WIDGET_SETS[4]]));
     }
 
     return () => {
@@ -394,21 +448,23 @@ export default function NotchDemo({ autoPlay = true, startExpanded = false, forc
     // Reset state
     resetToDefault();
 
-    // Overview: expand agents, show all sections
+    // Overview: expand, show calendar+music first
     let t = 0;
     sched(t += 500, () => { setIsExpanded(true); setNotchDisplay('expanded'); });
 
-    // Toggle Claude Code open (already open), then collapse it
-    sched(t += 2000, () => setCollapsedSections(new Set(['agents'])));
-    // Expand scheduled
-    sched(t += 1200, () => setCollapsedSections(new Set(['agents', 'tasks'])));
-    // Collapse scheduled, expand tasks
-    sched(t += 1500, () => setCollapsedSections(new Set(['scheduled'])));
-    // Open all
-    sched(t += 1200, () => setCollapsedSections(new Set()));
+    // Cycle through calendar/music size transitions
+    sched(t += 2000, () => setDemoPinnedWidgets(['calendar-mini', 'music-big']));
+    sched(t += 2000, () => setDemoPinnedWidgets(['music-big']));
+    sched(t += 2000, () => setDemoPinnedWidgets(['calendar', 'music']));
+
+    // Quick toggle through dropdowns
+    sched(t += 800, () => setCollapsedSections(new Set(['agents'])));
+    sched(t += 600, () => setCollapsedSections(new Set(['agents', 'tasks'])));
+    sched(t += 600, () => setCollapsedSections(new Set(['scheduled'])));
+    sched(t += 600, () => setCollapsedSections(new Set()));
 
     // Switch to agents tab
-    sched(t += 1500, () => setView('agents'));
+    sched(t += 800, () => setView('agents'));
 
     // Open a chat
     sched(t += 2000, () => {
@@ -466,6 +522,7 @@ export default function NotchDemo({ autoPlay = true, startExpanded = false, forc
     // Then notifications
     sched(t += 3000, () => { setView('notifications'); setDemoExpandNotif(null); });
     sched(t += 1000, () => setDemoExpandNotif(0));
+    sched(t += 1500, () => setDemoExpandNotif(1));
 
     // Then settings — scroll to bottom after a moment
     sched(t += 3000, () => { setView('settings'); setDemoScrollSettings(false); });
@@ -473,9 +530,10 @@ export default function NotchDemo({ autoPlay = true, startExpanded = false, forc
 
     // Back to overview with pinnable utils cycling
     sched(t += 3000, () => { setView('overview'); setCollapsedSections(new Set(['agents', 'scheduled', 'tasks'])); setDemoPinnedWidgets(['calendar', 'music']); });
-    sched(t += 2000, () => setDemoPinnedWidgets([...WIDGET_SETS[1]]));
-    sched(t += 2000, () => setDemoPinnedWidgets([...WIDGET_SETS[2]]));
-    sched(t += 2000, () => setDemoPinnedWidgets(['calendar', 'music']));
+    sched(t += 1800, () => setDemoPinnedWidgets([...WIDGET_SETS[1]]));
+    sched(t += 1800, () => setDemoPinnedWidgets([...WIDGET_SETS[2]]));
+    sched(t += 1800, () => setDemoPinnedWidgets([...WIDGET_SETS[3]]));
+    sched(t += 1800, () => setDemoPinnedWidgets(['calendar', 'music']));
 
     // Reset and restart loop
     sched(t += 2000, () => { resetToDefault(); });
@@ -694,7 +752,9 @@ function OverviewView({ h12, minutes, ampm, dateStr, today, calDays, isPlaying, 
             {(pinnedWidgets as PinnedWidget[]).map((w: PinnedWidget) => (
               <div key={w}>
                 {w === 'calendar' && <MiniCalendarWidget today={today} calDays={calDays} />}
+                {w === 'calendar-mini' && <MiniCalendarWidget today={today} calDays={calDays} compact />}
                 {w === 'music' && <MiniMusicWidget isPlaying={isPlaying} setIsPlaying={setIsPlaying} />}
+                {w === 'music-big' && <MiniMusicWidget isPlaying={isPlaying} setIsPlaying={setIsPlaying} big />}
                 {w === 'ram' && <MiniRAMWidget />}
                 {w === 'network' && <MiniNetworkWidget sparkData={sparkData} />}
                 {w === 'disk' && <MiniDiskWidget />}
