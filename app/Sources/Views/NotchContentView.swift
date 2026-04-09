@@ -319,28 +319,7 @@ struct NotchContentView: View {
     }
 
     private func formatThreadDate(_ iso: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = formatter.date(from: iso) else {
-            // Try without fractional seconds
-            formatter.formatOptions = [.withInternetDateTime]
-            guard let date = formatter.date(from: iso) else { return iso }
-            return relativeDate(date)
-        }
-        return relativeDate(date)
-    }
-
-    private func relativeDate(_ date: Date) -> String {
-        let interval = Date().timeIntervalSince(date)
-        if interval < 60 { return "just now" }
-        if interval < 3600 { return "\(Int(interval / 60))m ago" }
-        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
-        let days = Int(interval / 86400)
-        if days == 1 { return "yesterday" }
-        if days < 7 { return "\(days)d ago" }
-        let df = DateFormatter()
-        df.dateFormat = "MMM d"
-        return df.string(from: date)
+        formatRelativeDate(iso, fallbackFormat: "MMM d")
     }
 
     // MARK: - Chat Input Bar
@@ -1544,12 +1523,6 @@ struct PinnedDiskView: View {
     }
 }
 
-private func pinnedFmtBytes(_ bytes: Double) -> String {
-    if bytes < 1024 { return String(format: "%.0f B/s", bytes) }
-    if bytes < 1024 * 1024 { return String(format: "%.1f KB/s", bytes / 1024) }
-    return String(format: "%.1f MB/s", bytes / 1024 / 1024)
-}
-
 struct PinnedNetworkView: View {
     @ObservedObject var monitor: SystemStatsMonitor
     var body: some View {
@@ -1563,7 +1536,7 @@ struct PinnedNetworkView: View {
                     .tracking(0.8)
                     .foregroundColor(DN.textDisabled)
                 Spacer()
-                Text(pinnedFmtBytes(monitor.netDown))
+                Text(fmtBytes(monitor.netDown))
                     .font(DN.mono(9, weight: .medium))
                     .foregroundColor(DN.success)
             }
@@ -1576,7 +1549,7 @@ struct PinnedNetworkView: View {
                     .tracking(0.8)
                     .foregroundColor(DN.textDisabled)
                 Spacer()
-                Text(pinnedFmtBytes(monitor.netUp))
+                Text(fmtBytes(monitor.netUp))
                     .font(DN.mono(9, weight: .medium))
                     .foregroundColor(DN.warning)
             }

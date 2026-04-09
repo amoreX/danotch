@@ -306,7 +306,6 @@ export default function NotchDemo({ autoPlay = true, startExpanded = false, forc
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isPlaying, setIsPlaying] = useState(true);
   const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
-  const [chatInput] = useState('');
   const [typingDemo, setTypingDemo] = useState('');
   const [showTypingCursor, setShowTypingCursor] = useState(false);
   const seqTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -699,7 +698,7 @@ export default function NotchDemo({ autoPlay = true, startExpanded = false, forc
                 <AnimatePresence mode="wait">
                   {view === 'overview' && <OverviewView key="overview" h12={h12} minutes={minutes} ampm={ampm} dateStr={dateStr} today={today} calDays={calDays} isPlaying={isPlaying} setIsPlaying={setIsPlaying} isSectionExpanded={isSectionExpanded} toggleSection={toggleSection} handleUserInteraction={handleUserInteraction} pinnedWidgets={demoPinnedWidgets} sparkData={sparkData} />}
                   {view === 'agents' && <AgentsView key="agents" isSectionExpanded={isSectionExpanded} toggleSection={toggleSection} handleUserInteraction={handleUserInteraction} />}
-                  {view === 'chat' && <ChatView key="chat" onBack={() => handleUserInteraction('agents')} typingDemo={typingDemo} showTypingCursor={showTypingCursor} chatInput={chatInput} messages={demoMessages ?? DEMO_CHAT} chatTitle={demoChatTitle || 'Add Notification Delete'} />}
+                  {view === 'chat' && <ChatView key="chat" onBack={() => handleUserInteraction('agents')} typingDemo={typingDemo} showTypingCursor={showTypingCursor} messages={demoMessages ?? DEMO_CHAT} chatTitle={demoChatTitle || 'Add Notification Delete'} />}
                   {view === 'stats' && <StatsView key="stats" sparkData={sparkData} liveStats={liveStats} />}
                   {view === 'notifications' && <NotificationsView key="notifications" forceExpanded={demoExpandNotif} />}
                   {view === 'settings' && <SettingsView key="settings" scrollToBottom={demoScrollSettings} />}
@@ -832,8 +831,8 @@ function AgentsView({ isSectionExpanded, toggleSection, handleUserInteraction }:
 }
 
 // ─── CHAT VIEW ───
-function ChatView({ onBack, typingDemo, showTypingCursor, chatInput, messages, chatTitle }: {
-  onBack: () => void; typingDemo: string; showTypingCursor: boolean; chatInput: string;
+function ChatView({ onBack, typingDemo, showTypingCursor, messages, chatTitle }: {
+  onBack: () => void; typingDemo: string; showTypingCursor: boolean;
   messages: DemoChatMsg[]; chatTitle: string;
 }) {
   return (
@@ -878,13 +877,13 @@ function ChatView({ onBack, typingDemo, showTypingCursor, chatInput, messages, c
         </AnimatePresence>
       </div>
       <div className="px-3 pb-2">
-        <div className="flex items-center gap-1.5 rounded-lg px-2 py-1.5" style={{ backgroundColor: DN.surface, border: `1px solid ${typingDemo || chatInput ? DN.borderVisible : DN.border}` }}>
+        <div className="flex items-center gap-1.5 rounded-lg px-2 py-1.5" style={{ backgroundColor: DN.surface, border: `1px solid ${typingDemo ? DN.borderVisible : DN.border}` }}>
           <Sparkles size={9} style={{ color: typingDemo ? DN.textSecondary : DN.textDisabled }} />
           <div className="flex-1 relative" style={{ fontSize: 11, color: typingDemo ? DN.textPrimary : DN.textDisabled }}>
-            {typingDemo || chatInput || 'Message agent...'}
+            {typingDemo || 'Message agent...'}
             {showTypingCursor && <motion.span animate={{ opacity: [1, 0] }} transition={{ duration: 0.5, repeat: Infinity }} className="inline-block ml-px" style={{ width: 1.5, height: 13, backgroundColor: DN.textPrimary, verticalAlign: 'text-bottom' }} />}
           </div>
-          {(typingDemo || chatInput) && <div className="w-[18px] h-[18px] rounded-full flex items-center justify-center" style={{ backgroundColor: DN.textDisplay }}><Send size={9} style={{ color: DN.black }} /></div>}
+          {typingDemo && <div className="w-[18px] h-[18px] rounded-full flex items-center justify-center" style={{ backgroundColor: DN.textDisplay }}><Send size={9} style={{ color: DN.black }} /></div>}
         </div>
       </div>
     </motion.div>

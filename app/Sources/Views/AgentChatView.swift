@@ -148,19 +148,22 @@ struct AgentChatView: View {
             }
         }
         .padding(.vertical, DN.spaceSM)
-        .onAppear { autoScroll = true }
+        .onAppear {
+            autoScroll = true
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) {
+                typingPhase.toggle()
+            }
+        }
     }
 
     @State private var typingPhase = false
 
     private func typingDotOpacity(_ index: Int) -> Double {
-        // Simple staggered pulse
-        let base = typingPhase ? 1.0 : 0.3
         switch index {
         case 0: return typingPhase ? 1.0 : 0.3
         case 1: return 0.6
         case 2: return typingPhase ? 0.3 : 1.0
-        default: return base
+        default: return 0.3
         }
     }
 

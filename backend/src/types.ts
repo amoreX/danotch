@@ -1,4 +1,4 @@
-export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'awaiting_approval';
+export type TaskStatus = 'running' | 'completed' | 'failed';
 
 export interface Task {
   id: string;
@@ -31,9 +31,4 @@ export interface SubagentEvent {
   data: Record<string, unknown>;
 }
 
-export interface TaskSummaryEvent {
-  type: 'task_summary';
-  tasks: Record<string, unknown>[];
-}
-
-export type NotchEvent = SubagentEvent | TaskSummaryEvent;
+export type NotchEvent = SubagentEvent;

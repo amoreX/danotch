@@ -78,6 +78,33 @@ enum DN {
     }
 }
 
+// MARK: - Shared Date Helpers
+
+/// Parse an ISO8601 date string (with or without fractional seconds) and return a relative date string.
+func formatRelativeDate(_ iso: String, fallbackFormat: String = "MMM d") -> String {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let date = formatter.date(from: iso) ?? {
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: iso)
+    }()
+    guard let d = date else { return iso }
+    return relativeTimeString(d, fallbackFormat: fallbackFormat)
+}
+
+func relativeTimeString(_ date: Date, fallbackFormat: String = "MMM d") -> String {
+    let interval = Date().timeIntervalSince(date)
+    if interval < 60 { return "just now" }
+    if interval < 3600 { return "\(Int(interval / 60))m ago" }
+    if interval < 86400 { return "\(Int(interval / 3600))h ago" }
+    let days = Int(interval / 86400)
+    if days == 1 { return "yesterday" }
+    if days < 7 { return "\(days)d ago" }
+    let df = DateFormatter()
+    df.dateFormat = fallbackFormat
+    return df.string(from: date)
+}
+
 // MARK: - Color hex initializer
 
 extension Color {

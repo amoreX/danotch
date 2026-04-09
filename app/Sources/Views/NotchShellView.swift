@@ -606,20 +606,7 @@ struct NotificationRunRow: View {
 }
 
 private func notifDate(_ iso: String) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let date = formatter.date(from: iso) ?? {
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: iso)
-    }()
-    guard let d = date else { return "" }
-    let interval = Date().timeIntervalSince(d)
-    if interval < 60 { return "just now" }
-    if interval < 3600 { return "\(Int(interval / 60))m ago" }
-    if interval < 86400 { return "\(Int(interval / 3600))h ago" }
-    let df = DateFormatter()
-    df.dateFormat = "MMM d, h:mm a"
-    return df.string(from: d)
+    formatRelativeDate(iso, fallbackFormat: "MMM d, h:mm a")
 }
 
 // MARK: - Settings
@@ -820,65 +807,6 @@ struct SettingsToggleRow: View {
                 isOn.toggle()
             }
         }
-    }
-}
-
-struct SettingsPickerRow: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    let options: [String]
-    @Binding var selection: Int
-
-    var body: some View {
-        HStack(spacing: DN.spaceSM) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DN.textPrimary)
-                .frame(width: 18)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(DN.body(11))
-                    .foregroundColor(DN.textPrimary)
-                Text(subtitle)
-                    .font(DN.mono(8))
-                    .foregroundColor(DN.textDisabled)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            HStack(spacing: 1) {
-                ForEach(0..<options.count, id: \.self) { i in
-                    Button(action: {
-                        withAnimation(.easeOut(duration: DN.microDuration)) {
-                            selection = i
-                        }
-                    }) {
-                        Text(options[i])
-                            .font(DN.label(7))
-                            .tracking(0.4)
-                            .foregroundColor(selection == i ? DN.textDisplay : DN.textDisabled)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(selection == i ? DN.borderVisible : .clear)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(2)
-            .background(DN.black)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(DN.border, lineWidth: 1)
-            )
-        }
-        .padding(.horizontal, DN.spaceSM)
-        .padding(.vertical, 6)
-        .background(DN.surface)
     }
 }
 

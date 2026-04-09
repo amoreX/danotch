@@ -259,7 +259,7 @@ struct ProcessInfo_: Identifiable {
 
 // MARK: - Formatting
 
-private func fmtBytes(_ bytes: Double) -> String {
+func fmtBytes(_ bytes: Double) -> String {
     if bytes < 1024 { return String(format: "%.0f B/s", bytes) }
     if bytes < 1024 * 1024 { return String(format: "%.1f KB/s", bytes / 1024) }
     return String(format: "%.1f MB/s", bytes / 1024 / 1024)

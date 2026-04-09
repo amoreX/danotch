@@ -171,9 +171,7 @@ export async function runChat(
         ...(tools.length > 0 ? { tools } : {}),
       });
 
-      let loopText = '';
       stream.on('text', (text) => {
-        loopText += text;
         fullText += text;
         task.streamingText = fullText;
         notch.sendProgress(id, { type: 'token', text });
@@ -209,8 +207,8 @@ export async function runChat(
 
           // Route to correct handler
           let result: string;
-          const scheduledToolNames = ['create_scheduled_task', 'list_scheduled_tasks', 'update_scheduled_task', 'delete_scheduled_task'];
-          if (scheduledToolNames.includes(toolBlock.name) && userId) {
+          const isScheduledTool = scheduledTaskTools.some(t => t.name === toolBlock.name);
+          if (isScheduledTool && userId) {
             result = await executeScheduledTool(toolBlock.name, toolInput, userId);
           } else {
             result = await executeLocalTool(toolBlock.name, toolInput);
