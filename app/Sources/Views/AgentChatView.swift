@@ -445,17 +445,7 @@ struct MarkdownView: View {
             }
 
         case .code(let code):
-            Text(code)
-                .font(DN.mono(10))
-                .foregroundColor(DN.textPrimary)
-                .padding(DN.spaceSM)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(DN.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(DN.border, lineWidth: 1)
-                )
+            GruvboxCodeBlock(code: code)
 
         case .divider:
             Rectangle()
@@ -600,5 +590,165 @@ struct DraftCardView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(DN.border, lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Gruvbox Code Block
+
+private struct GruvboxCodeBlock: View {
+    let code: String
+
+    private static let codeFont = Font.system(size: 11, weight: .regular, design: .monospaced)
+
+    // Gruvbox dark palette
+    private static let bg      = Color(hex: 0x282828)
+    private static let bg1     = Color(hex: 0x3C3836)
+    private static let fg      = Color(hex: 0xEBDBB2)  // default text
+    private static let red     = Color(hex: 0xFB4934)
+    private static let green   = Color(hex: 0xB8BB26)
+    private static let yellow  = Color(hex: 0xFABD2F)
+    private static let blue    = Color(hex: 0x83A598)
+    private static let purple  = Color(hex: 0xD3869B)
+    private static let aqua    = Color(hex: 0x8EC07C)
+    private static let orange  = Color(hex: 0xFE8019)
+    private static let gray    = Color(hex: 0xA89984)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header bar
+            HStack {
+                HStack(spacing: 5) {
+                    Circle().fill(Color(hex: 0xCC6666)).frame(width: 7, height: 7)
+                    Circle().fill(Color(hex: 0xF0C674)).frame(width: 7, height: 7)
+                    Circle().fill(Color(hex: 0x81A2BE)).frame(width: 7, height: 7)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Self.bg1)
+
+            // Code content
+            ScrollView(.horizontal, showsIndicators: false) {
+                colorizedText(code)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Self.bg)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Self.bg1, lineWidth: 1))
+        .padding(.vertical, 2)
+    }
+
+    private func colorizedText(_ source: String) -> Text {
+        var result = Text("")
+        let lines = source.components(separatedBy: "\n")
+        for (i, line) in lines.enumerated() {
+            result = result + tokenizeLine(line)
+            if i < lines.count - 1 {
+                result = result + Text("\n")
+            }
+        }
+        return result
+    }
+
+    // Apply monospaced font + color to every token segment
+    private func t(_ s: String, _ color: Color) -> Text {
+        Text(s).font(Self.codeFont).foregroundColor(color)
+    }
+
+    private func tokenizeLine(_ line: String) -> Text {
+        var result = t("", Self.fg)
+        var i = line.startIndex
+
+        while i < line.endIndex {
+            let rest = line[i...]
+
+            // Line comment
+            if rest.hasPrefix("//") || rest.hasPrefix("#") {
+                result = result + t(String(rest), Self.gray)
+                break
+            }
+
+            // String literal
+            if rest.hasPrefix("\"") || rest.hasPrefix("'") {
+                let q = rest.first!
+                var j = rest.index(after: rest.startIndex)
+                while j < rest.endIndex && rest[j] != q {
+                    if rest[j] == "\\" { j = rest.index(after: j) }
+                    if j < rest.endIndex { j = rest.index(after: j) }
+                }
+                if j < rest.endIndex { j = rest.index(after: j) }
+                result = result + t(String(rest[rest.startIndex..<j]), Self.green)
+                i = line.index(i, offsetBy: rest.distance(from: rest.startIndex, to: j))
+                continue
+            }
+
+            // Word token
+            if rest.first?.isLetter == true || rest.first == "_" {
+                var j = rest.startIndex
+                while j < rest.endIndex && (rest[j].isLetter || rest[j].isNumber || rest[j] == "_") {
+                    j = rest.index(after: j)
+                }
+                let word = String(rest[rest.startIndex..<j])
+                result = result + t(word, keywordColor(word))
+                i = line.index(i, offsetBy: rest.distance(from: rest.startIndex, to: j))
+                continue
+            }
+
+            // Number
+            if rest.first?.isNumber == true {
+                var j = rest.startIndex
+                while j < rest.endIndex && (rest[j].isNumber || rest[j] == "." || rest[j] == "x" || rest[j] == "b") {
+                    j = rest.index(after: j)
+                }
+                result = result + t(String(rest[rest.startIndex..<j]), Self.purple)
+                i = line.index(i, offsetBy: rest.distance(from: rest.startIndex, to: j))
+                continue
+            }
+
+            // Single char
+            let ch = String(rest.first!)
+            let chColor: Color = ["(", ")", "{", "}", "[", "]"].contains(ch) ? Self.fg :
+                                 ["=", "+", "-", "*", "/", "<", ">", "!", "&", "|", "?", ":"].contains(ch) ? Self.orange :
+                                 Self.fg
+            result = result + t(ch, chColor)
+            i = line.index(after: i)
+        }
+
+        return result
+    }
+
+    private func keywordColor(_ word: String) -> Color {
+        let keywords: Set<String> = [
+            // Swift / JS / Python / Go / Rust / TS common keywords
+            "func", "function", "def", "fn", "fun",
+            "let", "var", "const", "val", "mut",
+            "if", "else", "elif", "guard", "when",
+            "for", "while", "loop", "in", "of",
+            "return", "throw", "throws", "try", "catch", "async", "await",
+            "import", "from", "export", "package", "use",
+            "class", "struct", "enum", "interface", "protocol", "trait", "impl",
+            "switch", "case", "match", "break", "continue", "default",
+            "new", "self", "Self", "super", "this",
+            "public", "private", "protected", "internal", "static", "override",
+            "nil", "null", "None", "true", "false", "True", "False",
+            "type", "typeof", "instanceof", "as", "is",
+        ]
+        let builtins: Set<String> = [
+            "print", "println", "console", "log", "error",
+            "String", "Int", "Float", "Double", "Bool", "Array", "Dictionary",
+            "Optional", "Result", "Error", "Never",
+            "any", "some", "where",
+        ]
+        if keywords.contains(word)  { return Self.red }
+        if builtins.contains(word)  { return Self.yellow }
+        // ALL_CAPS → constant
+        if word == word.uppercased() && word.count > 1 { return Self.purple }
+        // PascalCase → type
+        if let first = word.first, first.isUppercase { return Self.aqua }
+        // camelCase / snake_case → identifier
+        return Self.blue
     }
 }

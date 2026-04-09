@@ -259,51 +259,28 @@ struct NotchShellView: View {
 
                 // Bell icon
                 let notifsActive = viewModel.viewState == .notifications
-                Button(action: {
-                    withAnimation(DN.transition) {
-                        viewModel.viewState = .notifications
+                iconChipButton(
+                    isActive: notifsActive,
+                    badgeCount: viewModel.unreadCount,
+                    action: {
+                        withAnimation(DN.transition) { viewModel.viewState = .notifications }
                     }
-                }) {
-                    ZStack(alignment: .topTrailing) {
-                        Image(systemName: notifsActive ? "bell.fill" : "bell")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(notifsActive ? DN.textDisplay : DN.textDisabled)
-
-                        if viewModel.unreadCount > 0 {
-                            Circle()
-                                .fill(DN.accent)
-                                .frame(width: 6, height: 6)
-                                .offset(x: 2, y: -2)
-                        }
-                    }
-                    .padding(.horizontal, DN.spaceXS)
-                    .padding(.vertical, DN.spaceXS)
-                    .contentShape(Rectangle())
+                ) {
+                    Image(systemName: notifsActive ? "bell.fill" : "bell")
+                        .font(.system(size: 10, weight: .medium))
                 }
-                .buttonStyle(.plain)
 
+                // Settings icon
                 let settingsActive = viewModel.viewState == .settings
-                Button(action: {
-                    withAnimation(DN.transition) {
-                        viewModel.viewState = .settings
+                iconChipButton(
+                    isActive: settingsActive,
+                    action: {
+                        withAnimation(DN.transition) { viewModel.viewState = .settings }
                     }
-                }) {
-                    VStack(spacing: 3) {
-                        Image(systemName: settingsActive ? "gearshape.fill" : "gearshape")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(settingsActive ? DN.textDisplay : DN.textDisabled)
-
-                        Rectangle()
-                            .fill(settingsActive ? DN.accent : Color.clear)
-                            .frame(height: 1.5)
-                            .cornerRadius(1)
-                    }
-                    .padding(.horizontal, DN.spaceSM)
-                    .padding(.vertical, 2)
-                    .contentShape(Rectangle())
+                ) {
+                    Image(systemName: settingsActive ? "gearshape.fill" : "gearshape")
+                        .font(.system(size: 10, weight: .medium))
                 }
-                .buttonStyle(.plain)
-                .animation(.easeOut(duration: DN.microDuration), value: settingsActive)
 
                 if viewModel.settings.showBattery {
                     BatteryView()
@@ -316,25 +293,25 @@ struct NotchShellView: View {
     }
 
     private func tabButton(label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 3) {
-                Text(label)
-                    .font(DN.label(10))
-                    .tracking(0.8)
-                    .foregroundColor(isActive ? DN.textDisplay : DN.textDisabled)
-
-                // 2px underline indicator — replaces bracket notation
-                Rectangle()
-                    .fill(isActive ? DN.accent : Color.clear)
-                    .frame(height: 1.5)
-                    .cornerRadius(1)
-            }
-            .padding(.horizontal, DN.spaceSM)
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
+        ChipButton(isActive: isActive, action: action) {
+            Text(label)
+                .font(DN.label(10))
+                .tracking(0.6)
         }
-        .buttonStyle(.plain)
-        .animation(.easeOut(duration: DN.microDuration), value: isActive)
+    }
+
+    private func iconChipButton(isActive: Bool, badgeCount: Int = 0, action: @escaping () -> Void, @ViewBuilder icon: @escaping () -> some View) -> some View {
+        ChipButton(isActive: isActive, action: action) {
+            ZStack(alignment: .topTrailing) {
+                icon()
+                if badgeCount > 0 {
+                    Circle()
+                        .fill(DN.accent)
+                        .frame(width: 5, height: 5)
+                        .offset(x: 4, y: -4)
+                }
+            }
+        }
     }
 }
 
@@ -358,6 +335,38 @@ private struct NotchCornerLeft: Shape {
         )
         p.closeSubpath()
         return p
+    }
+}
+
+// MARK: - Chip Button
+
+private struct ChipButton<Label: View>: View {
+    let isActive: Bool
+    let action: () -> Void
+    @ViewBuilder let label: () -> Label
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            label()
+                .font(isActive ? .system(size: 10, weight: .semibold) : .system(size: 10, weight: .medium))
+                .foregroundColor(isActive ? DN.textDisplay : isHovered ? DN.textPrimary : DN.textDisabled)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(
+                            isActive
+                                ? Color.white.opacity(0.12)
+                                : isHovered ? Color.white.opacity(0.06) : Color.clear
+                        )
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .handCursor()
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(.easeOut(duration: DN.microDuration), value: isActive)
     }
 }
 

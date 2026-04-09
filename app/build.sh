@@ -41,6 +41,8 @@ cat > "$BUNDLE_DIR/Info.plist" << 'PLIST'
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Danotch shows your calendar events in the notch overlay.</string>
 </dict>
 </plist>
 PLIST

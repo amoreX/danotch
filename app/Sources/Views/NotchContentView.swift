@@ -1,4 +1,5 @@
 import SwiftUI
+import EventKit
 
 struct NotchContentView: View {
     @ObservedObject var viewModel: NotchViewModel
@@ -1262,10 +1263,68 @@ struct ScheduledTaskRow: View {
     }
 }
 
+// MARK: - Calendar Events Monitor
+
+class CalendarEventsMonitor: ObservableObject {
+    @Published var eventsByDay: [Int: [EKEvent]] = [:]
+    private let store = EKEventStore()
+
+    init() {
+        requestAccess()
+        NotificationCenter.default.addObserver(
+            forName: .EKEventStoreChanged, object: store, queue: .main
+        ) { [weak self] _ in self?.fetchEvents() }
+    }
+
+    func requestAccess() {
+        if #available(macOS 14, *) {
+            let status = EKEventStore.authorizationStatus(for: .event)
+            if status == .fullAccess {
+                fetchEvents()
+            } else if status == .notDetermined {
+                Task { [weak self] in
+                    guard let self else { return }
+                    if (try? await self.store.requestFullAccessToEvents()) == true {
+                        DispatchQueue.main.async { self.fetchEvents() }
+                    }
+                }
+            }
+        } else {
+            let status = EKEventStore.authorizationStatus(for: .event)
+            if status == .authorized {
+                fetchEvents()
+            } else if status == .notDetermined {
+                store.requestAccess(to: .event) { [weak self] granted, _ in
+                    if granted { DispatchQueue.main.async { self?.fetchEvents() } }
+                }
+            }
+        }
+    }
+
+    func fetchEvents() {
+        let cal = Calendar.current
+        let now = Date()
+        guard let start = cal.date(from: cal.dateComponents([.year, .month], from: now)),
+              let end = cal.date(byAdding: .month, value: 1, to: start) else { return }
+        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+        let fetched = store.events(matching: predicate)
+        var byDay: [Int: [EKEvent]] = [:]
+        for event in fetched {
+            let day = cal.component(.day, from: event.startDate)
+            byDay[day, default: []].append(event)
+        }
+        DispatchQueue.main.async { self.eventsByDay = byDay }
+    }
+}
+
 // MARK: - Mini Calendar
 
 struct MiniCalendarView: View {
     let compact: Bool
+
+    @StateObject private var events = CalendarEventsMonitor()
+    @State private var hoveredDay: Int? = nil
+    @State private var selectedDay: Int? = nil
 
     private let daysOfWeek = ["S", "M", "T", "W", "T", "F", "S"]
     private var cal: Calendar { Calendar.current }
@@ -1342,77 +1401,164 @@ struct MiniCalendarView: View {
     }
 
     private var fullCalendar: some View {
-        VStack(spacing: 0) {
-            HStack {
+        VStack(alignment: .leading, spacing: 0) {
+            // Month + year header — clear hierarchy, month prominent
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(monthName)
-                    .font(DN.label(8))
-                    .tracking(0.8)
-                    .foregroundColor(DN.textSecondary)
-                Spacer()
+                    .font(DN.heading(13, weight: .semibold))
+                    .foregroundColor(DN.textDisplay)
                 Text(yearString)
-                    .font(DN.mono(8))
+                    .font(DN.body(11))
                     .foregroundColor(DN.textDisabled)
+                Spacer()
             }
-            .padding(.bottom, 6)
+            .padding(.bottom, 10)
 
+            // Weekday labels — text only, no background (deference principle)
             HStack(spacing: 0) {
-                ForEach(daysOfWeek, id: \.self) { day in
-                    Text(day)
-                        .font(DN.label(6))
-                        .tracking(0.5)
+                ForEach(daysOfWeek, id: \.self) { d in
+                    Text(d)
+                        .font(.system(size: 9, weight: .medium))
                         .foregroundColor(DN.textDisabled)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 12)
+                        .frame(height: 16)
                 }
             }
 
+            // 1px separator below weekday row
             Rectangle()
                 .fill(DN.border)
-                .frame(height: 1)
-                .padding(.vertical, 3)
+                .frame(height: 0.5)
+                .padding(.bottom, 2)
 
-            let rows = buildCalendarDays()
-            VStack(spacing: 2) {
-                ForEach(0..<rows.count, id: \.self) { rowIdx in
-                    HStack(spacing: 0) {
-                        ForEach(0..<7, id: \.self) { col in
-                            let day = rows[rowIdx][col]
-                            if day > 0 {
-                                Text("\(day)")
-                                    .font(DN.mono(8, weight: day == currentDay ? .bold : .regular))
-                                    .foregroundColor(dayColor(day))
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 16)
-                                    .background {
-                                        if day == currentDay {
-                                            Circle()
-                                                .fill(DN.textDisplay)
-                                                .frame(width: 15, height: 15)
+            // Day grid — GeometryReader for exact square cells
+            GeometryReader { geo in
+                let cell = geo.size.width / 7
+                let rows = buildCalendarDays()
+
+                VStack(spacing: 2) {
+                    ForEach(0..<rows.count, id: \.self) { rowIdx in
+                        HStack(spacing: 0) {
+                            ForEach(0..<7, id: \.self) { col in
+                                let day   = rows[rowIdx][col]
+                                let isToday    = day == currentDay
+                                let isHovered  = hoveredDay == day && day > 0
+                                let isSelected = selectedDay == day && day > 0
+                                let dayEvents  = day > 0 ? (events.eventsByDay[day] ?? []) : []
+
+                                ZStack {
+                                    // Hover / selected background — subtle rounded rect
+                                    if isHovered || isSelected {
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(isSelected
+                                                  ? DN.accent.opacity(0.15)
+                                                  : Color.white.opacity(0.06))
+                                            .padding(1)
+                                    }
+
+                                    VStack(spacing: 2) {
+                                        // Day number with today circle (iOS Calendar style)
+                                        ZStack {
+                                            if isToday {
+                                                Circle()
+                                                    .fill(DN.accent)
+                                                    .frame(width: cell * 0.72, height: cell * 0.72)
+                                            }
+                                            Text(day > 0 ? "\(day)" : "")
+                                                .font(.system(size: 10,
+                                                              weight: isToday ? .bold : .regular))
+                                                .foregroundColor(
+                                                    isToday    ? DN.black :
+                                                    isSelected ? DN.accent :
+                                                    day > 0    ? dayColor(day) : .clear
+                                                )
+                                        }
+
+                                        // Event dots (calendar-colored, up to 3)
+                                        if !dayEvents.isEmpty {
+                                            HStack(spacing: 2) {
+                                                ForEach(0..<min(dayEvents.count, 3), id: \.self) { i in
+                                                    Circle()
+                                                        .fill(Color(nsColor: dayEvents[i].calendar.color))
+                                                        .frame(width: 3, height: 3)
+                                                }
+                                            }
+                                        } else {
+                                            Color.clear.frame(height: 3)
                                         }
                                     }
-                            } else {
-                                Color.clear
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 16)
+                                }
+                                .frame(width: cell, height: cell)
+                                .onHover { inside in
+                                    withAnimation(.easeOut(duration: 0.1)) {
+                                        hoveredDay = inside && day > 0 ? day : nil
+                                    }
+                                }
+                                .onTapGesture {
+                                    guard day > 0 else { return }
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        selectedDay = selectedDay == day ? nil : day
+                                    }
+                                }
+                                .handCursor()
                             }
                         }
                     }
                 }
             }
+            .frame(height: CGFloat(buildCalendarDays().count) * (185.0 / 7.0) + CGFloat(buildCalendarDays().count - 1) * 2)
+
+            // Selected day events — slides in below grid
+            if let day = selectedDay {
+                let dayEvents = events.eventsByDay[day] ?? []
+                VStack(alignment: .leading, spacing: 0) {
+                    Rectangle()
+                        .fill(DN.border)
+                        .frame(height: 0.5)
+                        .padding(.vertical, 8)
+
+                    if dayEvents.isEmpty {
+                        Text("No events")
+                            .font(DN.body(10))
+                            .foregroundColor(DN.textDisabled)
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(dayEvents.prefix(4), id: \.eventIdentifier) { event in
+                                HStack(spacing: 8) {
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color(nsColor: event.calendar.color))
+                                        .frame(width: 3, height: 28)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(event.title ?? "Untitled")
+                                            .font(DN.body(10, weight: .medium))
+                                            .foregroundColor(DN.textPrimary)
+                                            .lineLimit(1)
+                                        Text(event.isAllDay ? "All day" : eventTimeString(event))
+                                            .font(DN.mono(8))
+                                            .foregroundColor(DN.textDisabled)
+                                    }
+                                    Spacer()
+                                }
+                            }
+                        }
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
         }
-        .padding(DN.spaceSM)
-        .background(DN.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(DN.border, lineWidth: 1)
-        )
     }
 
     private func dayColor(_ day: Int) -> Color {
         if day == currentDay { return DN.black }
         if day < currentDay { return DN.textDisabled }
         return DN.textPrimary
+    }
+
+    private func eventTimeString(_ event: EKEvent) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f.string(from: event.startDate)
     }
 
     private func dayOfWeekLabel(_ day: Int) -> String {
