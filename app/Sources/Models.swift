@@ -50,10 +50,6 @@ struct SubagentTask: Identifiable {
         status == .running || status == .pending || status == .awaitingApproval
     }
 
-    var needsApproval: Bool {
-        status == .awaitingApproval
-    }
-
     var durationSeconds: Double? {
         let end = completedAt ?? Date()
         return end.timeIntervalSince(createdAt)
@@ -69,16 +65,6 @@ struct SubagentTask: Identifiable {
         return "\(mins)m \(secs)s"
     }
 
-    var statusIcon: String {
-        switch status {
-        case .pending: return "circle.dashed"
-        case .running: return "bolt.circle.fill"
-        case .completed: return "checkmark.circle.fill"
-        case .failed: return "xmark.circle.fill"
-        case .cancelled: return "minus.circle.fill"
-        case .awaitingApproval: return "exclamationmark.circle.fill"
-        }
-    }
 }
 
 // MARK: - Agent Monitoring

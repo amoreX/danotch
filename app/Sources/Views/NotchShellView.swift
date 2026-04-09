@@ -680,20 +680,7 @@ struct NotificationRunRow: View {
 }
 
 private func notifDate(_ iso: String) -> String {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    let date = formatter.date(from: iso) ?? {
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: iso)
-    }()
-    guard let d = date else { return "" }
-    let interval = Date().timeIntervalSince(d)
-    if interval < 60 { return "just now" }
-    if interval < 3600 { return "\(Int(interval / 60))m ago" }
-    if interval < 86400 { return "\(Int(interval / 3600))h ago" }
-    let df = DateFormatter()
-    df.dateFormat = "MMM d, h:mm a"
-    return df.string(from: d)
+    formatRelativeDate(iso, fallbackFormat: "MMM d, h:mm a")
 }
 
 // MARK: - Settings
@@ -732,35 +719,23 @@ struct SettingsPanel: View {
                         )
                     }
 
-                    SettingsSection(title: "DISPLAY") {
-                        SettingsPickerRow(
-                            icon: "calendar",
-                            title: "Calendar",
-                            subtitle: "Calendar display in overview",
-                            options: CalendarMode.allCases.map { $0.label },
-                            selection: Binding(
-                                get: { CalendarMode.allCases.firstIndex(of: viewModel.settings.calendarMode) ?? 2 },
-                                set: { viewModel.settings.calendarMode = CalendarMode.allCases[$0] }
-                            )
-                        )
-                        SettingsToggleRow(
-                            icon: "music.note",
-                            title: "Now playing",
-                            subtitle: "Show current music track in overview",
-                            isOn: $viewModel.settings.showMusic
-                        )
-                        if viewModel.settings.showMusic {
-                            SettingsPickerRow(
-                                icon: "rectangle.expand.vertical",
-                                title: "Player size",
-                                subtitle: "Music widget size when space allows",
-                                options: MusicSize.allCases.map { $0.label },
-                                selection: Binding(
-                                    get: { MusicSize.allCases.firstIndex(of: viewModel.settings.musicSize) ?? 0 },
-                                    set: { viewModel.settings.musicSize = MusicSize.allCases[$0] }
-                                )
-                            )
+                    SettingsSection(title: "WIDGETS") {
+                        ForEach(PinnedWidget.allCases, id: \.rawValue) { widget in
+                            widgetToggleRow(widget)
                         }
+
+                        HStack {
+                            Spacer()
+                            Text("MAX 3 WIDGETS")
+                                .font(DN.label(7))
+                                .tracking(0.8)
+                                .foregroundColor(DN.textDisabled)
+                            Spacer()
+                        }
+                        .padding(.vertical, DN.spaceXS)
+                    }
+
+                    SettingsSection(title: "DISPLAY") {
                         SettingsToggleRow(
                             icon: "battery.75percent",
                             title: "Battery indicator",
@@ -806,6 +781,42 @@ struct SettingsPanel: View {
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func widgetToggleRow(_ widget: PinnedWidget) -> some View {
+        let isPinned = viewModel.settings.pinnedWidgets.contains(widget)
+        let atMax = viewModel.settings.pinnedWidgets.count >= 3
+        SettingsToggleRow(
+            icon: widget.icon,
+            title: widget.label,
+            subtitle: widgetSubtitle(widget),
+            isOn: Binding(
+                get: { viewModel.settings.pinnedWidgets.contains(widget) },
+                set: { newValue in
+                    withAnimation(.easeOut(duration: DN.microDuration)) {
+                        if !newValue {
+                            viewModel.settings.pinnedWidgets.removeAll { $0 == widget }
+                        } else if viewModel.settings.pinnedWidgets.count < 3 {
+                            viewModel.settings.pinnedWidgets.append(widget)
+                        }
+                    }
+                }
+            )
+        )
+        .opacity(!isPinned && atMax ? 0.4 : 1.0)
+    }
+
+    private func widgetSubtitle(_ w: PinnedWidget) -> String {
+        switch w {
+        case .calendar: return "Date grid on overview"
+        case .music: return "Now playing controls"
+        case .ram: return "Memory usage gauge"
+        case .disk: return "Storage usage ring"
+        case .network: return "Upload & download speeds"
+        case .uptime: return "System uptime counter"
+        case .processes: return "Running process count"
         }
     }
 }
@@ -882,65 +893,6 @@ struct SettingsToggleRow: View {
                 }
         )
         .animation(.easeOut(duration: DN.microDuration), value: isPressed)
-    }
-}
-
-struct SettingsPickerRow: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    let options: [String]
-    @Binding var selection: Int
-
-    var body: some View {
-        HStack(spacing: DN.spaceSM) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(DN.textPrimary)
-                .frame(width: 18)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                    .font(DN.body(11))
-                    .foregroundColor(DN.textPrimary)
-                Text(subtitle)
-                    .font(DN.mono(8))
-                    .foregroundColor(DN.textDisabled)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            HStack(spacing: 1) {
-                ForEach(0..<options.count, id: \.self) { i in
-                    Button(action: {
-                        withAnimation(.easeOut(duration: DN.microDuration)) {
-                            selection = i
-                        }
-                    }) {
-                        Text(options[i])
-                            .font(DN.label(7))
-                            .tracking(0.4)
-                            .foregroundColor(selection == i ? DN.textDisplay : DN.textDisabled)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(selection == i ? DN.borderVisible : .clear)
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(2)
-            .background(DN.black)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(DN.border, lineWidth: 1)
-            )
-        }
-        .padding(.horizontal, DN.spaceSM)
-        .padding(.vertical, 6)
-        .background(DN.surface)
     }
 }
 

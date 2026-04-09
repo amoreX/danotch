@@ -28,6 +28,12 @@ struct NotchContentView: View {
         }
         .animation(.easeOut(duration: 0.15), value: isExpanded)
         .animation(.easeOut(duration: 0.15), value: viewModel.viewState)
+        .onChange(of: viewModel.shouldFocusChatInput) { _, shouldFocus in
+            if shouldFocus {
+                isChatInputFocused = true
+                viewModel.shouldFocusChatInput = false
+            }
+        }
     }
 
     // MARK: - Left Column
@@ -54,24 +60,41 @@ struct NotchContentView: View {
 
             Spacer().frame(height: DN.space2xs)
 
-            // Calendar
-            switch viewModel.settings.calendarMode {
-            case .large: MiniCalendarView(compact: false)
-            case .mini: MiniCalendarView(compact: true)
-            case .off: EmptyView()
+            // Pinned widgets
+            ForEach(viewModel.settings.pinnedWidgets, id: \.self) { widget in
+                pinnedWidgetView(widget)
             }
 
-            // Now playing — always below calendar
-            if viewModel.settings.showMusic {
-                NowPlayingView(
-                    monitor: viewModel.nowPlaying,
-                    isBig: viewModel.settings.musicSize == .big && viewModel.settings.calendarMode != .large,
-                    accentColor: viewModel.settings.dotGridSwiftColor
-                )
-            }
+            Spacer(minLength: 0)
         }
         .padding(.trailing, DN.spaceSM)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .clipped()
+    }
+
+    // MARK: - Pinned Widget Router
+
+    @ViewBuilder
+    private func pinnedWidgetView(_ widget: PinnedWidget) -> some View {
+        switch widget {
+        case .calendar:
+            MiniCalendarView(compact: viewModel.settings.pinnedWidgets.count > 1)
+        case .music:
+            NowPlayingView(
+                monitor: viewModel.nowPlaying,
+                isBig: viewModel.settings.musicSize == .big,
+                accentColor: viewModel.settings.dotGridSwiftColor
+            )
+        case .ram:
+            PinnedRAMView(monitor: viewModel.statsMonitor)
+        case .disk:
+            PinnedDiskView(monitor: viewModel.statsMonitor)
+        case .network:
+            PinnedNetworkView(monitor: viewModel.statsMonitor)
+        case .uptime:
+            PinnedUptimeView(monitor: viewModel.statsMonitor)
+        case .processes:
+            PinnedProcessView(monitor: viewModel.statsMonitor)
+        }
     }
 
     // MARK: - Divider
@@ -139,12 +162,6 @@ struct NotchContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             viewModel.loadScheduledTasks()
-        }
-        .onChange(of: viewModel.shouldFocusChatInput) { _, shouldFocus in
-            if shouldFocus {
-                isChatInputFocused = true
-                viewModel.shouldFocusChatInput = false
-            }
         }
     }
 
@@ -294,28 +311,7 @@ struct NotchContentView: View {
     }
 
     private func formatThreadDate(_ iso: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = formatter.date(from: iso) else {
-            // Try without fractional seconds
-            formatter.formatOptions = [.withInternetDateTime]
-            guard let date = formatter.date(from: iso) else { return iso }
-            return relativeDate(date)
-        }
-        return relativeDate(date)
-    }
-
-    private func relativeDate(_ date: Date) -> String {
-        let interval = Date().timeIntervalSince(date)
-        if interval < 60 { return "just now" }
-        if interval < 3600 { return "\(Int(interval / 60))m ago" }
-        if interval < 86400 { return "\(Int(interval / 3600))h ago" }
-        let days = Int(interval / 86400)
-        if days == 1 { return "yesterday" }
-        if days < 7 { return "\(days)d ago" }
-        let df = DateFormatter()
-        df.dateFormat = "MMM d"
-        return df.string(from: date)
+        formatRelativeDate(iso, fallbackFormat: "MMM d")
     }
 
     // MARK: - Chat Input Bar
@@ -383,48 +379,68 @@ struct NotchContentView: View {
         viewModel.tasks.filter { !$0.isFromHistory }
     }
 
+    private var isTasksExpanded: Bool { !viewModel.settings.collapsedGroups.contains("tasks") }
+
     private func tasksSection(compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: DN.spaceSM) {
-                Image(systemName: "bubble.left.and.text.bubble.right")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(DN.textSecondary)
-                    .frame(width: 14)
-
-                Text("TASKS")
-                    .font(DN.label(9))
-                    .tracking(1.0)
-                    .foregroundColor(DN.textSecondary)
-
-                Text("\(activeTasks.count)")
-                    .font(DN.mono(9, weight: .medium))
-                    .foregroundColor(DN.textDisabled)
-
-                Spacer()
-
-                let active = activeTasks.filter { $0.isActive }.count
-                if active > 0 {
-                    HStack(spacing: 3) {
-                        Circle().fill(DN.warning).frame(width: 4, height: 4)
-                        Text("\(active) ACTIVE")
-                            .font(DN.label(7))
-                            .tracking(0.6)
-                            .foregroundColor(DN.warning)
+            Button(action: {
+                withAnimation(.easeOut(duration: DN.microDuration)) {
+                    if isTasksExpanded {
+                        viewModel.settings.collapsedGroups.insert("tasks")
+                    } else {
+                        viewModel.settings.collapsedGroups.remove("tasks")
                     }
                 }
-            }
-            .padding(.horizontal, DN.spaceSM)
-            .padding(.vertical, DN.spaceXS + 1)
+            }) {
+                HStack(spacing: DN.spaceSM) {
+                    Image(systemName: "bubble.left.and.text.bubble.right")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(DN.textSecondary)
+                        .frame(width: 14)
 
-            VStack(spacing: 1) {
-                ForEach(activeTasks) { task in
-                    AgentRow(
-                        task: task,
-                        isCompact: compact,
-                        activityText: viewModel.activityText(for: task)
-                    ) {
-                        withAnimation(DN.transition) {
-                            viewModel.viewState = .agentChat(task.id)
+                    Text("TASKS")
+                        .font(DN.label(9))
+                        .tracking(1.0)
+                        .foregroundColor(DN.textSecondary)
+
+                    Text("\(activeTasks.count)")
+                        .font(DN.mono(9, weight: .medium))
+                        .foregroundColor(DN.textDisabled)
+
+                    Spacer()
+
+                    let active = activeTasks.filter { $0.isActive }.count
+                    if active > 0 {
+                        HStack(spacing: 3) {
+                            Circle().fill(DN.warning).frame(width: 4, height: 4)
+                            Text("\(active) ACTIVE")
+                                .font(DN.label(7))
+                                .tracking(0.6)
+                                .foregroundColor(DN.warning)
+                        }
+                    }
+
+                    Image(systemName: isTasksExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundColor(DN.textDisabled)
+                }
+                .padding(.horizontal, DN.spaceSM)
+                .padding(.vertical, DN.spaceXS + 1)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isTasksExpanded {
+                VStack(spacing: 1) {
+                    ForEach(activeTasks) { task in
+                        AgentRow(
+                            task: task,
+                            isCompact: compact,
+                            activityText: viewModel.activityText(for: task)
+                        ) {
+                            withAnimation(DN.transition) {
+                                viewModel.viewState = .agentChat(task.id)
+                            }
                         }
                     }
                 }
@@ -1080,14 +1096,19 @@ struct NowPlayingView: View {
 
 struct ScheduledTasksSection: View {
     @ObservedObject var viewModel: NotchViewModel
-    @State private var isExpanded = true
+
+    private var isExpanded: Bool { !viewModel.settings.collapsedGroups.contains("scheduled") }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             // Header
             Button(action: {
                 withAnimation(.easeOut(duration: DN.microDuration)) {
-                    isExpanded.toggle()
+                    if isExpanded {
+                        viewModel.settings.collapsedGroups.insert("scheduled")
+                    } else {
+                        viewModel.settings.collapsedGroups.remove("scheduled")
+                    }
                 }
             }) {
                 HStack(spacing: DN.spaceSM) {
@@ -1418,5 +1439,161 @@ struct MiniCalendarView: View {
             rows.append(row)
         }
         return rows
+    }
+}
+
+// MARK: - Pinned Widget Views
+
+struct PinnedRAMView: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    private var pct: Double { monitor.ramTotal > 0 ? monitor.ramUsed / monitor.ramTotal : 0 }
+    private var color: Color {
+        if pct > 0.85 { return DN.accent }
+        if pct > 0.6 { return DN.warning }
+        return DN.success
+    }
+    var body: some View {
+        HStack(spacing: DN.spaceSM) {
+            ZStack {
+                ForEach(0..<20, id: \.self) { i in
+                    let angle = Angle.degrees(135 + Double(i) * (270.0 / 20.0))
+                    let filled = Double(i) / 20.0 < pct
+                    Capsule()
+                        .fill(filled ? color : Color.white.opacity(0.06))
+                        .frame(width: 1.5, height: 4)
+                        .offset(y: -16)
+                        .rotationEffect(angle)
+                }
+            }
+            .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("RAM")
+                    .font(DN.label(7))
+                    .tracking(1.2)
+                    .foregroundColor(DN.textDisabled)
+                Text("\(Int(pct * 100))%")
+                    .font(DN.mono(14, weight: .light))
+                    .foregroundColor(DN.textDisplay)
+                Text(String(format: "%.1f / %.0f GB", monitor.ramUsed / (1024 * 1024 * 1024), monitor.ramTotal / (1024 * 1024 * 1024)))
+                    .font(DN.mono(7))
+                    .foregroundColor(DN.textDisabled)
+            }
+        }
+    }
+}
+
+struct PinnedDiskView: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    private var pct: Double { monitor.diskTotal > 0 ? monitor.diskUsed / monitor.diskTotal : 0 }
+    private var color: Color {
+        if pct > 0.9 { return DN.accent }
+        if pct > 0.75 { return DN.warning }
+        return DN.textSecondary
+    }
+    var body: some View {
+        HStack(spacing: DN.spaceSM) {
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.06), lineWidth: 3).frame(width: 36, height: 36)
+                Circle().trim(from: 0, to: pct)
+                    .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .frame(width: 36, height: 36)
+                    .rotationEffect(.degrees(-90))
+            }
+            .frame(width: 40, height: 40)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("DISK")
+                    .font(DN.label(7))
+                    .tracking(1.2)
+                    .foregroundColor(DN.textDisabled)
+                Text("\(Int(pct * 100))%")
+                    .font(DN.mono(14, weight: .light))
+                    .foregroundColor(DN.textDisplay)
+                Text(String(format: "%.0f / %.0f GB", monitor.diskUsed / (1024 * 1024 * 1024), monitor.diskTotal / (1024 * 1024 * 1024)))
+                    .font(DN.mono(7))
+                    .foregroundColor(DN.textDisabled)
+            }
+        }
+    }
+}
+
+struct PinnedNetworkView: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(DN.success)
+                Text("DOWN")
+                    .font(DN.label(6))
+                    .tracking(0.8)
+                    .foregroundColor(DN.textDisabled)
+                Spacer()
+                Text(fmtBytes(monitor.netDown))
+                    .font(DN.mono(9, weight: .medium))
+                    .foregroundColor(DN.success)
+            }
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundColor(DN.warning)
+                Text("UP")
+                    .font(DN.label(6))
+                    .tracking(0.8)
+                    .foregroundColor(DN.textDisabled)
+                Spacer()
+                Text(fmtBytes(monitor.netUp))
+                    .font(DN.mono(9, weight: .medium))
+                    .foregroundColor(DN.warning)
+            }
+        }
+    }
+}
+
+struct PinnedUptimeView: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    var body: some View {
+        HStack(spacing: DN.spaceSM) {
+            Image(systemName: "clock")
+                .font(.system(size: 12))
+                .foregroundColor(DN.textDisabled)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("UPTIME")
+                    .font(DN.label(7))
+                    .tracking(1.2)
+                    .foregroundColor(DN.textDisabled)
+                Text(monitor.uptimeString)
+                    .font(DN.mono(12, weight: .medium))
+                    .foregroundColor(DN.textPrimary)
+            }
+        }
+    }
+}
+
+struct PinnedProcessView: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    var body: some View {
+        HStack(spacing: DN.spaceSM) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("PROCESSES")
+                    .font(DN.label(7))
+                    .tracking(1.2)
+                    .foregroundColor(DN.textDisabled)
+                Text("\(monitor.processes.count)")
+                    .font(DN.mono(16, weight: .light))
+                    .foregroundColor(DN.textDisplay)
+            }
+            Spacer()
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(Array(monitor.processes.prefix(5).enumerated()), id: \.offset) { _, proc in
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(proc.cpu > 10 ? DN.warning : DN.textSecondary.opacity(0.5))
+                        .frame(width: 4, height: max(4, CGFloat(proc.cpu / 2)))
+                }
+            }
+            .frame(height: 24)
+        }
     }
 }

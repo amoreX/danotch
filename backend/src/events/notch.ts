@@ -7,7 +7,7 @@ export class NotchBridge {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private url: string;
 
-  constructor(url = 'ws://localhost:7778/ws') {
+  constructor(url: string) {
     this.url = url;
   }
 

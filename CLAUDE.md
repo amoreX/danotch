@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```
 app/       — macOS Swift app (notch overlay)
 backend/   — Node.js Express backend (Supabase + Claude API)
-docs/      — Planning docs (PLAN.md, SCHEMA.md)
+site/      — React+TS+Tailwind landing page (4 design versions)
+docs/      — Planning docs (PLAN.md, SCHEMA.md, SCHEDULED-TASKS.md, NOTIFY-MODES.md, SESSION-SUMMARY.md, CRASH-AUDIT.md)
 ```
 
 ## Build & Run
@@ -105,7 +106,7 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
     │       ├── LiveStateView (pulsing dot + icon + label + detail for active tool/thinking/responding states)
     │       ├── NowPlayingView (Apple Music/Spotify polling, positioned by calendarMode)
     │       ├── chatInputBar (TextField + submit button, sends to backend POST /api/chat with auth)
-    │       ├── tasksSection (grouped user tasks from chat, clickable → AgentChatView)
+    │       ├── tasksSection (collapsible, grouped user tasks from chat, clickable → AgentChatView)
     │       ├── AgentRow (WebSocket task rows with status dot, activity text)
     │       ├── ScheduledTasksSection (HOME tab only, collapsible, clock icon, yellow accent)
     │       │   └── ScheduledTaskRow (expandable: status dot, name, schedule, run count, last output as markdown, hover: pause/delete)
@@ -200,7 +201,7 @@ NotchShellView (root: notch shape, top bar tabs, dot grid background)
 5. View navigates directly to `AgentChatView` for that task (`.agentChat(sid)`)
 6. All agent chat bubbles render as final (bold markdown) — no dimmed intermediate distinction
 
-**Tasks section** appears below Claude Code agent groups in both HOME and AGENTS tabs, styled as a grouped card matching `AgentGroupView`.
+**Tasks section** appears below Claude Code agent groups in both HOME and AGENTS tabs, styled as a grouped card matching `AgentGroupView`. Collapsible with chevron toggle, collapse state persisted via `collapsedGroups` (key: `"tasks"`).
 
 ### Models
 
@@ -238,7 +239,7 @@ Persisted via JSON file at `~/.danotch/settings.json`. All settings survive app 
 - `compactAgentRows` (default: false) — smaller rows in agent list. Applied to both agent groups and tasks section
 
 **UI state (also persisted):**
-- `collapsedGroups` — Set of collapsed agent group IDs
+- `collapsedGroups` — Set of collapsed section IDs. Used by agent groups (keyed by group ID), scheduled tasks (key: `"scheduled"`), and chat tasks (key: `"tasks"`). All persist across app restarts.
 
 Settings UI components: `SettingsToggleRow` (capsule toggle), `SettingsPickerRow` (segmented picker for enums), `SettingsSliderRow` (slider with percentage), `SettingsColorRow` (color dot presets).
 
@@ -396,10 +397,10 @@ Both modes also store tasks in-memory (`Map<string, Task>`) and push status/prog
 **Two notification modes** (`notify_user` column on `scheduled_tasks`):
 
 - **Silent** (`notify_user = false`, default): Runs Claude, saves `last_result` on the task row. No notification created, no WebSocket push. User sees output by expanding the task on HOME tab.
-- **Conditional notify** (`notify_user = true`): Wraps the prompt with `[NOTIFY]/[SKIP]` instructions. Claude evaluates the condition and prefixes response:
-  - `[NOTIFY]` → strips prefix, creates notification row, pushes `peek_notification` via WebSocket → notch expands briefly with peek bar
-  - `[SKIP]` → strips prefix, saves result silently, no notification
-  - No prefix → defaults to notify (safer)
+- **Notify** (`notify_user = true`): Scheduler auto-detects whether the prompt is **conditional** (contains "if", "when", "threshold", "above", "below", "reaches", etc.) or **non-conditional**:
+  - **Conditional** (e.g. "notify when stock drops below $200"): Wraps with `[NOTIFY]/[SKIP]` instructions. Claude evaluates and prefixes response. `[NOTIFY]` → creates notification + peek. `[SKIP]` → saves silently.
+  - **Non-conditional** (e.g. "give me fun facts"): Always prefixes with `[NOTIFY]` — every run creates a notification + peek.
+  - No prefix in response → defaults to notify (safer)
 
 **WebSocket events**:
 - `peek_notification`: `{ type: "peek_notification", data: { id, title, body, source, source_id, status, created_at } }` — triggers notch peek animation
@@ -422,8 +423,27 @@ All settings env-overridable:
 - `MAX_TOKENS` — API max tokens (default: 4096)
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET` — Supabase credentials (in `.env`, gitignored)
 
+## Landing Page Site
+
+React + TypeScript + Tailwind CSS v4 + Framer Motion + Lucide React. Run with `cd site && npm run dev`.
+
+4 design versions, each a self-contained component in `site/src/versions/`:
+
+| Version | Style | Key Elements |
+|---------|-------|-------------|
+| V3 | Brutalist | Off-white #F5F0EB, thick borders, harsh shadows, red accent, rotated cards |
+| V6 | Warm | Cream #FDFBF7, Georgia serif, orange-rust #D97757, soft organic feel |
+| V7 | Split | Fixed black left panel + scrollable white right, red accent, editorial |
+| V13 | Split+Brutal | Split layout merged with brutalist styling |
+
+**Shared components**: `Features.tsx` (8 feature definitions), `FeatureCard.tsx` (5 variants).
+
+**Version switcher**: `App.tsx` has a picker overlay on load (2x2 grid) + floating number bar at bottom to switch. Lazy-loaded versions via `React.lazy()`.
+
 ## Dependencies
 
 **App**: Swifter (1.5.0) for HTTP/WebSocket. Swift 6.0 toolchain, macOS 14+, Swift 5 language mode.
 
 **Backend**: Express (4.x), `@anthropic-ai/sdk`, `@supabase/supabase-js`, `jsonwebtoken`, `cron-parser`, ws, uuid. TypeScript with tsx for dev.
+
+**Site**: React 19, Vite, Tailwind CSS v4, Framer Motion, Lucide React.

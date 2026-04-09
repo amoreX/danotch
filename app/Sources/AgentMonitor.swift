@@ -39,15 +39,11 @@ class AgentMonitor: ObservableObject {
 
     func activateAgent(_ agent: DetectedAgent) {
         switch agent.type {
-        case .cursor:
-            activateApp(bundleIds: ["com.todesktop.230313mzl4w4u92"], names: ["Cursor"])
         case .claudeCode:
             let termApps = ["com.mitchellh.ghostty", "com.googlecode.iterm2", "net.kovidgoyal.kitty", "com.apple.Terminal"]
             activateApp(bundleIds: termApps, names: [])
-        case .codex:
-            activateApp(bundleIds: ["com.todesktop.230313mzl4w4u92"], names: ["Cursor"])
-        case .windsurf:
-            activateApp(bundleIds: [], names: ["Windsurf"])
+        default:
+            break
         }
     }
 
@@ -92,56 +88,10 @@ class AgentMonitor: ObservableObject {
                 }
             }
 
-            // Cursor main process
-            if parsed.command.hasSuffix("/Cursor") && parsed.command.contains("Cursor.app/Contents/MacOS") {
-                let key = "cursor-\(parsed.pid)"
-                if !seenTypes.contains("cursor-main") {
-                    seenTypes.insert("cursor-main")
-                    agents.append(DetectedAgent(
-                        id: key, type: .cursor, pid: parsed.pid, status: .running,
-                        cpu: parsed.cpu, memMB: parsed.memMB, elapsed: parsed.elapsed,
-                        workingDirectory: nil, sessionInfo: nil,
-                        appPath: "/Applications/Cursor.app", lastPrompt: nil, lastActivityTime: nil, liveState: .idle, liveDetail: nil
-                    ))
-                }
-            }
-
-            // Codex server
-            if parsed.command.contains("codex") && parsed.args.contains("app-server") {
-                let key = "codex-\(parsed.pid)"
-                if !seenTypes.contains("codex-main") {
-                    seenTypes.insert("codex-main")
-                    agents.append(DetectedAgent(
-                        id: key, type: .codex, pid: parsed.pid,
-                        status: parsed.cpu > 0.5 ? .running : .idle,
-                        cpu: parsed.cpu, memMB: parsed.memMB, elapsed: parsed.elapsed,
-                        workingDirectory: nil, sessionInfo: nil,
-                        appPath: nil, lastPrompt: nil, lastActivityTime: nil, liveState: .idle, liveDetail: nil
-                    ))
-                }
-            }
-
-            // Windsurf
-            if parsed.command.contains("Windsurf.app") && parsed.command.hasSuffix("/Windsurf") {
-                let key = "windsurf-\(parsed.pid)"
-                if !seenTypes.contains("windsurf-main") {
-                    seenTypes.insert("windsurf-main")
-                    agents.append(DetectedAgent(
-                        id: key, type: .windsurf, pid: parsed.pid, status: .running,
-                        cpu: parsed.cpu, memMB: parsed.memMB, elapsed: parsed.elapsed,
-                        workingDirectory: nil, sessionInfo: nil,
-                        appPath: "/Applications/Windsurf.app", lastPrompt: nil, lastActivityTime: nil, liveState: .idle, liveDetail: nil
-                    ))
-                }
-            }
         }
 
         // Enrich Claude Code sessions with cwd, project name, and last prompt
         enrichClaudeSessions(&agents)
-
-        // Only show agents that have prompt data (Claude Code)
-        // Hide Cursor/Codex/Windsurf since we can't read their prompts
-        agents = agents.filter { $0.type == .claudeCode }
 
         // Sort by most recently active first (stable within same time)
         return agents.sorted { a, b in

@@ -1,6 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { supabase } from '../lib/supabase.js';
-import { computeNextRun, isValidCron, cronToHuman } from '../scheduler/compute-next.js';
+import { computeNextRun, isValidCron, cronToHuman, scheduleToHuman } from '../scheduler/compute-next.js';
 
 // ── Tool Definitions (Anthropic format) ──
 
@@ -174,7 +174,7 @@ async function listTasks(userId: string): Promise<string> {
     id: t.id,
     name: t.name,
     prompt: t.prompt,
-    schedule: t.task_type === 'scheduled' && t.cron ? cronToHuman(t.cron) : `Every ${Math.round((t.interval_ms ?? 0) / 60000)}m`,
+    schedule: scheduleToHuman(t.task_type, t.cron, t.interval_ms),
     enabled: t.enabled,
     last_run: t.last_run_at,
     next_run: t.next_run_at,

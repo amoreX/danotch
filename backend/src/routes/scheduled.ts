@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { supabase } from '../lib/supabase.js';
-import { computeNextRun, isValidCron, cronToHuman } from '../scheduler/compute-next.js';
+import { computeNextRun, scheduleToHuman } from '../scheduler/compute-next.js';
 
 export function createScheduledRoutes(): Router {
   const router = Router();
@@ -24,9 +24,7 @@ export function createScheduledRoutes(): Router {
 
     const tasks = (data ?? []).map((t) => ({
       ...t,
-      schedule_human: t.task_type === 'scheduled' && t.cron
-        ? cronToHuman(t.cron)
-        : `Every ${Math.round((t.interval_ms ?? 0) / 60000)}m`,
+      schedule_human: scheduleToHuman(t.task_type, t.cron, t.interval_ms),
     }));
 
     console.log(`[scheduled] → ${tasks.length} tasks`);

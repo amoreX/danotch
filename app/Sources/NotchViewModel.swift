@@ -14,16 +14,36 @@ enum MusicSize: String, CaseIterable {
     }
 }
 
-enum CalendarMode: String, CaseIterable {
-    case off = "off"
-    case mini = "mini"    // one-line horizontal strip
-    case large = "large"  // full grid
+enum PinnedWidget: String, CaseIterable, Codable {
+    case calendar = "calendar"
+    case music = "music"
+    case ram = "ram"
+    case disk = "disk"
+    case network = "network"
+    case uptime = "uptime"
+    case processes = "processes"
 
     var label: String {
         switch self {
-        case .off: return "OFF"
-        case .mini: return "MINI"
-        case .large: return "LARGE"
+        case .calendar: return "Calendar"
+        case .music: return "Music Player"
+        case .ram: return "RAM Usage"
+        case .disk: return "Disk Usage"
+        case .network: return "Network"
+        case .uptime: return "Uptime"
+        case .processes: return "Processes"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .calendar: return "calendar"
+        case .music: return "music.note"
+        case .ram: return "memorychip"
+        case .disk: return "internaldrive"
+        case .network: return "network"
+        case .uptime: return "clock"
+        case .processes: return "list.number"
         }
     }
 }
@@ -37,10 +57,8 @@ class NotchSettings: ObservableObject {
     @Published var restoreLastView: Bool       { didSet { save() } }
     @Published var keepOpenInChat: Bool        { didSet { save() } }
 
-    // Display
-    @Published var calendarMode: CalendarMode  { didSet { save() } }
-    @Published var showMusic: Bool             { didSet { save() } }
-    @Published var musicSize: MusicSize       { didSet { save() } }
+    // Display — pinned widgets
+    @Published var pinnedWidgets: [PinnedWidget] { didSet { save() } }
     @Published var showBattery: Bool           { didSet { save() } }
     @Published var showDotGrid: Bool           { didSet { save() } }
 
@@ -56,6 +74,14 @@ class NotchSettings: ObservableObject {
         Color(hex: UInt32(dotGridColor.dropFirst(), radix: 16) ?? 0xFFFFFF)
     }
 
+    // Computed from pinnedWidgets for backward compatibility
+    var showMusic: Bool {
+        pinnedWidgets.contains(.music)
+    }
+    var musicSize: MusicSize {
+        pinnedWidgets.count > 1 ? .mini : .big
+    }
+
     // UI state (persisted across restarts)
     @Published var collapsedGroups: Set<String> { didSet { save() } }
 
@@ -64,9 +90,7 @@ class NotchSettings: ObservableObject {
         openChatOnSend = true
         restoreLastView = false
         keepOpenInChat = true
-        calendarMode = .large
-        showMusic = true
-        musicSize = .mini
+        pinnedWidgets = [.calendar, .music]
         showBattery = true
         showDotGrid = true
         showAgentLiveState = true
@@ -84,9 +108,7 @@ class NotchSettings: ObservableObject {
             "openChatOnSend": openChatOnSend,
             "keepOpenInChat": keepOpenInChat,
             "restoreLastView": restoreLastView,
-            "calendarMode": calendarMode.rawValue,
-            "showMusic": showMusic,
-            "musicSize": musicSize.rawValue,
+            "pinnedWidgets": pinnedWidgets.map { $0.rawValue },
             "showBattery": showBattery,
             "showDotGrid": showDotGrid,
             "showAgentLiveState": showAgentLiveState,
@@ -111,9 +133,19 @@ class NotchSettings: ObservableObject {
         if let v = json["openChatOnSend"] as? Bool { openChatOnSend = v }
         if let v = json["keepOpenInChat"] as? Bool { keepOpenInChat = v }
         if let v = json["restoreLastView"] as? Bool { restoreLastView = v }
-        if let v = json["calendarMode"] as? String { calendarMode = CalendarMode(rawValue: v) ?? .large }
-        if let v = json["showMusic"] as? Bool { showMusic = v }
-        if let v = json["musicSize"] as? String { musicSize = MusicSize(rawValue: v) ?? .mini }
+        if let v = json["pinnedWidgets"] as? [String] {
+            pinnedWidgets = v.compactMap { PinnedWidget(rawValue: $0) }
+        } else {
+            // Migrate from old settings
+            var migrated: [PinnedWidget] = []
+            if let cm = json["calendarMode"] as? String, cm != "off" {
+                migrated.append(.calendar)
+            }
+            if let sm = json["showMusic"] as? Bool, sm {
+                migrated.append(.music)
+            }
+            if !migrated.isEmpty { pinnedWidgets = migrated }
+        }
         if let v = json["showBattery"] as? Bool { showBattery = v }
         if let v = json["showDotGrid"] as? Bool { showDotGrid = v }
         if let v = json["showAgentLiveState"] as? Bool { showAgentLiveState = v }
@@ -122,6 +154,18 @@ class NotchSettings: ObservableObject {
         if let v = json["dotGridOpacity"] as? Double { dotGridOpacity = v }
         if let v = json["collapsedGroups"] as? [String] { collapsedGroups = Set(v) }
     }
+}
+
+private enum APIConfig {
+    static let baseURL = "http://localhost:3001"
+}
+
+private enum CachedFormatters {
+    static let time: DateFormatter = { let f = DateFormatter(); f.dateFormat = "h:mm"; return f }()
+    static let period: DateFormatter = { let f = DateFormatter(); f.dateFormat = "a"; return f }()
+    static let date: DateFormatter = { let f = DateFormatter(); f.dateFormat = "EEEE, MMM d"; return f }()
+    static let shortDate: DateFormatter = { let f = DateFormatter(); f.dateFormat = "MMM d"; return f }()
+    static let shortTime: DateFormatter = { let f = DateFormatter(); f.dateFormat = "h:mm a"; return f }()
 }
 
 class NotchViewModel: ObservableObject {
@@ -148,44 +192,11 @@ class NotchViewModel: ObservableObject {
     private var settingsCancellable: AnyCancellable?
     private var cancellables: Set<AnyCancellable> = []
 
-    var delegatedCount: Int { tasks.filter { $0.status == .running || $0.status == .pending }.count }
-    var approvalCount: Int { tasks.filter { $0.status == .awaitingApproval }.count }
-    var finishedCount: Int { tasks.filter { $0.status == .completed }.count }
-    var totalCount: Int { tasks.count }
-    var hasActiveTasks: Bool { delegatedCount > 0 || approvalCount > 0 }
-
-    var runningAgentCount: Int { agentMonitor.agents.filter { $0.status == .running }.count }
-    var totalAgentCount: Int { agentMonitor.agents.count }
-
-    var timeString: String {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm"
-        return f.string(from: currentTime)
-    }
-
-    var periodString: String {
-        let f = DateFormatter()
-        f.dateFormat = "a"
-        return f.string(from: currentTime)
-    }
-
-    var dateString: String {
-        let f = DateFormatter()
-        f.dateFormat = "EEEE, MMM d"
-        return f.string(from: currentTime)
-    }
-
-    var shortDateString: String {
-        let f = DateFormatter()
-        f.dateFormat = "MMM d"
-        return f.string(from: currentTime)
-    }
-
-    var shortTimeString: String {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm a"
-        return f.string(from: currentTime)
-    }
+    var timeString: String { CachedFormatters.time.string(from: currentTime) }
+    var periodString: String { CachedFormatters.period.string(from: currentTime) }
+    var dateString: String { CachedFormatters.date.string(from: currentTime) }
+    var shortDateString: String { CachedFormatters.shortDate.string(from: currentTime) }
+    var shortTimeString: String { CachedFormatters.shortTime.string(from: currentTime) }
 
     init() {
         startClock()
@@ -276,7 +287,7 @@ class NotchViewModel: ObservableObject {
 
     private func fetchThreadHistory(token: String) async {
 
-        var request = URLRequest(url: URL(string: "http://localhost:3001/api/threads")!)
+        var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/threads")!)
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
@@ -331,7 +342,7 @@ class NotchViewModel: ObservableObject {
             return
         }
 
-        var request = URLRequest(url: URL(string: "http://localhost:3001/api/threads/\(threadId)")!)
+        var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/threads/\(threadId)")!)
         request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
         URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
@@ -351,7 +362,7 @@ class NotchViewModel: ObservableObject {
                     if role == "assistant" {
                         // Check if this was a failed/partial message
                         let status = metadata?["status"] as? String
-                        displayRole = status == "failed" ? "agent" : "agent"
+                        displayRole = "agent"
                     } else {
                         displayRole = role
                     }
@@ -414,7 +425,7 @@ class NotchViewModel: ObservableObject {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else { return }
 
-            var request = URLRequest(url: URL(string: "http://localhost:3001/api/notifications")!)
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications")!)
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
             guard let (data, response) = try? await URLSession.shared.data(for: request),
@@ -448,7 +459,7 @@ class NotchViewModel: ObservableObject {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else { return }
 
-            var request = URLRequest(url: URL(string: "http://localhost:3001/api/notifications/unread-count")!)
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications/unread-count")!)
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
             guard let (data, _) = try? await URLSession.shared.data(for: request),
@@ -468,7 +479,7 @@ class NotchViewModel: ObservableObject {
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else { return }
-            var request = URLRequest(url: URL(string: "http://localhost:3001/api/notifications/\(id)/read")!)
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications/\(id)/read")!)
             request.httpMethod = "POST"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             _ = try? await URLSession.shared.data(for: request)
@@ -482,7 +493,7 @@ class NotchViewModel: ObservableObject {
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else { return }
-            var request = URLRequest(url: URL(string: "http://localhost:3001/api/notifications/read-all")!)
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications/read-all")!)
             request.httpMethod = "POST"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             _ = try? await URLSession.shared.data(for: request)
@@ -499,7 +510,7 @@ class NotchViewModel: ObservableObject {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else { return }
 
-            var request = URLRequest(url: URL(string: "http://localhost:3001/api/scheduled")!)
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/scheduled")!)
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -546,7 +557,7 @@ class NotchViewModel: ObservableObject {
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken,
-                  let url = URL(string: "http://localhost:3001/api/scheduled/\(taskId)") else { return }
+                  let url = URL(string: "\(APIConfig.baseURL)/api/scheduled/\(taskId)") else { return }
             var request = URLRequest(url: url)
             request.httpMethod = "PATCH"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -562,7 +573,7 @@ class NotchViewModel: ObservableObject {
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken,
-                  let url = URL(string: "http://localhost:3001/api/scheduled/\(taskId)") else { return }
+                  let url = URL(string: "\(APIConfig.baseURL)/api/scheduled/\(taskId)") else { return }
             var request = URLRequest(url: url)
             request.httpMethod = "DELETE"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -591,10 +602,6 @@ class NotchViewModel: ObservableObject {
         case .taskList, .agentChat: return true
         default: return false
         }
-    }
-
-    var isStatsOrSettings: Bool {
-        viewState == .stats || viewState == .settings || viewState == .notifications
     }
 
     // MARK: - Event Processing
@@ -954,7 +961,7 @@ class NotchViewModel: ObservableObject {
         let threadIdForRequest = tasks.first(where: { $0.id == sid })?.threadId
         Task {
             await auth?.ensureValidToken()
-            guard let url = URL(string: "http://localhost:3001/api/chat") else { return }
+            guard let url = URL(string: "\(APIConfig.baseURL)/api/chat") else { return }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")

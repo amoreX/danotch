@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase.js';
 
-export interface AuthUser {
+interface AuthUser {
   sub: string;   // user_id (UUID)
   email: string;
   role: string;

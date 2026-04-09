@@ -49,3 +49,8 @@ export function cronToHuman(cron: string): string {
 
   return cron;
 }
+
+export function scheduleToHuman(taskType: string, cron?: string | null, intervalMs?: number | null): string {
+  if (taskType === 'scheduled' && cron) return cronToHuman(cron);
+  return `Every ${Math.round((intervalMs ?? 0) / 60000)}m`;
+}

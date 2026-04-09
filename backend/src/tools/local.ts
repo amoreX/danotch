@@ -4,6 +4,19 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+function stripHtml(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Unknown error';
+}
+
 // ── Tool Definitions ──
 
 export const localTools: Anthropic.Tool[] = [
@@ -133,18 +146,13 @@ async function webSearch(input: Record<string, unknown>): Promise<string> {
 
     if (results.length === 0) {
       // Fallback: try to extract any text content
-      const textContent = html
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+      const textContent = stripHtml(html);
       return `Search results for "${query}":\n${textContent.slice(0, 2000)}`;
     }
 
     return `Search results for "${query}":\n\n${results.join('\n\n')}`;
   } catch (err) {
-    return `Search failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+    return `Search failed: ${toErrorMessage(err)}`;
   }
 }
 
@@ -166,16 +174,10 @@ async function webFetch(input: Record<string, unknown>): Promise<string> {
     }
 
     const html = await resp.text();
-    // Strip tags for readability
-    const text = html
-      .replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[\s\S]*?<\/style>/gi, '')
-      .replace(/<[^>]*>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    const text = stripHtml(html);
 
     return text.slice(0, 5000) || '(empty page)';
   } catch (err) {
-    return `Fetch failed: ${err instanceof Error ? err.message : 'Unknown error'}`;
+    return `Fetch failed: ${toErrorMessage(err)}`;
   }
 }
