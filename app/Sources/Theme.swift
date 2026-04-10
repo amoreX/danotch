@@ -139,4 +139,38 @@ extension Color {
         let b = Double( hex        & 0xFF) / 255.0
         self.init(red: r, green: g, blue: b)
     }
+
+    init(hexStr: String) {
+        let scanner = Scanner(string: hexStr)
+        var rgb: UInt64 = 0
+        scanner.scanHexInt64(&rgb)
+        self.init(
+            red: Double((rgb >> 16) & 0xFF) / 255,
+            green: Double((rgb >> 8) & 0xFF) / 255,
+            blue: Double(rgb & 0xFF) / 255
+        )
+    }
+}
+
+// MARK: - Grain Overlay
+
+struct GrainOverlay: View {
+    var opacity: Double = 0.45
+
+    var body: some View {
+        Canvas { context, size in
+            for _ in 0..<Int(size.width * size.height * 0.06) {
+                let x = CGFloat.random(in: 0...size.width)
+                let y = CGFloat.random(in: 0...size.height)
+                let brightness = CGFloat.random(in: 0...1)
+                context.fill(
+                    Path(CGRect(x: x, y: y, width: 1.2, height: 1.2)),
+                    with: .color(Color(white: brightness))
+                )
+            }
+        }
+        .blendMode(.overlay)
+        .opacity(opacity)
+        .allowsHitTesting(false)
+    }
 }

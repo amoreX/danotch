@@ -168,12 +168,23 @@ private enum CachedFormatters {
     static let shortTime: DateFormatter = { let f = DateFormatter(); f.dateFormat = "h:mm a"; return f }()
 }
 
+enum NotchSizeState: Equatable {
+    case collapsed, nudging, expanded
+}
+
 class NotchViewModel: ObservableObject {
     @Published var tasks: [SubagentTask] = []
     @Published var currentTime: Date = Date()
     @Published var viewState: NotchViewState = .overview
-    @Published var isExpanded = false
+    @Published var notchSize: NotchSizeState = .collapsed
     @Published var shimmerStep: Int = 0
+
+    /// Convenience — rest of the app reads this
+    var isExpanded: Bool {
+        get { notchSize == .expanded }
+        set { notchSize = newValue ? .expanded : .collapsed }
+    }
+    var isNudging: Bool { notchSize == .nudging }
     @Published var shouldFocusChatInput = false
     @Published var isChatInputActive = false
     var mouseInContent = false
@@ -186,6 +197,8 @@ class NotchViewModel: ObservableObject {
     @Published var agentMonitor = AgentMonitor()
     @Published var nowPlaying = NowPlayingMonitor()
     let statsMonitor = SystemStatsMonitor()
+    let calendarEvents = CalendarEventsMonitor()
+    let wallpaper = WallpaperColorMonitor()
     private var clockTimer: Timer?
     private var shimmerTimer: Timer?
     private var agentMonitorCancellable: AnyCancellable?
@@ -206,6 +219,9 @@ class NotchViewModel: ObservableObject {
             self?.objectWillChange.send()
         }
         nowPlaying.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
+        wallpaper.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in

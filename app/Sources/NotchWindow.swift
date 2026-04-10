@@ -48,6 +48,7 @@ class NotchWindowController: NSObject {
     var keyboardMonitor: Any?
     var localKeyboardMonitor: Any?
     var collapseTimer: Timer?
+    var nudgeTimer: Timer?
     var swipeAccumulator: CGFloat = 0
 
     init(viewModel: NotchViewModel) {
@@ -202,61 +203,87 @@ class NotchWindowController: NSObject {
     }
 
     private func checkMouse() {
-        guard let screen = NSScreen.main else { return }
         let mouse = NSEvent.mouseLocation
 
+        // Find the screen the mouse is actually on (not just NSScreen.main which may differ)
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) ?? NSScreen.main,
+              screen.hasNotch else { return }
+
         let cx = screen.frame.midX
-        let nw = screen.notchWidth
         let nh = screen.notchHeight
+        let nw: CGFloat = 172
 
-        let triggerZone = NSRect(
-            x: cx - (nw + 60) / 2,
-            y: screen.frame.maxY - nh - 5,
-            width: nw + 60,
-            height: nh + 5
-        )
+        // Manual >= check instead of NSRect.contains — contains() is exclusive of maxY,
+        // so the cursor at the very top pixel row (y == frame.maxY) would be missed.
+        let inNotchX = mouse.x >= cx - nw / 2 && mouse.x <= cx + nw / 2
+        let inTrigger = inNotchX && mouse.y >= screen.frame.maxY - nh
+        let isPushing = inNotchX && mouse.y >= screen.frame.maxY - 2
 
-        let inTrigger = triggerZone.contains(mouse)
-        let inContent = viewModel.mouseInContent
+        // Only use inContent to KEEP the notch open when already expanded
+        let inContent = viewModel.notchSize == .expanded && viewModel.mouseInContent
 
         if inTrigger || inContent {
             collapseTimer?.invalidate()
             collapseTimer = nil
-            if !viewModel.isExpanded {
-                expand()
+
+            if viewModel.notchSize != .expanded {
+                if isPushing {
+                    // Instant expand — no nudge delay
+                    nudgeTimer?.invalidate()
+                    nudgeTimer = nil
+                    expand()
+                } else if viewModel.notchSize == .collapsed {
+                    // Nudge immediately, fully expand after 0.2s if still hovering
+                    viewModel.notchSize = .nudging
+                    nudgeTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: false) { [weak self] _ in
+                        guard let self, self.viewModel.notchSize == .nudging else { return }
+                        self.nudgeTimer = nil
+                        self.expand()
+                    }
+                }
             }
-        } else if viewModel.isExpanded {
-            // Clear chat input focus when mouse leaves the panel entirely
-            if viewModel.isChatInputActive {
-                viewModel.isChatInputActive = false
-                viewModel.shouldFocusChatInput = false
+        } else {
+            // Cancel pending nudge→expand if mouse left before 0.2s
+            if viewModel.notchSize == .nudging {
+                nudgeTimer?.invalidate()
+                nudgeTimer = nil
+                viewModel.notchSize = .collapsed
             }
-            // Don't auto-collapse if in a chat and setting is on (only when authenticated)
-            if viewModel.isAuthenticated,
-               case .agentChat = viewModel.viewState,
-               viewModel.settings.keepOpenInChat {
-                return
+
+            if viewModel.notchSize == .expanded {
+                // Clear chat input focus when mouse leaves the panel entirely
+                if viewModel.isChatInputActive {
+                    viewModel.isChatInputActive = false
+                    viewModel.shouldFocusChatInput = false
+                }
+                // Don't auto-collapse if in a chat and setting is on (only when authenticated)
+                if viewModel.isAuthenticated,
+                   case .agentChat = viewModel.viewState,
+                   viewModel.settings.keepOpenInChat {
+                    return
+                }
+                // Instant collapse — no delay
+                collapse()
             }
-            scheduleCollapse()
         }
     }
 
     private func expand() {
         panel.ignoresMouseEvents = false
         viewModel.restoreOrResetView()
-        viewModel.isExpanded = true
+        viewModel.notchSize = .expanded
     }
 
     private func collapse() {
-        viewModel.isExpanded = false
+        nudgeTimer?.invalidate()
+        nudgeTimer = nil
+        viewModel.notchSize = .collapsed
         viewModel.isChatInputActive = false
+        viewModel.mouseInContent = false
         viewModel.resetView()
+        panel.ignoresMouseEvents = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            guard let self = self else { return }
-            if !self.viewModel.isExpanded {
-                self.panel.ignoresMouseEvents = true
-                self.panel.resignKey()
-            }
+            self?.panel.resignKey()
         }
     }
 
@@ -278,6 +305,7 @@ class NotchWindowController: NSObject {
         if let m = keyboardMonitor { NSEvent.removeMonitor(m) }
         if let m = localKeyboardMonitor { NSEvent.removeMonitor(m) }
         collapseTimer?.invalidate()
+        nudgeTimer?.invalidate()
     }
 }
 

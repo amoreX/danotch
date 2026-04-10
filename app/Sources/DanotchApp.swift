@@ -54,14 +54,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func registerFonts() {
-        let fontNames = [
+        let otfNames = [
             "Satoshi-Light", "Satoshi-LightItalic",
             "Satoshi-Regular", "Satoshi-Italic",
             "Satoshi-Medium", "Satoshi-MediumItalic",
             "Satoshi-Bold", "Satoshi-BoldItalic",
             "Satoshi-Black", "Satoshi-BlackItalic",
+            "Cakra-Normal",
         ]
-        for name in fontNames {
+        for name in otfNames {
             guard let url = Bundle.module.url(forResource: name, withExtension: "otf",
                                               subdirectory: "Fonts") else { continue }
             CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)

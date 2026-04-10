@@ -5,58 +5,65 @@ import IOKit.ps
 struct NotchShellView: View {
     @ObservedObject var viewModel: NotchViewModel
 
-    // Separate width/height expansion state so they can be staggered
-    @State private var wideExpanded = false
-    @State private var tallExpanded = false
+    @Namespace private var tabNS
 
     private var screen: NSScreen { NSScreen.main ?? NSScreen.screens[0] }
     private var notchW: CGFloat { screen.notchWidth }
     private var notchH: CGFloat { screen.notchHeight }
     private var expanded: Bool { viewModel.isExpanded }
 
-    // Single consistent size for all states — no jarring resize when switching tabs
     private let expandedWidth:  CGFloat = 540
     private let expandedHeight: CGFloat = 320
 
+    // Single source of truth — all size derived from viewModel.notchSize
     private var shapeWidth: CGFloat {
         if viewModel.isPeeking {
             return viewModel.peekHovering ? notchW + 200 : notchW + 140
         }
-        return wideExpanded ? expandedWidth : notchW
+        switch viewModel.notchSize {
+        case .collapsed: return notchW
+        case .nudging:   return notchW * 1.2
+        case .expanded:  return expandedWidth
+        }
     }
 
     private var shapeHeight: CGFloat {
         if viewModel.isPeeking {
             return viewModel.peekHovering ? notchH + 80 : notchH + 28
         }
-        return tallExpanded ? notchH + expandedHeight : notchH
+        switch viewModel.notchSize {
+        case .collapsed: return notchH
+        case .nudging:   return notchH * 1.5
+        case .expanded:  return notchH + expandedHeight
+        }
     }
 
     private var bottomRadius: CGFloat {
         if viewModel.isPeeking { return 12 }
-        return wideExpanded ? 16 : 8
+        switch viewModel.notchSize {
+        case .collapsed: return 8
+        case .nudging:   return 10
+        case .expanded:  return 16
+        }
     }
 
     var body: some View {
         ZStack(alignment: .top) {
-            // Fake reverse-bevel corner ears — outside the clip, mimic physical Mac notch
-            if wideExpanded {
-                HStack(spacing: 0) {
-                    Spacer()
-                    NotchCornerLeft()
-                        .fill(DN.black)
-                        .frame(width: 20, height: 20)
-                    Color.clear.frame(width: shapeWidth)
-                    NotchCornerRight()
-                        .fill(DN.black)
-                        .frame(width: 20, height: 20)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 20)
-                .allowsHitTesting(false)
-                .transition(.opacity)
+            // Fake reverse-bevel corner ears — always rendered, size tracks bottomRadius
+            HStack(spacing: 0) {
+                Spacer()
+                NotchCornerLeft()
+                    .fill(DN.black)
+                    .frame(width: bottomRadius, height: bottomRadius)
+                Color.clear.frame(width: shapeWidth)
+                NotchCornerRight()
+                    .fill(DN.black)
+                    .frame(width: bottomRadius, height: bottomRadius)
+                Spacer()
             }
+            .frame(maxWidth: .infinity)
+            .frame(height: bottomRadius)
+            .allowsHitTesting(false)
 
             // Clipped notch panel
             ZStack(alignment: .top) {
@@ -85,14 +92,14 @@ struct NotchShellView: View {
 
                         expandedContent
                             .padding(.top, notchH + 1)
-                            .padding(.horizontal, DN.spaceMD)
-                            .padding(.bottom, DN.spaceSM)
+                            .padding(.horizontal, 4)
+                            .padding(.bottom, 4)
                             .frame(width: shapeWidth, alignment: .top)
                     } else {
                         NotchAuthView(auth: AuthManager.shared)
                             .padding(.top, notchH + 1)
-                            .padding(.horizontal, DN.spaceMD)
-                            .padding(.bottom, DN.spaceSM)
+                            .padding(.horizontal, 4)
+                            .padding(.bottom, 4)
                             .frame(width: 520, alignment: .top)
                             .transition(.opacity)
                     }
@@ -125,21 +132,10 @@ struct NotchShellView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(.easeOut(duration: 0.2), value: wideExpanded)
-        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: tallExpanded)
-        .animation(.easeOut(duration: 0.15), value: expanded)
+        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: viewModel.notchSize)
         .animation(.easeOut(duration: 0.25), value: viewModel.isPeeking)
         .animation(.easeOut(duration: 0.2), value: viewModel.peekHovering)
         .animation(.easeOut(duration: 0.18), value: viewModel.viewState)
-        .onChange(of: viewModel.isExpanded) { _, isNowExpanded in
-            if isNowExpanded {
-                wideExpanded = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { tallExpanded = true }
-            } else {
-                tallExpanded = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { wideExpanded = false }
-            }
-        }
     }
 
     private var notchShape: some View {
@@ -151,11 +147,12 @@ struct NotchShellView: View {
             style: .continuous
         )
         .fill(DN.black)
-        // Seal the physical notch edge
+        // Seal the physical notch edge — bleeds 4px above to cover any animation gap
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(DN.black)
-                .frame(height: 1)
+                .frame(height: 6)
+                .offset(y: -4)
         }
     }
 
@@ -224,93 +221,78 @@ struct NotchShellView: View {
 
     private var expandedTopBar: some View {
         HStack(spacing: 0) {
-            HStack(spacing: DN.spaceMD) {
-                tabButton(
-                    label: "HOME",
-                    isActive: viewModel.viewState == .overview
-                ) {
-                    withAnimation(DN.transition) {
-                        viewModel.viewState = .overview
-                    }
+            // Left: Home + Agents (text labels, left-aligned)
+            HStack(spacing: 4) {
+                Spacer().frame(width: 4)
+                navTextTab("HOME", id: "home", active: viewModel.viewState == .overview) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { viewModel.viewState = .overview }
                 }
-
-                tabButton(
-                    label: "AGENTS",
-                    isActive: viewModel.isInTaskOrChat
-                ) {
-                    withAnimation(DN.transition) {
-                        viewModel.viewState = .taskList
-                    }
+                navTextTab("AGENTS", id: "agents", active: viewModel.isInTaskOrChat) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { viewModel.viewState = .taskList }
+                }
+                let statsActive = viewModel.viewState == .stats || viewModel.viewState == .processList
+                navIconTab(id: "stats", active: statsActive) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { viewModel.viewState = .stats }
+                } icon: {
+                    Image(systemName: statsActive ? "chart.bar.fill" : "chart.bar")
+                        .font(.system(size: 11, weight: .medium))
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Color.clear.frame(width: notchW + DN.spaceMD)
 
-            HStack(spacing: DN.spaceSM) {
-                tabButton(
-                    label: "STATS",
-                    isActive: viewModel.viewState == .stats || viewModel.viewState == .processList
-                ) {
-                    withAnimation(DN.transition) {
-                        viewModel.viewState = .stats
-                    }
-                }
+            // Right: Stats + Notifications + Settings + Battery
+            HStack(spacing: 4) {
+                
 
-                // Bell icon
                 let notifsActive = viewModel.viewState == .notifications
-                iconChipButton(
-                    isActive: notifsActive,
-                    badgeCount: viewModel.unreadCount,
-                    action: {
-                        withAnimation(DN.transition) { viewModel.viewState = .notifications }
-                    }
-                ) {
+                navIconTab(id: "notifs", active: notifsActive, badge: viewModel.unreadCount) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { viewModel.viewState = .notifications }
+                } icon: {
                     Image(systemName: notifsActive ? "bell.fill" : "bell")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                 }
 
-                // Settings icon
                 let settingsActive = viewModel.viewState == .settings
-                iconChipButton(
-                    isActive: settingsActive,
-                    action: {
-                        withAnimation(DN.transition) { viewModel.viewState = .settings }
-                    }
-                ) {
+                navIconTab(id: "settings", active: settingsActive) {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { viewModel.viewState = .settings }
+                } icon: {
                     Image(systemName: settingsActive ? "gearshape.fill" : "gearshape")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                 }
 
                 if viewModel.settings.showBattery {
                     BatteryView()
+                        .padding(.leading, 4)
                 }
+                Spacer().frame(width: 4)
             }
-            .fixedSize(horizontal: true, vertical: false)
-            .frame(maxWidth: .infinity, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .frame(width: expandedWidth, height: notchH)
     }
 
-    private func tabButton(label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
-        ChipButton(isActive: isActive, action: action) {
-            Text(label)
-                .font(DN.label(10))
-                .tracking(0.6)
-        }
-    }
-
-    private func iconChipButton(isActive: Bool, badgeCount: Int = 0, action: @escaping () -> Void, @ViewBuilder icon: @escaping () -> some View) -> some View {
-        ChipButton(isActive: isActive, action: action) {
+    private func navIconTab(id: String, active: Bool, badge: Int = 0, action: @escaping () -> Void, @ViewBuilder icon: @escaping () -> some View) -> some View {
+        NavTabButton(id: id, active: active, ns: tabNS, action: action) {
             ZStack(alignment: .topTrailing) {
                 icon()
-                if badgeCount > 0 {
+                    .frame(width: 16, height: 16)
+                if badge > 0 {
                     Circle()
                         .fill(DN.accent)
                         .frame(width: 5, height: 5)
                         .offset(x: 4, y: -4)
                 }
             }
+        }
+    }
+
+    private func navTextTab(_ label: String, id: String, active: Bool, action: @escaping () -> Void) -> some View {
+        NavTabButton(id: id, active: active, ns: tabNS, action: action) {
+            Text(label)
+                .font(DN.label(10))
+                .tracking(0.6)
         }
     }
 }
@@ -338,10 +320,12 @@ private struct NotchCornerLeft: Shape {
     }
 }
 
-// MARK: - Chip Button
+// MARK: - Nav Tab Button (sliding pill via matchedGeometryEffect)
 
-private struct ChipButton<Label: View>: View {
-    let isActive: Bool
+private struct NavTabButton<Label: View>: View {
+    let id: String
+    let active: Bool
+    let ns: Namespace.ID
     let action: () -> Void
     @ViewBuilder let label: () -> Label
     @State private var isHovered = false
@@ -349,24 +333,25 @@ private struct ChipButton<Label: View>: View {
     var body: some View {
         Button(action: action) {
             label()
-                .font(isActive ? .system(size: 10, weight: .semibold) : .system(size: 10, weight: .medium))
-                .foregroundColor(isActive ? DN.textDisplay : isHovered ? DN.textPrimary : DN.textDisabled)
+                .font(.system(size: 10, weight: active ? .semibold : .medium))
+                .foregroundColor(active ? DN.textDisplay : isHovered ? DN.textPrimary : DN.textDisabled)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
-                .background(
-                    Capsule()
-                        .fill(
-                            isActive
-                                ? Color.white.opacity(0.12)
-                                : isHovered ? Color.white.opacity(0.06) : Color.clear
-                        )
-                )
+                .background {
+                    if active {
+                        Capsule()
+                            .fill(Color.white.opacity(0.12))
+                            .matchedGeometryEffect(id: "navPill", in: ns)
+                    } else if isHovered {
+                        Capsule()
+                            .fill(Color.white.opacity(0.06))
+                    }
+                }
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .handCursor()
         .animation(.easeOut(duration: 0.12), value: isHovered)
-        .animation(.easeOut(duration: DN.microDuration), value: isActive)
     }
 }
 

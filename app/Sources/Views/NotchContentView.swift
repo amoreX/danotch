@@ -13,13 +13,8 @@ struct NotchContentView: View {
     var body: some View {
         ZStack {
             if !isExpanded {
-                HStack(spacing: 0) {
-                    leftColumn
-                        .frame(width: 185)
-                    dividerBar
-                    overviewRightColumn
-                }
-                .transition(.opacity)
+                leftColumn
+                    .transition(.opacity)
             }
 
             if isExpanded {
@@ -40,36 +35,85 @@ struct NotchContentView: View {
     // MARK: - Left Column
 
     private var leftColumn: some View {
-        VStack(alignment: .leading, spacing: DN.spaceXS) {
-            // Time + date
-            HStack(alignment: .firstTextBaseline, spacing: DN.space2xs) {
+        VStack(alignment: .leading, spacing: 6) {
+            Spacer(minLength: 0)
+
+            // Music card — 3/4 width
+            GeometryReader { geo in
+                MusicPlayerCard(monitor: viewModel.nowPlaying)
+                    .frame(width: geo.size.width * 0.75, height: musicCardH)
+                    .clipped()
+            }
+            .frame(height: musicCardH)
+            .clipped()
+
+            // Two half-width calendar cards
+            HStack(spacing: 6) {
+                DateStripCard(events: viewModel.calendarEvents, selectedDay: $calSelectedDay)
+                EventsCard(events: viewModel.calendarEvents, selectedDay: calSelectedDay)
+            }
+            .frame(height: 80)
+
+            clockCard
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @State private var calSelectedDay: Int = Calendar.current.component(.day, from: Date())
+
+    private let musicCardH: CGFloat = 70
+
+    // Outer notch bottomRadius=16, content gap=4 → inner bottom = 16-4 = 12
+    private let clockCardShape = UnevenRoundedRectangle(
+        topLeadingRadius: 8, bottomLeadingRadius: 12,
+        bottomTrailingRadius: 12, topTrailingRadius: 8,
+        style: .continuous
+    )
+
+    private var clockCard: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(viewModel.timeString)
-                    .font(DN.display(32))
-                    .foregroundColor(DN.textDisplay)
+                    .font(.custom("Cakra-Normal", size: 44))
+                    .foregroundColor(Color(hexStr: "e8e4f4"))
                     .tracking(-1)
 
                 Text(viewModel.periodString)
-                    .font(DN.label(9))
+                    .font(.system(size: 10, weight: .medium))
                     .tracking(0.8)
-                    .foregroundColor(DN.textDisabled)
+                    .foregroundColor(Color(hexStr: "e8e4f4").opacity(0.45))
             }
 
             Text(viewModel.dateString.uppercased())
-                .font(DN.label(9))
-                .tracking(1.2)
-                .foregroundColor(DN.textSecondary)
-
-            Spacer().frame(height: DN.space2xs)
-
-            // Pinned widgets
-            ForEach(viewModel.settings.pinnedWidgets, id: \.self) { widget in
-                pinnedWidgetView(widget)
-            }
-
-            Spacer(minLength: 0)
+                .font(.system(size: 9, weight: .medium))
+                .tracking(1.5)
+                .foregroundColor(Color(hexStr: "e8e4f4").opacity(0.45))
         }
-        .padding(.trailing, DN.spaceSM)
-        .clipped()
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            let pal = viewModel.wallpaper.palette
+            ZStack {
+                RadialGradient(
+                    colors: [pal.dark, pal.mid],
+                    center: .bottomLeading,
+                    startRadius: 0,
+                    endRadius: 380
+                )
+                RadialGradient(
+                    colors: [pal.accent.opacity(0.22), .clear],
+                    center: .topTrailing,
+                    startRadius: 0,
+                    endRadius: 160
+                )
+                GrainOverlay(opacity: 0.5)
+            }
+            .animation(.easeInOut(duration: 0.8), value: viewModel.wallpaper.palette)
+        }
+        .clipShape(clockCardShape)
+        .overlay(clockCardShape.stroke(Color.white.opacity(0.07), lineWidth: 1))
     }
 
     // MARK: - Pinned Widget Router
@@ -78,7 +122,7 @@ struct NotchContentView: View {
     private func pinnedWidgetView(_ widget: PinnedWidget) -> some View {
         switch widget {
         case .calendar:
-            MiniCalendarView(compact: viewModel.settings.pinnedWidgets.count > 1)
+            MiniCalendarView(compact: viewModel.settings.pinnedWidgets.count > 1, events: viewModel.calendarEvents)
         case .music:
             NowPlayingView(
                 monitor: viewModel.nowPlaying,
@@ -128,11 +172,6 @@ struct NotchContentView: View {
 
     private var overviewRightColumn: some View {
         VStack(alignment: .leading, spacing: DN.spaceSM) {
-            Text("AGENTS")
-                .font(DN.label(9))
-                .tracking(0.8)
-                .foregroundColor(DN.textSecondary)
-
             if viewModel.agentMonitor.agents.isEmpty && activeTasks.isEmpty && viewModel.scheduledTasks.isEmpty {
                 emptyAgentState
             } else {
@@ -144,21 +183,16 @@ struct NotchContentView: View {
                             }
                         }
 
-                        // Scheduled tasks
                         if !viewModel.scheduledTasks.isEmpty {
                             ScheduledTasksSection(viewModel: viewModel)
                         }
 
-                        // User tasks from chat
                         if !activeTasks.isEmpty {
                             tasksSection(compact: viewModel.settings.compactAgentRows)
                         }
                     }
                 }
             }
-
-            Spacer(minLength: 0)
-            chatInputBar
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
@@ -331,6 +365,9 @@ struct NotchContentView: View {
             .font(DN.body(11))
             .foregroundColor(DN.textPrimary)
             .focused($isChatInputFocused)
+            .onHover { hovering in
+                if hovering { NSCursor.iBeam.push() } else { NSCursor.pop() }
+            }
             .onChange(of: isChatInputFocused) { _, focused in
                 viewModel.isChatInputActive = focused
             }
@@ -818,137 +855,172 @@ class NowPlayingMonitor: ObservableObject {
     @Published var duration: Double = 0
 
     private var timer: Timer?
-    private var lastTrack: String?
-    private static let artPath = "/tmp/danotch_art.png"
+    private var positionTimer: Timer?
+    private var positionBase: Double = 0
+    private var positionTimestamp: Date = Date()
 
     var progress: Double { duration > 0 ? position / duration : 0 }
 
     func timeString(_ seconds: Double) -> String {
-        let m = Int(seconds) / 60
-        let s = Int(seconds) % 60
+        let m = Int(seconds) / 60; let s = Int(seconds) % 60
         return String(format: "%d:%02d", m, s)
     }
 
+    // MARK: MediaRemote types
+    private typealias MRGetNowPlayingFn  = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
+    private typealias MRGetPlaybackFn    = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
+    private typealias MRSendCommandFn    = @convention(c) (UInt32, AnyObject?) -> Bool
+    private typealias MRRegisterFn       = @convention(c) (DispatchQueue) -> Void
+    private var mrGetInfo:     MRGetNowPlayingFn?
+    private var mrGetPlayback: MRGetPlaybackFn?
+    private var mrSendCmd:     MRSendCommandFn?
+
+    // MediaRemote command constants
+    private let kMRPlay:     UInt32 = 0
+    private let kMRPause:    UInt32 = 1
+    private let kMRToggle:   UInt32 = 2
+    private let kMRNextTrack: UInt32 = 4
+    private let kMRPrevTrack: UInt32 = 5
+
     init() {
+        loadMediaRemote()
         poll()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        // Interpolate position every 0.5s while playing
+        positionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self, self.isPlaying, self.duration > 0 else { return }
+            let elapsed = Date().timeIntervalSince(self.positionTimestamp)
+            self.position = min(self.positionBase + elapsed, self.duration)
+        }
     }
 
-    deinit { timer?.invalidate() }
+    deinit {
+        timer?.invalidate()
+        positionTimer?.invalidate()
+    }
 
-    func runCommand(_ cmd: String) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let script = """
-            try
-                if application "Music" is running then
-                    tell application "Music" to \(cmd)
-                end if
-            end try
-            """
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            proc.arguments = ["-e", script]
-            proc.standardOutput = FileHandle.nullDevice
-            proc.standardError = FileHandle.nullDevice
-            try? proc.run()
-            proc.waitUntilExit()
-            Thread.sleep(forTimeInterval: 0.3)
-            self?.poll()
+    private func loadMediaRemote() {
+        guard let bundle = CFBundleCreate(
+            kCFAllocatorDefault,
+            NSURL(fileURLWithPath: "/System/Library/PrivateFrameworks/MediaRemote.framework")
+        ) else { return }
+        // Must register BEFORE calling GetNowPlayingInfo, otherwise it returns empty
+        if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteRegisterForNowPlayingNotifications" as CFString) {
+            let register = unsafeBitCast(ptr, to: MRRegisterFn.self)
+            register(DispatchQueue.main)
+        }
+        if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteGetNowPlayingInfo" as CFString) {
+            mrGetInfo = unsafeBitCast(ptr, to: MRGetNowPlayingFn.self)
+        }
+        if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteGetNowPlayingApplicationPlaybackStateForBundleID" as CFString) {
+            mrGetPlayback = unsafeBitCast(ptr, to: MRGetPlaybackFn.self)
+        }
+        if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteSendCommand" as CFString) {
+            mrSendCmd = unsafeBitCast(ptr, to: MRSendCommandFn.self)
         }
     }
 
     func poll() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Self.fetch()
-            let trackChanged = result.track != self?.lastTrack
-            var artwork: NSImage? = self?.artworkImage
+        guard let mrGetInfo else { fallbackPoll(); return }
+        mrGetInfo(DispatchQueue.main) { [weak self] info in
+            guard let self else { return }
+            let newTrack  = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
+            let newArtist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+            let newDur    = info["kMRMediaRemoteNowPlayingInfoDuration"] as? Double ?? 0
+            let newPos    = info["kMRMediaRemoteNowPlayingInfoElapsedTime"] as? Double ?? 0
+            let playing   = (info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double ?? 0) > 0
 
-            if trackChanged, result.track != nil {
-                Self.fetchArtwork()
-                artwork = NSImage(contentsOfFile: Self.artPath)
+            let trackChanged = newTrack != self.track
+            self.track    = newTrack
+            self.artist   = newArtist
+            self.duration = newDur
+            self.isPlaying = playing
+            self.positionBase = newPos
+            self.positionTimestamp = Date()
+            if playing { self.position = newPos }
+
+            // Artwork
+            if trackChanged {
+                if let artData = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data,
+                   let img = NSImage(data: artData) {
+                    self.artworkImage = img
+                } else {
+                    self.artworkImage = nil
+                }
             }
-            if result.track == nil { artwork = nil }
+            if newTrack == nil { self.artworkImage = nil }
+        }
+    }
 
+    // Fallback: osascript for Apple Music
+    private func fallbackPoll() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let script = """
+            try
+                if application "Music" is running then
+                    tell application "Music"
+                        if player state is playing or player state is paused then
+                            set t to name of current track
+                            set a to artist of current track
+                            set p to player position
+                            set d to duration of current track
+                            set s to "paused"
+                            if player state is playing then set s to "playing"
+                            return t & "|||" & a & "|||" & s & "|||" & p & "|||" & d
+                        end if
+                    end tell
+                end if
+            end try
+            return ""
+            """
+            let pipe = Pipe(); let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            proc.arguments = ["-e", script]
+            proc.standardOutput = pipe; proc.standardError = FileHandle.nullDevice
+            guard (try? proc.run()) != nil else { return }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            guard let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !out.isEmpty else {
+                DispatchQueue.main.async { self?.track = nil; self?.artist = nil; self?.artworkImage = nil }
+                return
+            }
+            let p = out.components(separatedBy: "|||")
             DispatchQueue.main.async {
-                self?.track = result.track
-                self?.artist = result.artist
-                self?.isPlaying = result.playing
-                self?.position = result.position
-                self?.duration = result.duration
-                self?.lastTrack = result.track
-                if trackChanged { self?.artworkImage = artwork }
+                self?.track    = p.count > 0 ? p[0] : nil
+                self?.artist   = p.count > 1 ? p[1] : nil
+                self?.isPlaying = p.count > 2 && p[2] == "playing"
+                self?.position = p.count > 3 ? Double(p[3]) ?? 0 : 0
+                self?.duration = p.count > 4 ? Double(p[4]) ?? 0 : 0
             }
         }
     }
 
-    private struct FetchResult {
-        let track: String?; let artist: String?; let playing: Bool
-        let position: Double; let duration: Double
-    }
-
-    private static func fetch() -> FetchResult {
-        let script = """
-        try
-            if application "Music" is running then
-                tell application "Music"
-                    if player state is playing or player state is paused then
-                        set t to name of current track
-                        set a to artist of current track
-                        set p to player position
-                        set d to duration of current track
-                        set s to "paused"
-                        if player state is playing then set s to "playing"
-                        return t & "|||" & a & "|||" & s & "|||" & (round p) & "|||" & (round d)
-                    end if
-                end tell
-            end if
-        end try
-        return ""
-        """
-        let pipe = Pipe()
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", script]
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        do { try proc.run() } catch { return FetchResult(track: nil, artist: nil, playing: false, position: 0, duration: 0) }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        guard let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !out.isEmpty else { return FetchResult(track: nil, artist: nil, playing: false, position: 0, duration: 0) }
-        let p = out.components(separatedBy: "|||")
-        return FetchResult(
-            track: p.count > 0 ? p[0] : nil,
-            artist: p.count > 1 ? p[1] : nil,
-            playing: p.count > 2 && p[2] == "playing",
-            position: p.count > 3 ? Double(p[3]) ?? 0 : 0,
-            duration: p.count > 4 ? Double(p[4]) ?? 0 : 0
-        )
-    }
-
-    private static func fetchArtwork() {
-        let script = """
-        try
-            if application "Music" is running then
-                tell application "Music"
-                    set artData to raw data of artwork 1 of current track
-                    set f to open for access POSIX file "\(artPath)" with write permission
-                    set eof of f to 0
-                    write artData to f
-                    close access f
-                end tell
-            end if
-        end try
-        """
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        proc.arguments = ["-e", script]
-        proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = FileHandle.nullDevice
-        try? proc.run()
-        proc.waitUntilExit()
+    // MARK: Playback control
+    func runCommand(_ cmd: String) {
+        // Try MediaRemote first
+        switch cmd {
+        case "playpause":
+            if let fn = mrSendCmd { _ = fn(kMRToggle, nil); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.poll() }; return }
+        case "next track":
+            if let fn = mrSendCmd { _ = fn(kMRNextTrack, nil); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.poll() }; return }
+        case "previous track":
+            if let fn = mrSendCmd { _ = fn(kMRPrevTrack, nil); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.poll() }; return }
+        default: break
+        }
+        // Fallback: osascript Apple Music
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let script = "try\nif application \"Music\" is running then\ntell application \"Music\" to \(cmd)\nend if\nend try"
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            proc.arguments = ["-e", script]
+            proc.standardOutput = FileHandle.nullDevice; proc.standardError = FileHandle.nullDevice
+            try? proc.run(); proc.waitUntilExit()
+            Thread.sleep(forTimeInterval: 0.3)
+            self?.poll()
+        }
     }
 }
 
@@ -1263,6 +1335,290 @@ struct ScheduledTaskRow: View {
     }
 }
 
+// MARK: - Calendar Cards (Date Strip + Events)
+
+private let neutralCardBg = Color(hexStr: "111111")
+
+// Shared card shell — neutral dark, no color gradient
+private struct NeutralCard<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View {
+        content()
+            .background {
+                ZStack {
+                    neutralCardBg
+                    GrainOverlay(opacity: 0.35)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.07), lineWidth: 1))
+    }
+}
+
+// MARK: - Music Player Card
+
+private struct MusicPlayerCard: View {
+    @ObservedObject var monitor: NowPlayingMonitor
+    @State private var isShuffling = false
+    private let h: CGFloat = 70
+
+    var body: some View {
+        NeutralCard {
+            HStack(spacing: 0) {
+
+                // Cover art — fills full height, square, edge-to-edge on left
+                Group {
+                    if let img = monitor.artworkImage {
+                        Image(nsImage: img)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Color.white.opacity(0.04)
+                            .overlay(
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.15))
+                            )
+                    }
+                }
+                .frame(width: h, height: h)
+                .clipped()
+
+                // Track info + progress bar
+                VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(monitor.track ?? "Nothing Playing")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.88))
+                            .lineLimit(1)
+                        Text(monitor.artist ?? "—")
+                            .font(.system(size: 8))
+                            .foregroundColor(.white.opacity(0.38))
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // Progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.1)).frame(height: 2)
+                            Capsule().fill(Color.white.opacity(0.65))
+                                .frame(width: max(0, geo.size.width * CGFloat(monitor.progress)), height: 2)
+                        }
+                    }
+                    .frame(height: 2)
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 11)
+                .frame(maxWidth: .infinity)
+
+                // 3 square control buttons — 5+18+3+18+3+18+5 = 70px ✓
+                VStack(spacing: 3) {
+                    MusicSquareButton(icon: monitor.isPlaying ? "pause.fill" : "play.fill") {
+                        monitor.runCommand("playpause")
+                    }
+                    MusicSquareButton(icon: "forward.end.fill") {
+                        monitor.runCommand("next track")
+                    }
+                    MusicSquareButton(icon: "shuffle", active: isShuffling) {
+                        isShuffling.toggle()
+                        monitor.runCommand("set shuffle enabled to \(isShuffling)")
+                    }
+                }
+                .padding(.trailing, 6)
+                .padding(.vertical, 5)
+            }
+        }
+    }
+}
+
+private struct MusicSquareButton: View {
+    let icon: String
+    var active: Bool = false
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundColor(active ? .white : .white.opacity(isHovered ? 0.85 : 0.5))
+                .frame(width: 18, height: 18)
+                .background(
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.white.opacity(active ? 0.15 : isHovered ? 0.08 : 0.05))
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .handCursor()
+        .animation(.easeOut(duration: 0.1), value: isHovered)
+    }
+}
+
+// Left card: horizontal date strip
+struct DateStripCard: View {
+    @ObservedObject var events: CalendarEventsMonitor
+    @Binding var selectedDay: Int
+
+    private var cal: Calendar { Calendar.current }
+    private var today: Int { cal.component(.day, from: Date()) }
+    private var daysInMonth: Int { cal.range(of: .day, in: .month, for: Date())?.count ?? 30 }
+    private var monthName: String {
+        let f = DateFormatter(); f.dateFormat = "MMM"; return f.string(from: Date()).uppercased()
+    }
+
+    var body: some View {
+        NeutralCard {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(monthName)
+                    .font(.system(size: 7, weight: .semibold))
+                    .tracking(1.5)
+                    .foregroundColor(.white.opacity(0.3))
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(1...daysInMonth, id: \.self) { day in
+                            DayChip(
+                                day: day,
+                                isToday: day == today,
+                                isSelected: day == selectedDay,
+                                hasEvents: !(events.eventsByDay[day] ?? []).isEmpty
+                            ) { selectedDay = day }
+                        }
+                    }
+                    .padding(.horizontal, 1)
+                }
+                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            }
+            .padding(4)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+private struct DayChip: View {
+    let day: Int
+    let isToday: Bool
+    let isSelected: Bool
+    let hasEvents: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    private var dayLetter: String {
+        var c = Calendar.current.dateComponents([.year, .month], from: Date()); c.day = day
+        guard let d = Calendar.current.date(from: c) else { return "" }
+        let f = DateFormatter(); f.dateFormat = "EEEEE"; return f.string(from: d).uppercased()
+    }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(dayLetter)
+                .font(.system(size: 7, weight: .medium))
+                .foregroundColor(.white.opacity(isSelected ? 0.9 : 0.3))
+
+            Text("\(day)")
+                .font(.system(size: 11, weight: isToday || isSelected ? .semibold : .regular, design: .monospaced))
+                .foregroundColor(.white.opacity(isSelected ? 1.0 : isToday ? 0.9 : 0.55))
+
+            Circle()
+                .fill(.white.opacity(hasEvents ? (isSelected ? 0.9 : 0.4) : 0))
+                .frame(width: 3, height: 3)
+        }
+        .frame(width: 26)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(.white.opacity(isSelected ? 0.12 : isHovered ? 0.06 : isToday ? 0.06 : 0))
+                .overlay(
+                    isToday && !isSelected ?
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(.white.opacity(0.25), lineWidth: 0.5) : nil
+                )
+        )
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .onTapGesture { action() }
+        .handCursor()
+        .animation(.easeOut(duration: 0.1), value: isSelected)
+    }
+}
+
+// Right card: events for selected day
+struct EventsCard: View {
+    @ObservedObject var events: CalendarEventsMonitor
+    let selectedDay: Int
+
+    private var cal: Calendar { Calendar.current }
+    private var dayEvents: [EKEvent] { events.eventsByDay[selectedDay] ?? [] }
+    private var dayLabel: String {
+        var c = cal.dateComponents([.year, .month], from: Date()); c.day = selectedDay
+        guard let d = cal.date(from: c) else { return "" }
+        let f = DateFormatter(); f.dateFormat = "EEE d"; return f.string(from: d).uppercased()
+    }
+
+    var body: some View {
+        NeutralCard {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(dayLabel)
+                    .font(.system(size: 7, weight: .semibold))
+                    .tracking(1.5)
+                    .foregroundColor(.white.opacity(0.3))
+
+                if dayEvents.isEmpty {
+                    Spacer(minLength: 0)
+                    Text("No events")
+                        .font(.system(size: 9))
+                        .foregroundColor(.white.opacity(0.2))
+                    Spacer(minLength: 0)
+                } else {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(dayEvents, id: \.eventIdentifier) { event in
+                                CompactEventRow(event: event)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+}
+
+private struct CompactEventRow: View {
+    let event: EKEvent
+
+    private var timeStr: String {
+        if event.isAllDay { return "ALL DAY" }
+        let f = DateFormatter(); f.dateFormat = "h:mm a"
+        return f.string(from: event.startDate).uppercased()
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Rectangle()
+                .fill(.white.opacity(0.2))
+                .frame(width: 1.5, height: 20)
+                .clipShape(Capsule())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(event.title ?? "Untitled")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundColor(.white.opacity(0.75))
+                    .lineLimit(1)
+                Text(timeStr)
+                    .font(.system(size: 7))
+                    .foregroundColor(.white.opacity(0.3))
+                    .tracking(0.5)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 // MARK: - Calendar Events Monitor
 
 class CalendarEventsMonitor: ObservableObject {
@@ -1279,15 +1635,22 @@ class CalendarEventsMonitor: ObservableObject {
     func requestAccess() {
         if #available(macOS 14, *) {
             let status = EKEventStore.authorizationStatus(for: .event)
+            print("[Calendar] status=\(status.rawValue)")
             if status == .fullAccess {
                 fetchEvents()
-            } else if status == .notDetermined {
+            } else if status == .notDetermined || status.rawValue == 3 /* writeOnly */ {
                 Task { [weak self] in
                     guard let self else { return }
-                    if (try? await self.store.requestFullAccessToEvents()) == true {
-                        DispatchQueue.main.async { self.fetchEvents() }
+                    do {
+                        let granted = try await self.store.requestFullAccessToEvents()
+                        print("[Calendar] granted=\(granted)")
+                        if granted { DispatchQueue.main.async { self.fetchEvents() } }
+                    } catch {
+                        print("[Calendar] error=\(error)")
                     }
                 }
+            } else {
+                print("[Calendar] access denied/restricted, status=\(status.rawValue)")
             }
         } else {
             let status = EKEventStore.authorizationStatus(for: .event)
@@ -1308,6 +1671,7 @@ class CalendarEventsMonitor: ObservableObject {
               let end = cal.date(byAdding: .month, value: 1, to: start) else { return }
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
         let fetched = store.events(matching: predicate)
+        print("[Calendar] fetched \(fetched.count) events for \(start) – \(end)")
         var byDay: [Int: [EKEvent]] = [:]
         for event in fetched {
             let day = cal.component(.day, from: event.startDate)
@@ -1321,8 +1685,8 @@ class CalendarEventsMonitor: ObservableObject {
 
 struct MiniCalendarView: View {
     let compact: Bool
+    @ObservedObject var events: CalendarEventsMonitor
 
-    @StateObject private var events = CalendarEventsMonitor()
     @State private var hoveredDay: Int? = nil
     @State private var selectedDay: Int? = nil
 
