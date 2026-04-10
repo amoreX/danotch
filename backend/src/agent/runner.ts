@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import { supabase } from '../lib/supabase.js';
 import { scheduledTaskTools, executeScheduledTool } from '../tools/scheduled.js';
 import { localTools, executeLocalTool } from '../tools/local.js';
+import { getGmailTools, executeGmailTool, getGmailConnectionStatus, isComposioConfigured } from '../tools/gmail.js';
 
 const anthropic = new Anthropic();
 
@@ -153,12 +154,25 @@ export async function runChat(
         content: m.content,
       }));
 
-    // Include scheduled task tools if user is authenticated
-    // All tools: local (bash, web) always, scheduled only if authed
+    // All tools: local (bash, web) always, scheduled only if authed, gmail if connected
     const tools: Anthropic.Tool[] = [
       ...localTools,
       ...(userId ? scheduledTaskTools : []),
     ];
+
+    // Add Gmail tools if user has a connected Gmail account
+    let gmailToolNames: string[] = [];
+    if (userId && isComposioConfigured()) {
+      const gmailStatus = await getGmailConnectionStatus(userId);
+      if (gmailStatus.connected) {
+        const gmailTools = await getGmailTools(userId);
+        if (gmailTools.length > 0) {
+          tools.push(...gmailTools);
+          gmailToolNames = gmailTools.map(t => t.name);
+          console.log(`[chat] Gmail tools loaded: ${gmailToolNames.length}`);
+        }
+      }
+    }
 
     // Tool-use loop: stream → handle tool calls → stream again
     let maxLoops = 5;
@@ -208,7 +222,13 @@ export async function runChat(
           // Route to correct handler
           let result: string;
           const isScheduledTool = scheduledTaskTools.some(t => t.name === toolBlock.name);
-          if (isScheduledTool && userId) {
+          const isGmailTool = gmailToolNames.includes(toolBlock.name);
+          if (isGmailTool && userId) {
+            result = await executeGmailTool(userId, {
+              id: toolBlock.id,
+              function: { name: toolBlock.name, arguments: JSON.stringify(toolInput) },
+            });
+          } else if (isScheduledTool && userId) {
             result = await executeScheduledTool(toolBlock.name, toolInput, userId);
           } else {
             result = await executeLocalTool(toolBlock.name, toolInput);

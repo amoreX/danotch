@@ -705,6 +705,10 @@ struct SettingsPanel: View {
                             isOn: $viewModel.settings.compactAgentRows
                         )
                     }
+
+                    SettingsSection(title: "INTEGRATIONS") {
+                        GmailConnectionRow(viewModel: viewModel)
+                    }
                 }
             }
         }
@@ -748,6 +752,65 @@ struct SettingsPanel: View {
 }
 
 // MARK: - Settings Components
+
+// MARK: - Gmail Connection Row
+
+struct GmailConnectionRow: View {
+    @ObservedObject var viewModel: NotchViewModel
+
+    var body: some View {
+        HStack(spacing: DN.spaceSM) {
+            Image(systemName: "envelope.fill")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(viewModel.gmailConnected ? DN.success : DN.textDisabled)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Gmail")
+                    .font(DN.body(11))
+                    .foregroundColor(DN.textPrimary)
+                Text(viewModel.gmailLoading ? "Checking..." : (viewModel.gmailConnected ? "Connected" : "Not connected"))
+                    .font(DN.mono(8))
+                    .foregroundColor(viewModel.gmailConnected ? DN.success : DN.textDisabled)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if viewModel.gmailLoading {
+                ProgressView()
+                    .scaleEffect(0.5)
+                    .frame(width: 32, height: 18)
+            } else {
+                Button(action: {
+                    if viewModel.gmailConnected {
+                        viewModel.disconnectGmail()
+                    } else {
+                        viewModel.connectGmail()
+                    }
+                }) {
+                    Text(viewModel.gmailConnected ? "DISCONNECT" : "CONNECT")
+                        .font(DN.label(7))
+                        .tracking(0.6)
+                        .foregroundColor(viewModel.gmailConnected ? DN.accent : DN.success)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(viewModel.gmailConnected ? DN.accent.opacity(0.4) : DN.success.opacity(0.4), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, DN.spaceSM)
+        .padding(.vertical, 6)
+        .background(DN.surface)
+        .onAppear {
+            viewModel.checkGmailStatus()
+        }
+    }
+}
 
 struct SettingsSection<Content: View>: View {
     let title: String
