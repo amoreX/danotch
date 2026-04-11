@@ -10,4 +10,9 @@ export const config = {
     maxTokens: parseInt(process.env.MAX_TOKENS || '4096', 10),
     systemPrompt: CHAT_SYSTEM_PROMPT,
   },
+
+  // Composio (Gmail integration)
+  composio: {
+    apiKey: process.env.COMPOSIO_API_KEY || '',
+  },
 } as const;

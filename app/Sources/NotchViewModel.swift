@@ -193,6 +193,10 @@ class NotchViewModel: ObservableObject {
     var authManager: AuthManager?
     @Published var isAuthenticated: Bool = AuthManager.shared.isAuthenticated
 
+    // Gmail connection state
+    @Published var gmailConnected = false
+    @Published var gmailLoading = false
+
     @Published var settings = NotchSettings()
     @Published var agentMonitor = AgentMonitor()
     @Published var nowPlaying = NowPlayingMonitor()
@@ -617,6 +621,108 @@ class NotchViewModel: ObservableObject {
         switch viewState {
         case .taskList, .agentChat: return true
         default: return false
+        }
+    }
+
+    // MARK: - Gmail
+
+    func checkGmailStatus() {
+        guard let auth = authManager else { return }
+        gmailLoading = true
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else {
+                await MainActor.run { self.gmailLoading = false }
+                return
+            }
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/gmail/status")!)
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            guard let (data, _) = try? await URLSession.shared.data(for: request),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let connected = json["connected"] as? Bool else {
+                await MainActor.run { self.gmailLoading = false }
+                return
+            }
+            await MainActor.run {
+                self.gmailConnected = connected
+                self.gmailLoading = false
+            }
+        }
+    }
+
+    func connectGmail() {
+        guard let auth = authManager else { return }
+        gmailLoading = true
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else {
+                await MainActor.run { self.gmailLoading = false }
+                return
+            }
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/gmail/connect")!)
+            request.httpMethod = "POST"
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            guard let (data, _) = try? await URLSession.shared.data(for: request),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                await MainActor.run { self.gmailLoading = false }
+                return
+            }
+
+            if json["already_connected"] as? Bool == true {
+                await MainActor.run {
+                    self.gmailConnected = true
+                    self.gmailLoading = false
+                }
+                return
+            }
+
+            if let redirectUrl = json["redirectUrl"] as? String,
+               let url = URL(string: redirectUrl) {
+                await MainActor.run {
+                    NSWorkspace.shared.open(url)
+                    self.gmailLoading = false
+                }
+                // Poll for connection after user completes OAuth
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                self.checkGmailStatus()
+                return
+            }
+
+            // Auto-connected (no redirect needed)
+            if json["connected"] as? Bool == true {
+                await MainActor.run {
+                    self.gmailConnected = true
+                    self.gmailLoading = false
+                }
+                return
+            }
+
+            await MainActor.run { self.gmailLoading = false }
+        }
+    }
+
+    func disconnectGmail() {
+        guard let auth = authManager else { return }
+        gmailLoading = true
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else {
+                await MainActor.run { self.gmailLoading = false }
+                return
+            }
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/gmail/disconnect")!)
+            request.httpMethod = "POST"
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            _ = try? await URLSession.shared.data(for: request)
+            await MainActor.run {
+                self.gmailConnected = false
+                self.gmailLoading = false
+            }
         }
     }
 
