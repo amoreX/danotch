@@ -7,6 +7,12 @@ export class NotchBridge {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private url: string;
 
+  // Pending connection requests waiting for user approval/denial
+  private pendingRequests = new Map<string, {
+    resolve: (approved: boolean) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+
   constructor(url: string) {
     this.url = url;
   }
@@ -25,10 +31,8 @@ export class NotchBridge {
     });
 
     this.ws.on('message', (data) => {
-      // Messages from the notch app (e.g. user approval/rejection)
       try {
         const msg = JSON.parse(data.toString());
-        console.log('[NotchBridge] Received from notch:', msg.type);
         this.handleNotchMessage(msg);
       } catch {
         // ignore parse errors
@@ -56,8 +60,53 @@ export class NotchBridge {
     }, 3000);
   }
 
-  private handleNotchMessage(_msg: Record<string, unknown>) {
-    // TODO: handle approval/rejection from notch UI
+  private handleNotchMessage(msg: Record<string, unknown>) {
+    if (msg.type === 'connection_response') {
+      const requestId = msg.request_id as string;
+      const approved = msg.approved as boolean;
+      console.log(`[NotchBridge] Connection response: ${requestId} → ${approved ? 'approved' : 'denied'}`);
+
+      const pending = this.pendingRequests.get(requestId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        this.pendingRequests.delete(requestId);
+        pending.resolve(approved);
+      }
+    }
+  }
+
+  /**
+   * Send a connection request to the notch app and wait for user response.
+   * Returns true if user approved, false if denied or timed out.
+   */
+  requestConnection(
+    requestId: string,
+    sessionId: string,
+    appType: string,
+    displayName: string,
+    reason: string,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      // Timeout after 120s (OAuth can take a while)
+      const timer = setTimeout(() => {
+        if (this.pendingRequests.has(requestId)) {
+          console.log(`[NotchBridge] Connection request timed out: ${requestId}`);
+          this.pendingRequests.delete(requestId);
+          resolve(false);
+        }
+      }, 120_000);
+
+      this.pendingRequests.set(requestId, { resolve, timer });
+
+      this.send({
+        type: 'connection_request',
+        request_id: requestId,
+        session_id: sessionId,
+        app_type: appType,
+        display_name: displayName,
+        reason: reason,
+      });
+    });
   }
 
   send(event: NotchEvent) {
@@ -105,6 +154,12 @@ export class NotchBridge {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    // Reject all pending requests
+    for (const [id, pending] of this.pendingRequests) {
+      clearTimeout(pending.timer);
+      pending.resolve(false);
+    }
+    this.pendingRequests.clear();
     this.ws?.close();
     this.ws = null;
   }

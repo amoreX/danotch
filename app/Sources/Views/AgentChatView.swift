@@ -18,8 +18,20 @@ private func toolCompletedText(_ name: String) -> String {
         "gmail_reply": "Replied to email",
         "notion_create_page": "Created Notion page",
         "notion_search": "Searched Notion",
-        "linear_list_issues": "Fetched issues",
-        "linear_create_issue": "Created issue",
+        "GITHUB_CREATE_AN_ISSUE": "Created issue",
+        "GITHUB_GET_AN_ISSUE": "Fetched issue",
+        "GITHUB_LIST_REPOSITORY_ISSUES": "Listed issues",
+        "GITHUB_CREATE_A_PULL_REQUEST": "Created PR",
+        "GITHUB_GET_A_PULL_REQUEST": "Fetched PR",
+        "GITHUB_LIST_PULL_REQUESTS": "Listed PRs",
+        "GITHUB_MERGE_A_PULL_REQUEST": "Merged PR",
+        "GITHUB_LIST_COMMITS": "Listed commits",
+        "GITHUB_GET_REPOSITORY_CONTENT": "Read file",
+        "GITHUB_CREATE_OR_UPDATE_FILE_CONTENTS": "Updated file",
+        "GITHUB_SEARCH_REPOSITORIES": "Searched repos",
+        "GITHUB_LIST_REPOSITORY_WORKFLOWS": "Listed workflows",
+        "GITHUB_GET_A_WORKFLOW_RUN": "Checked workflow",
+        "GITHUB_SEARCH_CODE": "Searched code",
         "calendar_list_events": "Checked calendar",
         "calendar_create_event": "Created event",
     ]
@@ -32,7 +44,7 @@ private func toolIcon(_ name: String) -> String {
     if name.contains("scheduled") { return "clock.arrow.2.circlepath" }
     if name.hasPrefix("gmail") { return "envelope" }
     if name.hasPrefix("notion") { return "doc.text" }
-    if name.hasPrefix("linear") { return "checklist" }
+    if name.hasPrefix("GITHUB") { return "chevron.left.forwardslash.chevron.right" }
     if name.hasPrefix("calendar") { return "calendar" }
     if name.hasPrefix("slack") { return "number" }
     if name.hasPrefix("drive") { return "folder" }
@@ -194,6 +206,9 @@ struct AgentChatView: View {
         case "tool":
             toolCallBubble(msg)
 
+        case "connection_request":
+            connectionRequestBubble(msg)
+
         case "draft":
             if let draft = msg.draftCard {
                 DraftCardView(draft: draft)
@@ -246,6 +261,122 @@ struct AgentChatView: View {
         .padding(.horizontal, DN.spaceXS)
         .background(DN.surface.opacity(0.4))
         .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+
+    // MARK: - Connection Request Bubble
+
+    private func connectionRequestBubble(_ msg: ChatMessage) -> some View {
+        let appType = msg.toolName ?? ""
+        let displayName = msg.toolInput ?? appType
+        let reason = msg.content
+        let requestId = msg.id
+        let statusRaw = msg.toolOutput ?? "pending"
+        let status = ConnectionRequestStatus(rawValue: statusRaw) ?? .pending
+
+        return VStack(alignment: .leading, spacing: DN.spaceSM) {
+            // Header
+            HStack(spacing: DN.spaceXS) {
+                Image(systemName: appIcon(appType))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(DN.warning)
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 8))
+                    .foregroundColor(DN.warning)
+                Text("CONNECTION REQUIRED")
+                    .font(DN.label(8))
+                    .foregroundColor(DN.warning)
+            }
+
+            // App name + reason
+            Text("Connect **\(displayName)** to continue")
+                .font(DN.body(11, weight: .medium))
+                .foregroundColor(DN.textPrimary)
+
+            Text(reason)
+                .font(DN.body(10))
+                .foregroundColor(DN.textSecondary)
+                .lineLimit(3)
+
+            // Action buttons or status
+            switch status {
+            case .pending:
+                HStack(spacing: DN.spaceSM) {
+                    Button(action: { viewModel.approveConnectionRequest(requestId) }) {
+                        Text("CONNECT")
+                            .font(DN.label(8))
+                            .tracking(0.6)
+                            .foregroundColor(DN.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(DN.success)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { viewModel.denyConnectionRequest(requestId) }) {
+                        Text("DENY")
+                            .font(DN.label(8))
+                            .tracking(0.6)
+                            .foregroundColor(DN.textSecondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(DN.border, lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+
+            case .connecting:
+                HStack(spacing: DN.spaceXS) {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 14, height: 14)
+                    Text("Connecting \(displayName)...")
+                        .font(DN.mono(9))
+                        .foregroundColor(DN.warning)
+                }
+
+            case .approved:
+                HStack(spacing: DN.spaceXS) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(DN.success)
+                    Text("\(displayName) connected")
+                        .font(DN.mono(9))
+                        .foregroundColor(DN.success)
+                }
+
+            case .denied:
+                HStack(spacing: DN.spaceXS) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(DN.textDisabled)
+                    Text("Connection denied")
+                        .font(DN.mono(9))
+                        .foregroundColor(DN.textDisabled)
+                }
+            }
+        }
+        .padding(DN.spaceSM)
+        .background(DN.surface)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(status == .pending ? DN.warning.opacity(0.4) : DN.border, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(.vertical, DN.spaceXS)
+    }
+
+    private func appIcon(_ appType: String) -> String {
+        switch appType {
+        case "gmail": return "envelope.fill"
+        case "googlecalendar": return "calendar"
+        case "googledocs": return "doc.text.fill"
+        case "github": return "chevron.left.forwardslash.chevron.right"
+        default: return "app.connected.to.app.below.fill"
+        }
     }
 
     // MARK: - Input Bar

@@ -1,4 +1,4 @@
-import type Anthropic from '@anthropic-ai/sdk';
+import type { CanonicalTool } from '../providers/types.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -19,13 +19,13 @@ function toErrorMessage(err: unknown): string {
 
 // ── Tool Definitions ──
 
-export const localTools: Anthropic.Tool[] = [
+export const localTools: CanonicalTool[] = [
   {
     name: 'bash_execute',
     description:
       'Execute a shell command on the user\'s local machine and return the output. Use for: checking files, running scripts, getting system info, installing packages, etc. Commands run in a bash shell. Be careful with destructive commands.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
         command: {
           type: 'string',
@@ -44,7 +44,7 @@ export const localTools: Anthropic.Tool[] = [
     description:
       'Search the web for current information. Use when the user asks about recent events, current data, prices, weather, news, or anything that requires up-to-date information. Returns search result snippets.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
         query: {
           type: 'string',
@@ -59,7 +59,7 @@ export const localTools: Anthropic.Tool[] = [
     description:
       'Fetch the text content of a specific URL. Use when you need to read a webpage, API endpoint, or online resource.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
         url: {
           type: 'string',

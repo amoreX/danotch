@@ -1,14 +1,35 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { v4 as uuid } from 'uuid';
 import type { NotchBridge } from '../events/notch.js';
 import type { Task, ChatMessage } from '../types.js';
+import type { CanonicalTool, CanonicalMessage, CanonicalContentBlock, CanonicalToolResultBlock } from '../providers/types.js';
+import { getProviderForUser, getFallbackProvider } from '../providers/factory.js';
 import { config } from '../config.js';
 import { supabase } from '../lib/supabase.js';
 import { scheduledTaskTools, executeScheduledTool } from '../tools/scheduled.js';
 import { localTools, executeLocalTool } from '../tools/local.js';
-import { getGmailTools, executeGmailTool, getGmailConnectionStatus, isComposioConfigured } from '../tools/gmail.js';
+import { loadComposioTools, executeComposioTool, loadToolsForApp, COMPOSIO_APPS } from '../composio/tools.js';
+import { syncConnectionToDb } from '../composio/connection.js';
 
-const anthropic = new Anthropic();
+// Tool: request_app_connection — lets the agent ask the user to connect an app
+const requestAppConnectionTool: CanonicalTool = {
+  name: 'request_app_connection',
+  description: 'Request the user to connect an app integration (Gmail, Google Calendar, Google Docs, Linear). Use this when you need tools from an app that is not yet connected. The user will see a permission prompt and can approve or deny. If approved, the app\'s tools become available immediately.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      app_type: {
+        type: 'string',
+        enum: COMPOSIO_APPS.map(a => a.appType),
+        description: 'The app to request connection for.',
+      },
+      reason: {
+        type: 'string',
+        description: 'Brief explanation of why you need this app (shown to the user). E.g. "To check your calendar events for today"',
+      },
+    },
+    required: ['app_type', 'reason'],
+  },
+};
 
 // In-memory task store (for real-time streaming state)
 const tasks = new Map<string, Task>();
@@ -81,30 +102,30 @@ async function updateThreadTimestamp(threadId: string) {
 }
 
 async function generateThreadTitle(
-  threadId: string, sessionId: string, userMessage: string, assistantResponse: string, notch: NotchBridge
+  threadId: string, sessionId: string, userMessage: string,
+  assistantResponse: string, notch: NotchBridge, userId?: string
 ) {
   try {
-    const resp = await anthropic.messages.create({
-      model: config.api.model,
-      max_tokens: 30,
-      system: 'Generate a very short title (3-6 words max) for this conversation. Return ONLY the title, nothing else. No quotes.',
+    // Use user's provider for title generation, or fallback
+    const provider = userId
+      ? await getProviderForUser(userId)
+      : getFallbackProvider();
+
+    const result = await provider.complete({
       messages: [
         { role: 'user', content: userMessage },
         { role: 'assistant', content: assistantResponse.slice(0, 300) },
         { role: 'user', content: 'Title:' },
       ],
+      systemPrompt: 'Generate a very short title (3-6 words max) for this conversation. Return ONLY the title, nothing else. No quotes.',
+      maxTokens: 30,
     });
-    const title = resp.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim()
-      .slice(0, 80);
+
+    const title = result.text.trim().slice(0, 80);
 
     if (title) {
       await supabase.from('threads').update({ title }).eq('id', threadId);
       console.log(`[runner] Thread title: "${title}"`);
-      // Push title update to app
       notch.send({
         type: 'subagent_event',
         session_id: sessionId,
@@ -117,7 +138,7 @@ async function generateThreadTitle(
   }
 }
 
-// ── Chat runner (Anthropic API with tool use) ──
+// ── Chat runner (provider-agnostic with tool use) ──
 
 export async function runChat(
   message: string,
@@ -146,66 +167,65 @@ export async function runChat(
   const toolsUsed: { name: string; input?: string; timestamp: string }[] = [];
 
   try {
+    // Resolve the LLM provider: user's BYOK config → server fallback
+    const provider = userId
+      ? await getProviderForUser(userId)
+      : getFallbackProvider();
+
     // Build conversation from in-memory history
-    const apiMessages: Anthropic.MessageParam[] = task.chatHistory
+    const canonicalMessages: CanonicalMessage[] = task.chatHistory
       .filter((m) => m.role === 'user' || m.role === 'agent')
       .map((m) => ({
-        role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
+        role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
         content: m.content,
       }));
 
-    // All tools: local (bash, web) always, scheduled only if authed, gmail if connected
-    const tools: Anthropic.Tool[] = [
+    // All tools: local (bash, web) always, scheduled only if authed
+    const tools: CanonicalTool[] = [
       ...localTools,
       ...(userId ? scheduledTaskTools : []),
     ];
 
-    // Add Gmail tools if user has a connected Gmail account
-    let gmailToolNames: string[] = [];
-    if (userId && isComposioConfigured()) {
-      const gmailStatus = await getGmailConnectionStatus(userId);
-      if (gmailStatus.connected) {
-        const gmailTools = await getGmailTools(userId);
-        if (gmailTools.length > 0) {
-          tools.push(...gmailTools);
-          gmailToolNames = gmailTools.map(t => t.name);
-          console.log(`[chat] Gmail tools loaded: ${gmailToolNames.length}`);
-        }
+    // Load Composio tools for all connected apps
+    let composioToolNames = new Set<string>();
+    if (userId) {
+      const composio = await loadComposioTools(userId);
+      if (composio.tools.length > 0) {
+        // Composio tools are compatible shape — cast to canonical
+        tools.push(...(composio.tools as unknown as CanonicalTool[]));
+        composioToolNames = composio.toolNames;
       }
+      tools.push(requestAppConnectionTool);
     }
 
     // Tool-use loop: stream → handle tool calls → stream again
     let maxLoops = 5;
     while (maxLoops-- > 0) {
-      const stream = await anthropic.messages.stream({
-        model: config.api.model,
-        max_tokens: config.api.maxTokens,
-        system: config.api.systemPrompt,
-        messages: apiMessages,
-        ...(tools.length > 0 ? { tools } : {}),
+      const streamResult = await provider.stream({
+        messages: canonicalMessages,
+        tools: tools.length > 0 ? tools : undefined,
+        systemPrompt: config.api.systemPrompt,
+        maxTokens: config.api.maxTokens,
+        onText: (text) => {
+          fullText += text;
+          task.streamingText = fullText;
+          notch.sendProgress(id, { type: 'token', text });
+        },
       });
 
-      stream.on('text', (text) => {
-        fullText += text;
-        task.streamingText = fullText;
-        notch.sendProgress(id, { type: 'token', text });
-      });
-
-      const finalMessage = await stream.finalMessage();
-
-      // Check for tool use
-      const toolUseBlocks = finalMessage.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
+      // Check for tool use blocks
+      const toolUseBlocks = streamResult.content.filter(
+        (b): b is Extract<CanonicalContentBlock, { type: 'tool_use' }> => b.type === 'tool_use'
       );
 
       if (toolUseBlocks.length > 0) {
-        // Add assistant message with tool calls to conversation
-        apiMessages.push({ role: 'assistant', content: finalMessage.content });
+        // Add assistant message with all content blocks to conversation
+        canonicalMessages.push({ role: 'assistant', content: streamResult.content });
 
         // Execute each tool and collect results
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        const toolResults: CanonicalToolResultBlock[] = [];
         for (const toolBlock of toolUseBlocks) {
-          const toolInput = toolBlock.input as Record<string, unknown>;
+          const toolInput = toolBlock.input;
           const inputSummary = summarizeToolInput(toolBlock.name, toolInput);
 
           task.toolCallsCount++;
@@ -222,11 +242,36 @@ export async function runChat(
           // Route to correct handler
           let result: string;
           const isScheduledTool = scheduledTaskTools.some(t => t.name === toolBlock.name);
-          const isGmailTool = gmailToolNames.includes(toolBlock.name);
-          if (isGmailTool && userId) {
-            result = await executeGmailTool(userId, {
+          const isComposioTool = composioToolNames.has(toolBlock.name);
+
+          if (toolBlock.name === 'request_app_connection' && userId) {
+            const appType = toolInput.app_type as string;
+            const reason = toolInput.reason as string;
+            const app = COMPOSIO_APPS.find(a => a.appType === appType);
+            const displayName = app?.displayName ?? appType;
+            const requestId = uuid();
+
+            console.log(`[chat] Requesting ${displayName} connection from user...`);
+
+            const approved = await notch.requestConnection(requestId, id, appType, displayName, reason);
+
+            if (approved) {
+              const newTools = await loadToolsForApp(userId, appType);
+              if (newTools.tools.length > 0) {
+                tools.push(...(newTools.tools as unknown as CanonicalTool[]));
+                newTools.toolNames.forEach(n => composioToolNames.add(n));
+              }
+              result = `User approved. ${displayName} is now connected and its tools are available. Proceed with the user's request.`;
+              console.log(`[chat] ${displayName} connected — ${newTools.tools.length} tools loaded`);
+            } else {
+              result = `User denied the ${displayName} connection. Do not request this app again in this conversation. Answer their question another way or explain what you would need.`;
+              console.log(`[chat] ${displayName} connection denied by user`);
+            }
+          } else if (isComposioTool && userId) {
+            result = await executeComposioTool(userId, {
               id: toolBlock.id,
-              function: { name: toolBlock.name, arguments: JSON.stringify(toolInput) },
+              name: toolBlock.name,
+              input: toolInput,
             });
           } else if (isScheduledTool && userId) {
             result = await executeScheduledTool(toolBlock.name, toolInput, userId);
@@ -237,7 +282,6 @@ export async function runChat(
           const resultSummary = result.slice(0, 300);
           console.log(`[chat] Tool result: ${resultSummary.slice(0, 150)}`);
 
-          // Send tool result to notch app
           notch.sendProgress(id, {
             type: 'tool_result',
             tool_name: toolBlock.name,
@@ -245,7 +289,6 @@ export async function runChat(
             tool_output: resultSummary,
           });
 
-          // Add to chat history with detail
           task.chatHistory.push({
             id: uuid(), role: 'tool',
             content: resultSummary,
@@ -260,20 +303,17 @@ export async function runChat(
           });
         }
 
-        // Add tool results to conversation and loop for Claude's response
-        apiMessages.push({ role: 'user', content: toolResults });
+        // Add tool results to conversation and loop for next response
+        canonicalMessages.push({ role: 'user', content: toolResults });
         task.currentToolName = undefined;
         continue;
       }
 
       // No tool use — we're done
-      const responseText = finalMessage.content
-        .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+      const responseText = streamResult.content
+        .filter((b): b is Extract<CanonicalContentBlock, { type: 'text' }> => b.type === 'text')
         .map((b) => b.text)
         .join('');
-
-      const inputTokens = finalMessage.usage?.input_tokens ?? 0;
-      const outputTokens = finalMessage.usage?.output_tokens ?? 0;
 
       const finalResponseText = responseText || fullText;
 
@@ -287,16 +327,16 @@ export async function runChat(
       if (userId) {
         dbSave(async () => {
           await saveMessage(threadId, userId, 'assistant', finalResponseText, {
-            input_tokens: inputTokens,
-            output_tokens: outputTokens,
+            input_tokens: streamResult.usage.inputTokens,
+            output_tokens: streamResult.usage.outputTokens,
             tools_used: toolsUsed,
-            model: config.api.model,
+            model: provider.modelId,
+            provider: provider.providerName,
             status: 'completed',
           });
           await updateThreadTimestamp(threadId);
-          // Generate title for new threads (first message only)
           if (!options?.threadId) {
-            await generateThreadTitle(threadId, id, message, finalResponseText, notch);
+            await generateThreadTitle(threadId, id, message, finalResponseText, notch, userId);
           }
         });
       }

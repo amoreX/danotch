@@ -9,6 +9,10 @@ class WebSocketServer {
     init(viewModel: NotchViewModel) {
         self.viewModel = viewModel
         setupRoutes()
+        // Give the ViewModel a way to send messages back
+        viewModel.wsSend = { [weak self] json in
+            self?.broadcast(json)
+        }
     }
 
     private func setupRoutes() {
@@ -47,6 +51,15 @@ class WebSocketServer {
             }
         } catch {
             print("[WS] JSON parse error: \(error)")
+        }
+    }
+
+    /// Send a JSON message to all connected WebSocket clients
+    func broadcast(_ json: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: json),
+              let text = String(data: data, encoding: .utf8) else { return }
+        for (_, session) in sessions {
+            session.writeText(text)
         }
     }
 
