@@ -188,14 +188,22 @@ export async function runChat(
 
     // Load Composio tools for all connected apps
     let composioToolNames = new Set<string>();
+    let connectedAppNames: string[] = [];
     if (userId) {
       const composio = await loadComposioTools(userId);
       if (composio.tools.length > 0) {
         // Composio tools are compatible shape — cast to canonical
         tools.push(...(composio.tools as unknown as CanonicalTool[]));
         composioToolNames = composio.toolNames;
+        connectedAppNames = composio.activeAppNames;
       }
       tools.push(requestAppConnectionTool);
+    }
+
+    // Build system prompt with connected app context
+    let systemPrompt = config.api.systemPrompt;
+    if (connectedAppNames.length > 0) {
+      systemPrompt += `\n\nThe user has the following apps already connected: ${connectedAppNames.join(', ')}. Their tools are available to you — use them directly. Do NOT call request_app_connection for these apps.`;
     }
 
     // Tool-use loop: stream → handle tool calls → stream again
@@ -204,7 +212,7 @@ export async function runChat(
       const streamResult = await provider.stream({
         messages: canonicalMessages,
         tools: tools.length > 0 ? tools : undefined,
-        systemPrompt: config.api.systemPrompt,
+        systemPrompt,
         maxTokens: config.api.maxTokens,
         onText: (text) => {
           fullText += text;
@@ -219,6 +227,18 @@ export async function runChat(
       );
 
       if (toolUseBlocks.length > 0) {
+        // Flush any streamed text before tool calls as a separate chat message
+        const preToolText = streamResult.content
+          .filter((b): b is Extract<CanonicalContentBlock, { type: 'text' }> => b.type === 'text')
+          .map((b) => b.text)
+          .join('');
+        if (preToolText.trim()) {
+          task.chatHistory.push({ id: uuid(), role: 'agent', content: preToolText, timestamp: new Date() });
+          notch.sendProgress(id, { type: 'text_flush', text: preToolText });
+          fullText = '';
+          task.streamingText = '';
+        }
+
         // Add assistant message with all content blocks to conversation
         canonicalMessages.push({ role: 'assistant', content: streamResult.content });
 
@@ -296,10 +316,15 @@ export async function runChat(
             timestamp: new Date(),
           });
 
+          const MAX_TOOL_RESULT_CHARS = 8000;
+          const truncatedResult = result.length > MAX_TOOL_RESULT_CHARS
+            ? result.slice(0, MAX_TOOL_RESULT_CHARS) + '\n\n[Truncated — result was ' + result.length.toLocaleString() + ' chars]'
+            : result;
+
           toolResults.push({
             type: 'tool_result',
             tool_use_id: toolBlock.id,
-            content: result,
+            content: truncatedResult,
           });
         }
 

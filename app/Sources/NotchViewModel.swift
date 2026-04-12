@@ -896,6 +896,14 @@ class NotchViewModel: ObservableObject {
             switch progressType {
             case "token":
                 if let text = data["text"] as? String { tasks[idx].streamingText += text }
+            case "text_flush":
+                if let text = data["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    tasks[idx].chatHistory.append(ChatMessage(
+                        id: UUID().uuidString, role: "agent", content: text,
+                        toolName: nil, draftCard: nil, timestamp: Date()
+                    ))
+                    tasks[idx].streamingText = ""
+                }
             case "tool_start":
                 let toolName = data["tool_name"] as? String
                 let toolInput = data["tool_input"] as? String
@@ -929,6 +937,7 @@ class NotchViewModel: ObservableObject {
             tasks[idx].status = TaskStatus(rawValue: statusStr) ?? .completed
             tasks[idx].completedAt = Date()
             tasks[idx].currentToolName = nil
+            tasks[idx].streamingText = ""
             if let result = data["result"] as? String {
                 tasks[idx].result = result
                 // Add agent response to chat history

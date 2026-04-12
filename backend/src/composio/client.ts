@@ -12,6 +12,12 @@ export function getComposio() {
     composio = new Composio({
       apiKey: config.composio.apiKey,
       provider: new AnthropicProvider(),
+      toolkitVersions: {
+        gmail: 'latest',
+        googlecalendar: 'latest',
+        googledocs: 'latest',
+        github: 'latest',
+      },
     }) as any;
   }
   return composio!;

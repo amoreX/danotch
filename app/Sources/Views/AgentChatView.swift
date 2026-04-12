@@ -207,7 +207,11 @@ struct AgentChatView: View {
             toolCallBubble(msg)
 
         case "connection_request":
-            connectionRequestBubble(msg)
+            let reqStatus = ConnectionRequestStatus(rawValue: msg.toolOutput ?? "pending") ?? .pending
+            if reqStatus != .denied && reqStatus != .approved {
+                connectionRequestBubble(msg)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
 
         case "draft":
             if let draft = msg.draftCard {

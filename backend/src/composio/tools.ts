@@ -91,6 +91,15 @@ export async function loadToolsForApp(userId: string, appType: string): Promise<
   }
 }
 
+// ── Toolkit version for a tool name (e.g. GMAIL_FETCH_EMAILS → gmail) ──
+
+function getToolkitSlug(toolName: string): string | undefined {
+  const prefix = toolName.split('_')[0]?.toLowerCase();
+  if (!prefix) return undefined;
+  return COMPOSIO_APPS.find(a => a.toolkitSlug === prefix
+    || toolName.startsWith(a.toolkitSlug.toUpperCase()))?.toolkitSlug;
+}
+
 // ── Tool Fetching ──
 
 async function getToolsForApp(userId: string, toolActions: string[]): Promise<Anthropic.Tool[]> {
@@ -112,14 +121,31 @@ export async function executeComposioTool(
 ): Promise<string> {
   try {
     const c = getComposio();
-    const result = await (c as any).provider.executeToolCall(userId, {
-      id: toolCall.id,
-      function: {
+
+    // Use provider.handleToolCalls which handles toolkit versions automatically
+    const fakeMessage = {
+      id: 'msg_tool',
+      type: 'message' as const,
+      role: 'assistant' as const,
+      model: '',
+      content: [{
+        type: 'tool_use' as const,
+        id: toolCall.id,
         name: toolCall.name,
-        arguments: JSON.stringify(toolCall.input),
-      },
-    }, {});
-    return typeof result === 'string' ? result : JSON.stringify(result);
+        input: toolCall.input,
+      }],
+      stop_reason: 'tool_use' as const,
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    };
+
+    const results = await (c as any).provider.handleToolCalls(userId, fakeMessage);
+    if (Array.isArray(results) && results.length > 0) {
+      const r = results[0];
+      const content = r?.content ?? r;
+      return typeof content === 'string' ? content : JSON.stringify(content);
+    }
+    return JSON.stringify({ error: 'No result from tool execution' });
   } catch (err: any) {
     console.error(`[composio] Tool execution failed (${toolCall.name}):`, err);
     return JSON.stringify({ error: err.message || 'Composio tool execution failed' });

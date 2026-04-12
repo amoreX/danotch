@@ -83,7 +83,6 @@ export async function disconnect(userId: string, toolkitSlug: string, appType: s
       await c.connectedAccounts.delete(account.id);
     }
 
-    // Sync disconnect to local DB
     await supabase
       .from('connected_apps')
       .update({
@@ -93,6 +92,8 @@ export async function disconnect(userId: string, toolkitSlug: string, appType: s
       })
       .eq('user_id', userId)
       .eq('app_type', appType);
+    invalidateActiveAppsCache(userId);
+    await getActiveApps(userId);
 
     return true;
   } catch (err) {
@@ -119,6 +120,8 @@ export async function syncConnectionToDb(userId: string, appType: string, toolki
         })
         .eq('user_id', userId)
         .eq('app_type', appType);
+      invalidateActiveAppsCache(userId);
+      await getActiveApps(userId);
       console.log(`[composio:${appType}] Synced connection to DB for user ${userId}`);
     }
   } catch (err) {
@@ -126,11 +129,20 @@ export async function syncConnectionToDb(userId: string, appType: string, toolki
   }
 }
 
-/**
- * Get all active app connections for a user from the local DB.
- * Much faster than hitting Composio API for each app.
- */
+// Per-user cache for active apps — avoids hitting Supabase on every chat message
+const activeAppsCache = new Map<string, { apps: string[]; expiresAt: number }>();
+const CACHE_TTL_MS = 3 * 60 * 60 * 1000; // 3 hours
+
+export function invalidateActiveAppsCache(userId: string) {
+  activeAppsCache.delete(userId);
+}
+
 export async function getActiveApps(userId: string): Promise<string[]> {
+  const cached = activeAppsCache.get(userId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.apps;
+  }
+
   const { data, error } = await supabase
     .from('connected_apps')
     .select('app_type')
@@ -141,5 +153,8 @@ export async function getActiveApps(userId: string): Promise<string[]> {
     console.error('[composio] Failed to query active apps:', error.message);
     return [];
   }
-  return (data ?? []).map((row) => row.app_type);
+
+  const apps = (data ?? []).map((row) => row.app_type);
+  activeAppsCache.set(userId, { apps, expiresAt: Date.now() + CACHE_TTL_MS });
+  return apps;
 }
