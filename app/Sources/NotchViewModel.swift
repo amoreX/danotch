@@ -5,45 +5,112 @@ import Combine
 enum MusicSize: String, CaseIterable {
     case mini = "mini"
     case big = "big"
+    var label: String { self == .mini ? "MINI" : "BIG" }
+}
 
+enum MusicSource: String, CaseIterable {
+    case auto        = "auto"
+    case spotify     = "spotify"
+    case appleMusic  = "appleMusic"
     var label: String {
         switch self {
-        case .mini: return "MINI"
-        case .big: return "BIG"
+        case .auto:       return "Auto"
+        case .spotify:    return "Spotify"
+        case .appleMusic: return "Apple Music"
         }
     }
 }
 
+// MARK: - Widget Grid Types
+
+enum WidgetSize: String, Codable, CaseIterable {
+    case small   // 1 col × 1 row  ≈ 173 × 80
+    case medium  // 2 col × 1 row  ≈ 352 × 80
+    case wide    // 3 col × 1 row  ≈ 532 × 80
+    case large   // 2 col × 2 rows ≈ 352 × 166
+
+    var colSpan: Int {
+        switch self {
+        case .small: return 1
+        case .medium, .large: return 2
+        case .wide: return 3
+        }
+    }
+    var rowSpan: Int { self == .large ? 2 : 1 }
+    var label: String {
+        switch self {
+        case .small: return "Small"
+        case .medium: return "Medium"
+        case .wide: return "Wide"
+        case .large: return "Large"
+        }
+    }
+}
+
+struct WidgetSlot: Identifiable, Codable {
+    var id: String = UUID().uuidString
+    var type: PinnedWidget
+    var size: WidgetSize
+}
+
 enum PinnedWidget: String, CaseIterable, Codable {
-    case calendar = "calendar"
-    case music = "music"
-    case ram = "ram"
-    case disk = "disk"
-    case network = "network"
-    case uptime = "uptime"
-    case processes = "processes"
+    case clock      = "clock"
+    case music      = "music"
+    case calendar   = "calendar"
+    case cpu        = "cpu"
+    case battery    = "battery"
+    case agentCount = "agentCount"
+    case ram        = "ram"
+    case disk       = "disk"
+    case network    = "network"
+    case uptime     = "uptime"
+    case processes  = "processes"
 
     var label: String {
         switch self {
-        case .calendar: return "Calendar"
-        case .music: return "Music Player"
-        case .ram: return "RAM Usage"
-        case .disk: return "Disk Usage"
-        case .network: return "Network"
-        case .uptime: return "Uptime"
-        case .processes: return "Processes"
+        case .clock:      return "Clock"
+        case .music:      return "Music Player"
+        case .calendar:   return "Calendar"
+        case .cpu:        return "CPU Usage"
+        case .battery:    return "Battery"
+        case .agentCount: return "AI Agents"
+        case .ram:        return "RAM Usage"
+        case .disk:       return "Disk Usage"
+        case .network:    return "Network"
+        case .uptime:     return "Uptime"
+        case .processes:  return "Processes"
         }
     }
 
     var icon: String {
         switch self {
-        case .calendar: return "calendar"
-        case .music: return "music.note"
-        case .ram: return "memorychip"
-        case .disk: return "internaldrive"
-        case .network: return "network"
-        case .uptime: return "clock"
-        case .processes: return "list.number"
+        case .clock:      return "clock.fill"
+        case .music:      return "music.note"
+        case .calendar:   return "calendar"
+        case .cpu:        return "cpu"
+        case .battery:    return "battery.75percent"
+        case .agentCount: return "laptopcomputer"
+        case .ram:        return "memorychip"
+        case .disk:       return "internaldrive"
+        case .network:    return "network"
+        case .uptime:     return "clock"
+        case .processes:  return "list.number"
+        }
+    }
+
+    var defaultSize: WidgetSize {
+        switch self {
+        case .clock:    return .wide
+        case .music:    return .medium
+        case .calendar: return .large
+        default:        return .small
+        }
+    }
+
+    var minHeight: CGFloat {
+        switch self {
+        case .calendar: return 62
+        default:        return 80
         }
     }
 }
@@ -53,106 +120,139 @@ class NotchSettings: ObservableObject {
     private static let configFile = configDir.appendingPathComponent("settings.json")
 
     // Chat behavior
-    @Published var openChatOnSend: Bool        { didSet { save() } }
-    @Published var restoreLastView: Bool       { didSet { save() } }
-    @Published var keepOpenInChat: Bool        { didSet { save() } }
+    @Published var openChatOnSend: Bool         { didSet { save() } }
+    @Published var restoreLastView: Bool        { didSet { save() } }
+    @Published var keepOpenInChat: Bool         { didSet { save() } }
 
-    // Display — pinned widgets
-    @Published var pinnedWidgets: [PinnedWidget] { didSet { save() } }
-    @Published var showBattery: Bool           { didSet { save() } }
-    @Published var showDotGrid: Bool           { didSet { save() } }
+    // Widget grid
+    @Published var widgetSlots: [WidgetSlot] {
+        didSet {
+            // Recalculate notch height whenever slots change
+            let h = Self.calcExpandedHeight(for: widgetSlots)
+            if abs(notchExpandedHeight - h) > 1 { notchExpandedHeight = h }
+            save()
+        }
+    }
+    @Published var notchExpandedHeight: CGFloat { didSet { save() } }
+    @Published var showBattery: Bool            { didSet { save() } }
+    @Published var showDotGrid: Bool            { didSet { save() } }
 
     // Agents
-    @Published var showAgentLiveState: Bool    { didSet { save() } }
-    @Published var compactAgentRows: Bool      { didSet { save() } }
+    @Published var showAgentLiveState: Bool     { didSet { save() } }
+    @Published var compactAgentRows: Bool       { didSet { save() } }
+
+    // Music source
+    @Published var musicSource: MusicSource     { didSet { save() } }
 
     // Dot grid
-    @Published var dotGridColor: String        { didSet { save() } }
-    @Published var dotGridOpacity: Double      { didSet { save() } }
+    @Published var dotGridColor: String         { didSet { save() } }
+    @Published var dotGridOpacity: Double       { didSet { save() } }
 
     var dotGridSwiftColor: Color {
         Color(hex: UInt32(dotGridColor.dropFirst(), radix: 16) ?? 0xFFFFFF)
     }
 
-    // Computed from pinnedWidgets for backward compatibility
-    var showMusic: Bool {
-        pinnedWidgets.contains(.music)
-    }
+    // Compat helpers derived from widgetSlots
+    var showMusic: Bool { widgetSlots.contains { $0.type == .music } }
     var musicSize: MusicSize {
-        pinnedWidgets.count > 1 ? .mini : .big
+        widgetSlots.first { $0.type == .music }.map { $0.size == .small ? .mini : .big } ?? .big
+    }
+
+    // Calculate the notch expanded height based on active widget slots
+    static func calcExpandedHeight(for slots: [WidgetSlot]) -> CGFloat {
+        guard !slots.isEmpty else { return 240 }
+        let totalH = slots.map { $0.type.minHeight }.reduce(0, +)
+        let gaps = CGFloat(max(0, slots.count - 1)) * 6
+        return max(200, totalH + gaps + 8)
     }
 
     // UI state (persisted across restarts)
     @Published var collapsedGroups: Set<String> { didSet { save() } }
 
-    init() {
-        // Set defaults first
-        openChatOnSend = true
-        restoreLastView = false
-        keepOpenInChat = true
-        pinnedWidgets = [.calendar, .music]
-        showBattery = true
-        showDotGrid = true
-        showAgentLiveState = true
-        compactAgentRows = false
-        dotGridColor = "#00E5A0"   // Option A: default to accent teal
-        dotGridOpacity = 0.35      // more subtle than before
-        collapsedGroups = []
+    private static var defaultSlots: [WidgetSlot] {
+        [
+            WidgetSlot(type: .clock,    size: .wide),
+            WidgetSlot(type: .music,    size: .medium),
+            WidgetSlot(type: .cpu,      size: .small),
+            WidgetSlot(type: .calendar, size: .large),
+            WidgetSlot(type: .battery,  size: .small),
+        ]
+    }
 
-        // Then load from file
+    init() {
+        openChatOnSend      = true
+        restoreLastView     = false
+        keepOpenInChat      = true
+        widgetSlots         = Self.defaultSlots
+        notchExpandedHeight = Self.calcExpandedHeight(for: Self.defaultSlots)
+        showBattery         = true
+        showDotGrid         = true
+        showAgentLiveState = true
+        compactAgentRows   = false
+        musicSource     = .auto
+        dotGridColor    = "#00E5A0"
+        dotGridOpacity  = 0.35
+        collapsedGroups = []
         load()
     }
 
     private func save() {
-        let data: [String: Any] = [
-            "openChatOnSend": openChatOnSend,
-            "keepOpenInChat": keepOpenInChat,
-            "restoreLastView": restoreLastView,
-            "pinnedWidgets": pinnedWidgets.map { $0.rawValue },
-            "showBattery": showBattery,
-            "showDotGrid": showDotGrid,
-            "showAgentLiveState": showAgentLiveState,
-            "compactAgentRows": compactAgentRows,
-            "dotGridColor": dotGridColor,
-            "dotGridOpacity": dotGridOpacity,
-            "collapsedGroups": Array(collapsedGroups),
+        var data: [String: Any] = [
+            "openChatOnSend":       openChatOnSend,
+            "keepOpenInChat":       keepOpenInChat,
+            "restoreLastView":      restoreLastView,
+            "showBattery":          showBattery,
+            "showDotGrid":          showDotGrid,
+            "showAgentLiveState":   showAgentLiveState,
+            "compactAgentRows":     compactAgentRows,
+            "musicSource":          musicSource.rawValue,
+            "dotGridColor":         dotGridColor,
+            "dotGridOpacity":       dotGridOpacity,
+            "collapsedGroups":      Array(collapsedGroups),
+            "notchExpandedHeight":  Double(notchExpandedHeight),
         ]
+        if let slotsData = try? JSONEncoder().encode(widgetSlots),
+           let slotsObj = try? JSONSerialization.jsonObject(with: slotsData) {
+            data["widgetSlots"] = slotsObj
+        }
         do {
             try FileManager.default.createDirectory(at: Self.configDir, withIntermediateDirectories: true)
             let json = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
             try json.write(to: Self.configFile)
-        } catch {
-            // Silent fail
-        }
+        } catch {}
     }
 
     private func load() {
         guard let data = try? Data(contentsOf: Self.configFile),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
-        if let v = json["openChatOnSend"] as? Bool { openChatOnSend = v }
-        if let v = json["keepOpenInChat"] as? Bool { keepOpenInChat = v }
-        if let v = json["restoreLastView"] as? Bool { restoreLastView = v }
-        if let v = json["pinnedWidgets"] as? [String] {
-            pinnedWidgets = v.compactMap { PinnedWidget(rawValue: $0) }
-        } else {
-            // Migrate from old settings
-            var migrated: [PinnedWidget] = []
-            if let cm = json["calendarMode"] as? String, cm != "off" {
-                migrated.append(.calendar)
-            }
-            if let sm = json["showMusic"] as? Bool, sm {
-                migrated.append(.music)
-            }
-            if !migrated.isEmpty { pinnedWidgets = migrated }
-        }
-        if let v = json["showBattery"] as? Bool { showBattery = v }
-        if let v = json["showDotGrid"] as? Bool { showDotGrid = v }
+        if let v = json["openChatOnSend"]     as? Bool { openChatOnSend     = v }
+        if let v = json["keepOpenInChat"]     as? Bool { keepOpenInChat     = v }
+        if let v = json["restoreLastView"]    as? Bool { restoreLastView    = v }
+        if let v = json["showBattery"]        as? Bool { showBattery        = v }
+        if let v = json["showDotGrid"]        as? Bool { showDotGrid        = v }
         if let v = json["showAgentLiveState"] as? Bool { showAgentLiveState = v }
-        if let v = json["compactAgentRows"] as? Bool { compactAgentRows = v }
-        if let v = json["dotGridColor"] as? String { dotGridColor = v }
-        if let v = json["dotGridOpacity"] as? Double { dotGridOpacity = v }
-        if let v = json["collapsedGroups"] as? [String] { collapsedGroups = Set(v) }
+        if let v = json["compactAgentRows"]   as? Bool { compactAgentRows   = v }
+        if let v = json["musicSource"]         as? String, let src = MusicSource(rawValue: v) { musicSource = src }
+        if let v = json["dotGridColor"]       as? String { dotGridColor     = v }
+        if let v = json["dotGridOpacity"]       as? Double { dotGridOpacity       = v }
+        if let v = json["collapsedGroups"]      as? [String] { collapsedGroups = Set(v) }
+        if let v = json["notchExpandedHeight"]  as? Double { notchExpandedHeight = CGFloat(v) }
+
+        if let slotsObj = json["widgetSlots"],
+           let slotsData = try? JSONSerialization.data(withJSONObject: slotsObj),
+           let slots = try? JSONDecoder().decode([WidgetSlot].self, from: slotsData) {
+            widgetSlots = slots
+        } else if let pw = json["pinnedWidgets"] as? [String] {
+            // Migrate from old format — always prepend clock widget
+            var slots: [WidgetSlot] = [WidgetSlot(type: .clock, size: .wide)]
+            for raw in pw {
+                if let t = PinnedWidget(rawValue: raw), t != .clock {
+                    slots.append(WidgetSlot(type: t, size: t.defaultSize))
+                }
+            }
+            widgetSlots = slots
+        }
     }
 }
 
@@ -178,6 +278,7 @@ class NotchViewModel: ObservableObject {
     @Published var viewState: NotchViewState = .overview
     @Published var notchSize: NotchSizeState = .collapsed
     @Published var shimmerStep: Int = 0
+    @Published var isWidgetEditMode: Bool = false
 
     /// Convenience — rest of the app reads this
     var isExpanded: Bool {
@@ -203,6 +304,7 @@ class NotchViewModel: ObservableObject {
     let statsMonitor = SystemStatsMonitor()
     let calendarEvents = CalendarEventsMonitor()
     let wallpaper = WallpaperColorMonitor()
+    let batteryMonitor = BatteryMonitor()
     private var clockTimer: Timer?
     private var shimmerTimer: Timer?
     private var agentMonitorCancellable: AnyCancellable?
@@ -228,9 +330,18 @@ class NotchViewModel: ObservableObject {
         wallpaper.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }.store(in: &cancellables)
+        batteryMonitor.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }.store(in: &cancellables)
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        // Keep nowPlaying source in sync with settings
+        settings.$musicSource.sink { [weak self] src in
+            self?.nowPlaying.source = src
+            self?.nowPlaying.poll()
+        }.store(in: &cancellables)
+        nowPlaying.source = settings.musicSource
         AuthManager.shared.$isAuthenticated
             .receive(on: DispatchQueue.main)
             .sink { [weak self] value in

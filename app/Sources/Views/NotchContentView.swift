@@ -7,7 +7,9 @@ struct NotchContentView: View {
     @FocusState private var isChatInputFocused: Bool
 
     private var isExpanded: Bool {
-        viewModel.viewState != .overview
+        // Always show left column (widgets) when in edit mode
+        if viewModel.isWidgetEditMode { return false }
+        return viewModel.viewState != .overview
     }
 
     var body: some View {
@@ -22,8 +24,8 @@ struct NotchContentView: View {
                     .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: isExpanded)
-        .animation(.easeOut(duration: 0.15), value: viewModel.viewState)
+        .animation(.easeOut(duration: 0.3), value: isExpanded)
+        .animation(.easeOut(duration: 0.3), value: viewModel.viewState)
         .onChange(of: viewModel.shouldFocusChatInput) { _, shouldFocus in
             if shouldFocus {
                 isChatInputFocused = true
@@ -32,114 +34,115 @@ struct NotchContentView: View {
         }
     }
 
-    // MARK: - Left Column
+    // MARK: - Left Column (Dynamic widget layout)
+
+    @State private var calSelectedDay = Calendar.current.component(.day, from: Date())
 
     private var leftColumn: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Spacer(minLength: 0)
-
-            // Music card — 3/4 width
-            GeometryReader { geo in
-                MusicPlayerCard(monitor: viewModel.nowPlaying)
-                    .frame(width: geo.size.width * 0.75, height: musicCardH)
-                    .clipped()
+        VStack(spacing: 6) {
+            if viewModel.settings.widgetSlots.isEmpty {
+                emptyWidgetState
+            } else {
+                ForEach(Array(viewModel.settings.widgetSlots.enumerated()), id: \.element.id) { idx, slot in
+                    widgetView(for: slot, isLast: idx == viewModel.settings.widgetSlots.count - 1)
+                        .zIndex(slot.type == .calendar ? 5 : 0) // calendar renders above for expand
+                        .overlay(alignment: .topLeading) {
+                            if viewModel.isWidgetEditMode {
+                                widgetMinusButton(slot: slot)
+                                    .transition(.scale.combined(with: .opacity))
+                            }
+                        }
+                }
             }
-            .frame(height: musicCardH)
-            .clipped()
-
-            // Two half-width calendar cards
-            HStack(spacing: 6) {
-                DateStripCard(events: viewModel.calendarEvents, selectedDay: $calSelectedDay)
-                EventsCard(events: viewModel.calendarEvents, selectedDay: calSelectedDay)
-            }
-            .frame(height: 80)
-
-            clockCard
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(.easeOut(duration: DN.microDuration), value: viewModel.isWidgetEditMode)
+        .animation(.easeOut(duration: DN.microDuration), value: viewModel.settings.widgetSlots.count)
     }
 
-    @State private var calSelectedDay: Int = Calendar.current.component(.day, from: Date())
-
-    private let musicCardH: CGFloat = 70
-
-    // Outer notch bottomRadius=16, content gap=4 → inner bottom = 16-4 = 12
-    private let clockCardShape = UnevenRoundedRectangle(
-        topLeadingRadius: 8, bottomLeadingRadius: 12,
-        bottomTrailingRadius: 12, topTrailingRadius: 8,
-        style: .continuous
-    )
-
-    private var clockCard: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(viewModel.timeString)
-                    .font(.custom("Cakra-Normal", size: 44))
-                    .foregroundColor(Color(hexStr: "e8e4f4"))
-                    .tracking(-1)
-
-                Text(viewModel.periodString)
-                    .font(.system(size: 10, weight: .medium))
-                    .tracking(0.8)
-                    .foregroundColor(Color(hexStr: "e8e4f4").opacity(0.45))
-            }
-
-            Text(viewModel.dateString.uppercased())
-                .font(.system(size: 9, weight: .medium))
-                .tracking(1.5)
-                .foregroundColor(Color(hexStr: "e8e4f4").opacity(0.45))
+    private var emptyWidgetState: some View {
+        VStack(spacing: DN.spaceXS) {
+            Spacer()
+            Image(systemName: "square.dashed")
+                .font(.system(size: 24))
+                .foregroundColor(DN.textDisabled.opacity(0.4))
+            Text("No widgets")
+                .font(DN.label(9))
+                .tracking(0.8)
+                .foregroundColor(DN.textDisabled)
+            Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            let pal = viewModel.wallpaper.palette
-            ZStack {
-                RadialGradient(
-                    colors: [pal.dark, pal.mid],
-                    center: .bottomLeading,
-                    startRadius: 0,
-                    endRadius: 380
-                )
-                RadialGradient(
-                    colors: [pal.accent.opacity(0.22), .clear],
-                    center: .topTrailing,
-                    startRadius: 0,
-                    endRadius: 160
-                )
-                GrainOverlay(opacity: 0.5)
-            }
-            .animation(.easeInOut(duration: 0.8), value: viewModel.wallpaper.palette)
-        }
-        .clipShape(clockCardShape)
-        .overlay(clockCardShape.stroke(Color.white.opacity(0.07), lineWidth: 1))
+        .frame(maxWidth: .infinity)
     }
-
-    // MARK: - Pinned Widget Router
 
     @ViewBuilder
-    private func pinnedWidgetView(_ widget: PinnedWidget) -> some View {
-        switch widget {
-        case .calendar:
-            MiniCalendarView(compact: viewModel.settings.pinnedWidgets.count > 1, events: viewModel.calendarEvents)
+    private func widgetView(for slot: WidgetSlot, isLast: Bool) -> some View {
+        switch slot.type {
         case .music:
-            NowPlayingView(
-                monitor: viewModel.nowPlaying,
-                isBig: viewModel.settings.musicSize == .big,
-                accentColor: viewModel.settings.dotGridSwiftColor
-            )
+            MusicCard(monitor: viewModel.nowPlaying)
+                .frame(height: slot.type.minHeight)
+
+        case .calendar:
+            DateStripCard(events: viewModel.calendarEvents, selectedDay: $calSelectedDay) { day in
+                calSelectedDay = day
+            }
+            .frame(height: slot.type.minHeight)
+
+        case .clock:
+            ClockWidget(viewModel: viewModel, size: .wide)
+                .frame(minHeight: slot.type.minHeight, maxHeight: isLast ? .infinity : slot.type.minHeight)
+
+        case .cpu:
+            CPUCardWidget(statsMonitor: viewModel.statsMonitor)
+                .frame(height: slot.type.minHeight)
+
+        case .battery:
+            BatteryCardWidget(monitor: viewModel.batteryMonitor)
+                .frame(height: slot.type.minHeight)
+
+        case .agentCount:
+            AgentCountCardWidget(agentMonitor: viewModel.agentMonitor)
+                .frame(height: slot.type.minHeight)
+
         case .ram:
-            PinnedRAMView(monitor: viewModel.statsMonitor)
+            RAMCardWidget(statsMonitor: viewModel.statsMonitor)
+                .frame(height: slot.type.minHeight)
+
         case .disk:
-            PinnedDiskView(monitor: viewModel.statsMonitor)
+            DiskCardWidget(statsMonitor: viewModel.statsMonitor)
+                .frame(height: slot.type.minHeight)
+
         case .network:
-            PinnedNetworkView(monitor: viewModel.statsMonitor)
+            NetworkCardWidget(statsMonitor: viewModel.statsMonitor)
+                .frame(height: slot.type.minHeight)
+
         case .uptime:
-            PinnedUptimeView(monitor: viewModel.statsMonitor)
+            UptimeCardWidget(statsMonitor: viewModel.statsMonitor)
+                .frame(height: slot.type.minHeight)
+
         case .processes:
-            PinnedProcessView(monitor: viewModel.statsMonitor)
+            ProcessesCardWidget(statsMonitor: viewModel.statsMonitor)
+                .frame(height: slot.type.minHeight)
         }
+    }
+
+    private func widgetMinusButton(slot: WidgetSlot) -> some View {
+        Button(action: {
+            withAnimation(.easeOut(duration: DN.microDuration)) {
+                viewModel.settings.widgetSlots.removeAll { $0.id == slot.id }
+            }
+        }) {
+            ZStack {
+                Circle()
+                    .fill(Color(red: 0.82, green: 0.1, blue: 0.1))
+                    .frame(width: 18, height: 18)
+                Image(systemName: "minus")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.white)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(5)
     }
 
     // MARK: - Divider
@@ -854,10 +857,14 @@ class NowPlayingMonitor: ObservableObject {
     @Published var position: Double = 0
     @Published var duration: Double = 0
 
+    /// Set by ViewModel whenever settings.musicSource changes
+    var source: MusicSource = .auto
+
     private var timer: Timer?
     private var positionTimer: Timer?
     private var positionBase: Double = 0
     private var positionTimestamp: Date = Date()
+    private var lastArtworkURL: String?
 
     var progress: Double { duration > 0 ? position / duration : 0 }
 
@@ -866,29 +873,21 @@ class NowPlayingMonitor: ObservableObject {
         return String(format: "%d:%02d", m, s)
     }
 
-    // MARK: MediaRemote types
-    private typealias MRGetNowPlayingFn  = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
-    private typealias MRGetPlaybackFn    = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
-    private typealias MRSendCommandFn    = @convention(c) (UInt32, AnyObject?) -> Bool
-    private typealias MRRegisterFn       = @convention(c) (DispatchQueue) -> Void
-    private var mrGetInfo:     MRGetNowPlayingFn?
-    private var mrGetPlayback: MRGetPlaybackFn?
-    private var mrSendCmd:     MRSendCommandFn?
+    // MARK: MediaRemote (Apple Music / system-level)
+    private typealias MRGetNowPlayingFn = @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
+    private typealias MRSendCommandFn   = @convention(c) (UInt32, AnyObject?) -> Bool
+    private typealias MRRegisterFn      = @convention(c) (DispatchQueue) -> Void
+    private var mrGetInfo: MRGetNowPlayingFn?
+    private var mrSendCmd: MRSendCommandFn?
 
-    // MediaRemote command constants
-    private let kMRPlay:     UInt32 = 0
-    private let kMRPause:    UInt32 = 1
-    private let kMRToggle:   UInt32 = 2
+    private let kMRToggle:    UInt32 = 2
     private let kMRNextTrack: UInt32 = 4
     private let kMRPrevTrack: UInt32 = 5
 
     init() {
         loadMediaRemote()
         poll()
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            self?.poll()
-        }
-        // Interpolate position every 0.5s while playing
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
         positionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self, self.isPlaying, self.duration > 0 else { return }
             let elapsed = Date().timeIntervalSince(self.positionTimestamp)
@@ -896,56 +895,143 @@ class NowPlayingMonitor: ObservableObject {
         }
     }
 
-    deinit {
-        timer?.invalidate()
-        positionTimer?.invalidate()
-    }
+    deinit { timer?.invalidate(); positionTimer?.invalidate() }
 
     private func loadMediaRemote() {
-        guard let bundle = CFBundleCreate(
-            kCFAllocatorDefault,
-            NSURL(fileURLWithPath: "/System/Library/PrivateFrameworks/MediaRemote.framework")
-        ) else { return }
-        // Must register BEFORE calling GetNowPlayingInfo, otherwise it returns empty
+        guard let bundle = CFBundleCreate(kCFAllocatorDefault,
+            NSURL(fileURLWithPath: "/System/Library/PrivateFrameworks/MediaRemote.framework")) else {
+            return
+        }
         if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteRegisterForNowPlayingNotifications" as CFString) {
-            let register = unsafeBitCast(ptr, to: MRRegisterFn.self)
-            register(DispatchQueue.main)
+            unsafeBitCast(ptr, to: MRRegisterFn.self)(DispatchQueue.main)
+        } else {
         }
         if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteGetNowPlayingInfo" as CFString) {
             mrGetInfo = unsafeBitCast(ptr, to: MRGetNowPlayingFn.self)
-        }
-        if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteGetNowPlayingApplicationPlaybackStateForBundleID" as CFString) {
-            mrGetPlayback = unsafeBitCast(ptr, to: MRGetPlaybackFn.self)
+        } else {
         }
         if let ptr = CFBundleGetFunctionPointerForName(bundle, "MRMediaRemoteSendCommand" as CFString) {
             mrSendCmd = unsafeBitCast(ptr, to: MRSendCommandFn.self)
+        } else {
         }
     }
 
     func poll() {
-        guard let mrGetInfo else { fallbackPoll(); return }
+        switch source {
+        case .spotify:
+            pollSpotify { _ in }
+        case .appleMusic:
+            pollAppleMusic()
+        case .auto:
+            pollSpotify { [weak self] found in
+                if !found { self?.pollAppleMusic() }
+            }
+        }
+    }
+
+    // MARK: Spotify (NSAppleScript — in-process, proper TCC attribution)
+
+    // Serial queue required: NSAppleScript is not thread-safe
+    private static let asQueue = DispatchQueue(label: "com.danotch.applescript")
+
+    private func pollSpotify(completion: @escaping (Bool) -> Void) {
+        Self.asQueue.async { [weak self] in
+            guard let self else { return }
+            let source = """
+            try
+                if application "Spotify" is running then
+                    tell application "Spotify"
+                        if player state is playing or player state is paused then
+                            set trackName to name of current track
+                            set artistName to artist of current track
+                            set trackPos to player position
+                            set trackDur to duration of current track
+                            if player state is playing then
+                                set playState to "playing"
+                            else
+                                set playState to "paused"
+                            end if
+                            try
+                                set artURL to artwork url of current track
+                            on error
+                                set artURL to ""
+                            end try
+                            return trackName & "|||" & artistName & "|||" & playState & "|||" & trackPos & "|||" & trackDur & "|||" & artURL
+                        end if
+                    end tell
+                end if
+            end try
+            return ""
+            """
+            let result = self.runAppleScript(source)
+            guard !result.isEmpty else {
+                DispatchQueue.main.async { completion(false) }
+                return
+            }
+            let parts = result.components(separatedBy: "|||")
+            let trim  = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines) }
+            let newTrack  = parts.count > 0 && !trim(parts[0]).isEmpty ? trim(parts[0]) : nil
+            let newArtist = parts.count > 1 && !trim(parts[1]).isEmpty ? trim(parts[1]) : nil
+            let playing   = parts.count > 2 && trim(parts[2]) == "playing"
+            let pos       = parts.count > 3 ? Double(trim(parts[3])) ?? 0 : 0
+            let durMs     = parts.count > 4 ? Double(trim(parts[4])) ?? 0 : 0   // Spotify: milliseconds
+            let artURL    = parts.count > 5 ? trim(parts[5]) : ""
+
+            DispatchQueue.main.async {
+                let trackChanged = newTrack != self.track
+                self.track     = newTrack
+                self.artist    = newArtist
+                self.isPlaying = playing
+                self.duration  = durMs / 1000.0
+                self.positionBase      = pos
+                self.positionTimestamp = Date()
+                if playing { self.position = pos }
+
+                if trackChanged {
+                    if !artURL.isEmpty { self.fetchArtwork(from: artURL) }
+                    else { self.artworkImage = nil; self.lastArtworkURL = nil }
+                }
+                if newTrack == nil { self.artworkImage = nil; self.lastArtworkURL = nil }
+                completion(newTrack != nil)
+            }
+        }
+    }
+
+    private func fetchArtwork(from urlStr: String) {
+        guard urlStr != lastArtworkURL, let url = URL(string: urlStr) else { return }
+        lastArtworkURL = urlStr
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let data, let img = NSImage(data: data) else { return }
+            DispatchQueue.main.async { self?.artworkImage = img }
+        }.resume()
+    }
+
+    // MARK: Apple Music (MediaRemote)
+
+    private func pollAppleMusic() {
+        guard let mrGetInfo else { return }
         mrGetInfo(DispatchQueue.main) { [weak self] info in
             guard let self else { return }
-            let newTrack  = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
+            let newTrack  = info["kMRMediaRemoteNowPlayingInfoTitle"]  as? String
             let newArtist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
             let newDur    = info["kMRMediaRemoteNowPlayingInfoDuration"] as? Double ?? 0
             let newPos    = info["kMRMediaRemoteNowPlayingInfoElapsedTime"] as? Double ?? 0
             let playing   = (info["kMRMediaRemoteNowPlayingInfoPlaybackRate"] as? Double ?? 0) > 0
 
             let trackChanged = newTrack != self.track
-            self.track    = newTrack
-            self.artist   = newArtist
-            self.duration = newDur
+            self.track     = newTrack
+            self.artist    = newArtist
+            self.duration  = newDur
             self.isPlaying = playing
-            self.positionBase = newPos
+            self.positionBase      = newPos
             self.positionTimestamp = Date()
             if playing { self.position = newPos }
 
-            // Artwork
             if trackChanged {
                 if let artData = info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data,
                    let img = NSImage(data: artData) {
                     self.artworkImage = img
+                    self.lastArtworkURL = nil
                 } else {
                     self.artworkImage = nil
                 }
@@ -954,73 +1040,76 @@ class NowPlayingMonitor: ObservableObject {
         }
     }
 
-    // Fallback: osascript for Apple Music
-    private func fallbackPoll() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let script = """
+    // MARK: Commands
+
+    func runCommand(_ cmd: String) {
+        // MediaRemote commands work system-wide (Spotify + Apple Music)
+        let mrCmd: UInt32?
+        switch cmd {
+        case "playpause":      mrCmd = kMRToggle
+        case "next track":     mrCmd = kMRNextTrack
+        case "previous track": mrCmd = kMRPrevTrack
+        default:               mrCmd = nil
+        }
+        if let mrCmd, let fn = mrSendCmd {
+            _ = fn(mrCmd, nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self.poll() }
+            return
+        }
+        // Fallback: NSAppleScript command
+        Self.asQueue.async { [weak self] in
+            guard let self else { return }
+            let source = """
             try
-                if application "Music" is running then
-                    tell application "Music"
-                        if player state is playing or player state is paused then
-                            set t to name of current track
-                            set a to artist of current track
-                            set p to player position
-                            set d to duration of current track
-                            set s to "paused"
-                            if player state is playing then set s to "playing"
-                            return t & "|||" & a & "|||" & s & "|||" & p & "|||" & d
-                        end if
-                    end tell
+                if application "Spotify" is running then
+                    tell application "Spotify" to \(cmd)
+                else if application "Music" is running then
+                    tell application "Music" to \(cmd)
                 end if
             end try
-            return ""
             """
-            let pipe = Pipe(); let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            proc.arguments = ["-e", script]
-            proc.standardOutput = pipe; proc.standardError = FileHandle.nullDevice
-            guard (try? proc.run()) != nil else { return }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            proc.waitUntilExit()
-            guard let out = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !out.isEmpty else {
-                DispatchQueue.main.async { self?.track = nil; self?.artist = nil; self?.artworkImage = nil }
-                return
-            }
-            let p = out.components(separatedBy: "|||")
-            DispatchQueue.main.async {
-                self?.track    = p.count > 0 ? p[0] : nil
-                self?.artist   = p.count > 1 ? p[1] : nil
-                self?.isPlaying = p.count > 2 && p[2] == "playing"
-                self?.position = p.count > 3 ? Double(p[3]) ?? 0 : 0
-                self?.duration = p.count > 4 ? Double(p[4]) ?? 0 : 0
-            }
+            _ = self.runAppleScript(source)
+            Thread.sleep(forTimeInterval: 0.35)
+            DispatchQueue.main.async { self.poll() }
         }
     }
 
-    // MARK: Playback control
-    func runCommand(_ cmd: String) {
-        // Try MediaRemote first
-        switch cmd {
-        case "playpause":
-            if let fn = mrSendCmd { _ = fn(kMRToggle, nil); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.poll() }; return }
-        case "next track":
-            if let fn = mrSendCmd { _ = fn(kMRNextTrack, nil); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.poll() }; return }
-        case "previous track":
-            if let fn = mrSendCmd { _ = fn(kMRPrevTrack, nil); DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.poll() }; return }
-        default: break
+    func seek(to progress: Double) {
+        guard duration > 0 else { return }
+        let pos = progress * duration
+        Self.asQueue.async { [weak self] in
+            guard let self else { return }
+            let source = """
+            try
+                if application "Spotify" is running then
+                    tell application "Spotify" to set player position to \(pos)
+                else if application "Music" is running then
+                    tell application "Music" to set player position to \(pos)
+                end if
+            end try
+            """
+            _ = self.runAppleScript(source)
+            DispatchQueue.main.async { self.poll() }
         }
-        // Fallback: osascript Apple Music
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let script = "try\nif application \"Music\" is running then\ntell application \"Music\" to \(cmd)\nend if\nend try"
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            proc.arguments = ["-e", script]
-            proc.standardOutput = FileHandle.nullDevice; proc.standardError = FileHandle.nullDevice
-            try? proc.run(); proc.waitUntilExit()
-            Thread.sleep(forTimeInterval: 0.3)
-            self?.poll()
+    }
+
+    /// Run AppleScript on the main thread (required for TCC dialogs to appear)
+    /// Called from asQueue (background), uses semaphore to wait for result without blocking main.
+    private func runAppleScript(_ source: String) -> String {
+        var resultStr = ""
+        let sema = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            guard let script = NSAppleScript(source: source) else { sema.signal(); return }
+            var error: NSDictionary?
+            let desc = script.executeAndReturnError(&error)
+            if let err = error {
+                let msg = err[NSAppleScript.errorMessage as String] as? String ?? "\(err)"
+            }
+            resultStr = desc.stringValue ?? ""
+            sema.signal()
         }
+        sema.wait()
+        return resultStr
     }
 }
 
@@ -1085,7 +1174,7 @@ struct NowPlayingView: View {
 
     // Big: art on left, info on right, stacked
     private func bigLayout(track: String) -> some View {
-        HStack(spacing: DN.spaceSM + 2) {
+        HStack(spacing: DN.spaceSM + 4) {
             albumArt(size: 56, radius: 8)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -1356,111 +1445,845 @@ private struct NeutralCard<Content: View>: View {
     }
 }
 
-// MARK: - Music Player Card
+// MARK: - Widget Grid System
 
-private struct MusicPlayerCard: View {
-    @ObservedObject var monitor: NowPlayingMonitor
-    @State private var isShuffling = false
-    private let h: CGFloat = 70
+private struct PlacedSlot {
+    let slot: WidgetSlot
+    let rect: CGRect
+}
+
+// Grid constants: 3 cols, 80px row height, 6px gap
+// Available width = expanded(540) - hPad(4×2) = 532px
+// colW = (532 - 12) / 3 ≈ 173.3px
+private let wgCols    = 3
+private let wgGap: CGFloat  = 6
+private let wgRowH: CGFloat = 80
+private let wgColW: CGFloat = (532 - wgGap * CGFloat(wgCols - 1)) / CGFloat(wgCols)
+
+private func wgWidth(_ cs: Int) -> CGFloat { wgColW * CGFloat(cs) + wgGap * CGFloat(cs - 1) }
+private func wgHeight(_ rs: Int) -> CGFloat { wgRowH * CGFloat(rs) + wgGap * CGFloat(rs - 1) }
+
+private func computeWidgetLayout(_ slots: [WidgetSlot]) -> (placed: [PlacedSlot], addRect: CGRect) {
+    var grid = Array(repeating: Array(repeating: false, count: wgCols), count: 12)
+    var result: [PlacedSlot] = []
+
+    for slot in slots {
+        let cs = min(slot.size.colSpan, wgCols)
+        let rs = slot.size.rowSpan
+        var didPlace = false
+
+        outer: for row in 0..<12 {
+            for col in 0...(wgCols - cs) {
+                var fits = true
+                checkLoop: for dr in 0..<rs {
+                    for dc in 0..<cs {
+                        if grid[row + dr][col + dc] { fits = false; break checkLoop }
+                    }
+                }
+                if fits {
+                    for dr in 0..<rs { for dc in 0..<cs { grid[row + dr][col + dc] = true } }
+                    let x = CGFloat(col) * (wgColW + wgGap)
+                    let y = CGFloat(row) * (wgRowH + wgGap)
+                    result.append(PlacedSlot(slot: slot, rect: CGRect(x: x, y: y, width: wgWidth(cs), height: wgHeight(rs))))
+                    didPlace = true
+                    break outer
+                }
+            }
+        }
+        _ = didPlace  // unused warning suppression
+    }
+
+    // Next free 1×1 slot for the add button
+    var addRect = CGRect(x: 0, y: CGFloat(12) * (wgRowH + wgGap), width: wgColW, height: wgRowH)
+    outerAdd: for row in 0..<12 {
+        for col in 0..<wgCols where !grid[row][col] {
+            addRect = CGRect(x: CGFloat(col) * (wgColW + wgGap),
+                             y: CGFloat(row) * (wgRowH + wgGap),
+                             width: wgColW, height: wgRowH)
+            break outerAdd
+        }
+    }
+
+    return (result, addRect)
+}
+
+struct WidgetGridView: View {
+    let slots: [WidgetSlot]
+    let isEditMode: Bool
+    let viewModel: NotchViewModel
+    @Binding var showPicker: Bool
+    let onDelete: (String) -> Void
+    let onReorder: (String, String) -> Void
+
+    @State private var wiggle = false
 
     var body: some View {
-        NeutralCard {
-            HStack(spacing: 0) {
+        let (placed, addRect) = computeWidgetLayout(slots)
+        let maxY = placed.map { $0.rect.maxY }.max() ?? 0
+        let gridH = isEditMode ? max(maxY, addRect.maxY) : maxY
 
-                // Cover art — fills full height, square, edge-to-edge on left
-                Group {
-                    if let img = monitor.artworkImage {
-                        Image(nsImage: img)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } else {
-                        Color.white.opacity(0.04)
-                            .overlay(
-                                Image(systemName: "music.note")
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.15))
-                            )
-                    }
-                }
-                .frame(width: h, height: h)
-                .clipped()
+        ZStack(alignment: .topLeading) {
+            Color.clear.frame(width: 532, height: gridH)
 
-                // Track info + progress bar
-                VStack(alignment: .leading, spacing: 6) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(monitor.track ?? "Nothing Playing")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.88))
-                            .lineLimit(1)
-                        Text(monitor.artist ?? "—")
-                            .font(.system(size: 8))
-                            .foregroundColor(.white.opacity(0.38))
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(placed, id: \.slot.id) { item in
+                gridCell(item: item)
+                    .frame(width: item.rect.width, height: item.rect.height)
+                    .offset(x: item.rect.minX, y: item.rect.minY)
+            }
 
-                    // Progress bar
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.1)).frame(height: 2)
-                            Capsule().fill(Color.white.opacity(0.65))
-                                .frame(width: max(0, geo.size.width * CGFloat(monitor.progress)), height: 2)
+            if isEditMode {
+                Button { showPicker = true } label: {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                            .foregroundColor(DN.textDisabled.opacity(0.35))
+                        VStack(spacing: 3) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("ADD")
+                                .font(DN.label(7))
+                                .tracking(1)
                         }
+                        .foregroundColor(DN.textDisabled)
                     }
-                    .frame(height: 2)
                 }
-                .padding(.horizontal, 9)
-                .padding(.vertical, 11)
-                .frame(maxWidth: .infinity)
+                .buttonStyle(.plain)
+                .handCursor()
+                .frame(width: addRect.width, height: addRect.height)
+                .offset(x: addRect.minX, y: addRect.minY)
+                .transition(.opacity)
+            }
+        }
+        .frame(height: gridH)
+        .onChange(of: isEditMode) { _, editing in
+            withAnimation(.easeInOut(duration: 0.12).repeatForever(autoreverses: true)) {
+                wiggle = editing
+            }
+            if !editing { wiggle = false }
+        }
+    }
 
-                // 3 square control buttons — 5+18+3+18+3+18+5 = 70px ✓
-                VStack(spacing: 3) {
-                    MusicSquareButton(icon: monitor.isPlaying ? "pause.fill" : "play.fill") {
+    @ViewBuilder
+    private func gridCell(item: PlacedSlot) -> some View {
+        ZStack(alignment: .topLeading) {
+            widgetContent(item.slot)
+                .rotationEffect(.degrees(isEditMode && wiggle ? 1.5 : 0))
+                .animation(
+                    isEditMode
+                        ? .easeInOut(duration: 0.12).repeatForever(autoreverses: true)
+                        : .easeOut(duration: 0.15),
+                    value: wiggle
+                )
+                .onDrag { NSItemProvider(object: item.slot.id as NSString) }
+                .onDrop(of: [.text], isTargeted: nil) { providers in
+                    providers.first?.loadObject(ofClass: NSString.self) { obj, _ in
+                        guard let from = obj as? String, from != item.slot.id else { return }
+                        DispatchQueue.main.async { onReorder(from, item.slot.id) }
+                    }
+                    return true
+                }
+
+            if isEditMode {
+                Button { onDelete(item.slot.id) } label: {
+                    ZStack {
+                        Circle().fill(Color.red.opacity(0.9)).frame(width: 16, height: 16)
+                        Image(systemName: "xmark")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                }
+                .buttonStyle(.plain)
+                .handCursor()
+                .offset(x: -5, y: -5)
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func widgetContent(_ slot: WidgetSlot) -> some View {
+        switch slot.type {
+        case .clock:      ClockWidget(viewModel: viewModel, size: slot.size)
+        case .music:      MusicCard(monitor: viewModel.nowPlaying)
+        case .calendar:   CalendarWidget(events: viewModel.calendarEvents, size: slot.size)
+        case .cpu:        CPUWidget(monitor: viewModel.statsMonitor)
+        case .battery:    BatteryWidget(monitor: viewModel.batteryMonitor)
+        case .agentCount: AgentCountWidget(agentMonitor: viewModel.agentMonitor)
+        case .ram:        RAMWidget(monitor: viewModel.statsMonitor)
+        case .disk:       DiskWidget(monitor: viewModel.statsMonitor)
+        case .network:    NetworkWidget(monitor: viewModel.statsMonitor)
+        case .uptime:     UptimeWidget(monitor: viewModel.statsMonitor)
+        case .processes:  ProcessWidget(monitor: viewModel.statsMonitor)
+        }
+    }
+}
+
+// MARK: - Widget: Clock
+
+private struct ClockWidget: View {
+    @ObservedObject var viewModel: NotchViewModel
+    let size: WidgetSize
+
+    private let shape = UnevenRoundedRectangle(
+        topLeadingRadius: 8, bottomLeadingRadius: 12,
+        bottomTrailingRadius: 12, topTrailingRadius: 8, style: .continuous
+    )
+
+    var body: some View {
+        let pal = viewModel.wallpaper.palette
+        ZStack(alignment: .leading) {
+            ZStack {
+                RadialGradient(colors: [pal.dark, pal.mid], center: .bottomLeading, startRadius: 0, endRadius: 380)
+                RadialGradient(colors: [pal.accent.opacity(0.22), .clear], center: .topTrailing, startRadius: 0, endRadius: 160)
+                GrainOverlay(opacity: 0.5)
+            }
+            .animation(.easeInOut(duration: 0.8), value: viewModel.wallpaper.palette)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(viewModel.timeString)
+                        .font(.custom("Cakra-Normal", size: size == .wide ? 44 : 28))
+                        .foregroundColor(Color(hexStr: "e8e4f4"))
+                        .tracking(-1)
+                    Text(viewModel.periodString)
+                        .font(.system(size: 9, weight: .medium))
+                        .tracking(0.8)
+                        .foregroundColor(Color(hexStr: "e8e4f4").opacity(0.45))
+                }
+                if size != .small {
+                    Text(viewModel.dateString.uppercased())
+                        .font(.system(size: 8, weight: .medium))
+                        .tracking(1.5)
+                        .foregroundColor(Color(hexStr: "e8e4f4").opacity(0.4))
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+        .clipShape(shape)
+        .overlay(shape.stroke(Color.white.opacity(0.07), lineWidth: 1))
+    }
+}
+
+// MARK: - Music Card
+
+private struct MusicCard: View {
+    @ObservedObject var monitor: NowPlayingMonitor
+    @State private var hoveredBtn: Int? = nil
+    @State private var sliderHovered = false
+    @State private var isDragging = false
+    @State private var dragProgress: Double = 0
+    // Holds the seeked position until monitor.progress catches up (prevents snap-back)
+    @State private var pendingSeek: Double? = nil
+
+    private var displayProgress: Double {
+        if isDragging { return dragProgress }
+        if let p = pendingSeek { return p }
+        return monitor.progress
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            // Left card: cover art | title (top) + progress bar (bottom)
+            NeutralCard {
+                GeometryReader { geo in
+                    let h = geo.size.height
+                    HStack(spacing: 0) {
+                        // Cover art — square, fills full height
+                        ZStack {
+                            if let img = monitor.artworkImage {
+                                Image(nsImage: img)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            } else {
+                                Color.white.opacity(0.03)
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 18, weight: .ultraLight))
+                                    .foregroundColor(.white.opacity(0.12))
+                            }
+                        }
+                        .frame(width: h, height: h)
+                        .clipped()
+
+                        // Title (top) + spacer + progress bar (bottom)
+                        VStack(alignment: .leading, spacing: 0) {
+                            // Song title + artist at top
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(monitor.track ?? "Nothing Playing")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.white.opacity(monitor.track != nil ? 0.88 : 0.28))
+                                    .lineLimit(1)
+                                Text(monitor.artist ?? " ")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.4))
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Spacer(minLength: 0)
+
+                            // Progress slider — fixed 14px hit area, thickens from center on hover
+                            GeometryReader { bar in
+                                let w = bar.size.width
+                                let active = sliderHovered || isDragging
+                                let trackH: CGFloat = active ? 4 : 2
+                                // Snap fill when dragging/clicking, linear drift during playback
+                                let filled = CGFloat(displayProgress) * w
+                                let thumbW: CGFloat = 24
+                                let thumbH: CGFloat = 12
+                                let thumbX = min(max(filled - thumbW / 2, 0), w - thumbW)
+
+                                ZStack(alignment: .leading) {
+                                    // Track background
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.1))
+                                        .frame(height: trackH)
+                                        .animation(.spring(response: 0.22, dampingFraction: 0.75), value: active)
+
+                                    // Filled portion — snap on drag, linear during playback
+                                    Capsule()
+                                        .fill(Color.white.opacity(monitor.track != nil ? 0.75 : 0))
+                                        .frame(width: max(0, filled), height: trackH)
+                                        .animation(isDragging ? nil : .linear(duration: 0.5), value: filled)
+                                        .animation(.spring(response: 0.22, dampingFraction: 0.75), value: active)
+
+                                    // Pill thumb — always in hierarchy at correct position,
+                                    // only opacity changes (prevents animated position on appear)
+                                    Capsule()
+                                        .fill(.white)
+                                        .frame(width: thumbW, height: thumbH)
+                                        .shadow(color: .black.opacity(0.4), radius: 3, y: 1)
+                                        .offset(x: thumbX)
+                                        .animation(nil, value: thumbX) // position always snaps
+                                        .opacity(active && monitor.track != nil ? 1 : 0)
+                                        .animation(.spring(response: 0.22, dampingFraction: 0.75), value: active)
+                                }
+                                .frame(maxHeight: .infinity, alignment: .center)
+                                .contentShape(Rectangle())
+                                .gesture(
+                                    DragGesture(minimumDistance: 0)
+                                        .onChanged { v in
+                                            if !isDragging { isDragging = true }
+                                            dragProgress = Double(max(0, min(1, v.location.x / w)))
+                                        }
+                                        .onEnded { v in
+                                            let p = Double(max(0, min(1, v.location.x / w)))
+                                            pendingSeek = p
+                                            monitor.seek(to: p)
+                                            isDragging = false
+                                            // Clear once monitor.progress has caught up (~0.6s)
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                                pendingSeek = nil
+                                            }
+                                        }
+                                )
+                            }
+                            .frame(height: 14)
+                            .onHover { h in
+                                withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) { sliderHovered = h }
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .frame(width: geo.size.width, height: geo.size.height)
+                }
+            }
+
+            // Right card: playback controls (square buttons, equal outer padding)
+            NeutralCard {
+                VStack(spacing: 0) {
+                    musicCtrl(index: 0, icon: "backward.fill") { monitor.runCommand("previous track") }
+                    musicCtrl(index: 1, icon: monitor.isPlaying ? "pause.fill" : "play.fill") {
                         monitor.runCommand("playpause")
                     }
-                    MusicSquareButton(icon: "forward.end.fill") {
-                        monitor.runCommand("next track")
-                    }
-                    MusicSquareButton(icon: "shuffle", active: isShuffling) {
-                        isShuffling.toggle()
-                        monitor.runCommand("set shuffle enabled to \(isShuffling)")
-                    }
+                    .animation(.easeInOut(duration: 0.15), value: monitor.isPlaying)
+                    musicCtrl(index: 2, icon: "forward.fill") { monitor.runCommand("next track") }
                 }
-                .padding(.trailing, 6)
-                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(width: 44)
+        }
+    }
+
+    private func musicCtrl(index: Int, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white.opacity(hoveredBtn == index ? 0.9 : 0.5))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.white.opacity(hoveredBtn == index ? 0.1 : 0))
+                        .padding(4)
+                )
+        }
+        .buttonStyle(.plain)
+        .handCursor()
+        .onHover { inside in hoveredBtn = inside ? index : nil }
+    }
+}
+
+// MARK: - Widget: Calendar
+
+private struct CalendarWidget: View {
+    @ObservedObject var events: CalendarEventsMonitor
+    let size: WidgetSize
+    @State private var selectedDay = Calendar.current.component(.day, from: Date())
+
+    var body: some View {
+        switch size {
+        case .large:
+            VStack(spacing: wgGap) {
+                DateStripCard(events: events, selectedDay: $selectedDay)
+                NeutralCard {
+                    let dayEvents = events.eventsByDay[selectedDay] ?? []
+                    Group {
+                        if dayEvents.isEmpty {
+                            Text("No events")
+                                .font(.system(size: 9))
+                                .foregroundColor(.white.opacity(0.2))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            ScrollView(.vertical, showsIndicators: false) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(dayEvents, id: \.eventIdentifier) { event in
+                                        CompactEventRow(event: event)
+                                    }
+                                }
+                                .padding(10)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+        case .medium, .wide:
+            DateStripCard(events: events, selectedDay: $selectedDay)
+        case .small:
+            NeutralCard {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Calendar.current.monthSymbols[Calendar.current.component(.month, from: Date()) - 1].prefix(3).uppercased())
+                        .font(DN.label(7)).tracking(1.5).foregroundColor(DN.textDisabled)
+                    Text("\(Calendar.current.component(.day, from: Date()))")
+                        .font(DN.mono(28, weight: .light)).foregroundColor(DN.textDisplay)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
         }
     }
 }
 
-private struct MusicSquareButton: View {
-    let icon: String
-    var active: Bool = false
-    let action: () -> Void
-    @State private var isHovered = false
+// MARK: - Widget: CPU
+
+struct CPUWidget: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    private var pct: Double { monitor.cpuUsage / 100.0 }
+    private var color: Color {
+        if monitor.cpuUsage > 80 { return DN.accent }
+        if monitor.cpuUsage > 50 { return DN.warning }
+        return DN.success
+    }
 
     var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(active ? .white : .white.opacity(isHovered ? 0.85 : 0.5))
-                .frame(width: 18, height: 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(Color.white.opacity(active ? 0.15 : isHovered ? 0.08 : 0.05))
-                )
+        NeutralCard {
+            HStack(spacing: DN.spaceSM) {
+                ZStack {
+                    ForEach(0..<20, id: \.self) { i in
+                        let angle = Angle.degrees(135 + Double(i) * (270.0 / 20.0))
+                        let filled = Double(i) / 20.0 < pct
+                        Capsule()
+                            .fill(filled ? color : Color.white.opacity(0.06))
+                            .frame(width: 1.5, height: 4)
+                            .offset(y: -16)
+                            .rotationEffect(angle)
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .animation(.easeOut(duration: 0.5), value: pct)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("CPU")
+                        .font(DN.label(7)).tracking(1.2).foregroundColor(DN.textDisabled)
+                    Text("\(Int(monitor.cpuUsage))%")
+                        .font(DN.mono(14, weight: .light)).foregroundColor(DN.textDisplay)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-        .handCursor()
-        .animation(.easeOut(duration: 0.1), value: isHovered)
     }
 }
 
-// Left card: horizontal date strip
+// MARK: - Widget: Battery
+
+struct BatteryWidget: View {
+    @ObservedObject var monitor: BatteryMonitor
+    private var color: Color {
+        if monitor.isCharging { return DN.success }
+        if monitor.level <= 20 { return DN.accent }
+        return DN.textSecondary
+    }
+
+    var body: some View {
+        NeutralCard {
+            HStack(spacing: DN.spaceSM) {
+                ZStack {
+                    Circle().stroke(Color.white.opacity(0.06), lineWidth: 3).frame(width: 36, height: 36)
+                    Circle().trim(from: 0, to: CGFloat(monitor.level) / 100.0)
+                        .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .frame(width: 36, height: 36)
+                        .rotationEffect(.degrees(-90))
+                        .animation(.easeOut(duration: 0.4), value: monitor.level)
+
+                    if monitor.isCharging {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(DN.success)
+                    }
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("BATTERY")
+                        .font(DN.label(7)).tracking(1.2).foregroundColor(DN.textDisabled)
+                    Text("\(monitor.level)%")
+                        .font(DN.mono(14, weight: .light)).foregroundColor(DN.textDisplay)
+                    if monitor.isCharging {
+                        Text("CHARGING")
+                            .font(DN.label(6)).tracking(0.8).foregroundColor(DN.success)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Widget: AI Agent Count
+
+struct AgentCountWidget: View {
+    @ObservedObject var agentMonitor: AgentMonitor
+
+    private var runningCount: Int {
+        agentMonitor.agents.filter { $0.status == .running }.count
+    }
+
+    var body: some View {
+        NeutralCard {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("AGENTS")
+                    .font(DN.label(7)).tracking(1.2).foregroundColor(DN.textDisabled)
+
+                HStack(alignment: .bottom, spacing: 4) {
+                    Text("\(agentMonitor.agents.count)")
+                        .font(DN.mono(28, weight: .light))
+                        .foregroundColor(agentMonitor.agents.isEmpty ? DN.textDisabled : DN.textDisplay)
+
+                    if runningCount > 0 {
+                        Text("\(runningCount) ACTIVE")
+                            .font(DN.label(7)).tracking(0.8)
+                            .foregroundColor(DN.warning)
+                            .padding(.bottom, 5)
+                    }
+                }
+
+                // Colored dots per type
+                if !agentMonitor.agents.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(Array(agentMonitor.groupedAgents.prefix(4)), id: \.id) { group in
+                            Circle()
+                                .fill(group.type.brandColor)
+                                .frame(width: 5, height: 5)
+                        }
+                    }
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Widget: RAM (grid-aware)
+
+struct RAMWidget: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    private var pct: Double { monitor.ramTotal > 0 ? monitor.ramUsed / monitor.ramTotal : 0 }
+    private var color: Color {
+        if pct > 0.85 { return DN.accent }
+        if pct > 0.6  { return DN.warning }
+        return DN.success
+    }
+    var body: some View {
+        NeutralCard {
+            HStack(spacing: DN.spaceSM) {
+                ZStack {
+                    ForEach(0..<20, id: \.self) { i in
+                        let angle = Angle.degrees(135 + Double(i) * (270.0 / 20.0))
+                        let filled = Double(i) / 20.0 < pct
+                        Capsule()
+                            .fill(filled ? color : Color.white.opacity(0.06))
+                            .frame(width: 1.5, height: 4)
+                            .offset(y: -16)
+                            .rotationEffect(angle)
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .animation(.easeOut(duration: 0.5), value: pct)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RAM").font(DN.label(7)).tracking(1.2).foregroundColor(DN.textDisabled)
+                    Text("\(Int(pct * 100))%").font(DN.mono(14, weight: .light)).foregroundColor(DN.textDisplay)
+                    Text(String(format: "%.1f/%.0fGB", monitor.ramUsed/1e9, monitor.ramTotal/1e9))
+                        .font(DN.mono(7)).foregroundColor(DN.textDisabled)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Widget: Disk
+
+struct DiskWidget: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    private var pct: Double { monitor.diskTotal > 0 ? monitor.diskUsed / monitor.diskTotal : 0 }
+    private var color: Color {
+        if pct > 0.9  { return DN.accent }
+        if pct > 0.75 { return DN.warning }
+        return DN.textSecondary
+    }
+    var body: some View {
+        NeutralCard {
+            HStack(spacing: DN.spaceSM) {
+                ZStack {
+                    Circle().stroke(Color.white.opacity(0.06), lineWidth: 3).frame(width: 36, height: 36)
+                    Circle().trim(from: 0, to: pct)
+                        .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .frame(width: 36, height: 36)
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 40, height: 40)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("DISK").font(DN.label(7)).tracking(1.2).foregroundColor(DN.textDisabled)
+                    Text("\(Int(pct * 100))%").font(DN.mono(14, weight: .light)).foregroundColor(DN.textDisplay)
+                    Text(String(format: "%.0f/%.0fGB", monitor.diskUsed/1e9, monitor.diskTotal/1e9))
+                        .font(DN.mono(7)).foregroundColor(DN.textDisabled)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Widget: Network
+
+struct NetworkWidget: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    var body: some View {
+        NeutralCard {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down").font(.system(size: 8, weight: .bold)).foregroundColor(DN.success)
+                    Text("DOWN").font(DN.label(6)).tracking(0.8).foregroundColor(DN.textDisabled)
+                    Spacer()
+                    Text(fmtBytes(monitor.netDown)).font(DN.mono(9, weight: .medium)).foregroundColor(DN.success)
+                }
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up").font(.system(size: 8, weight: .bold)).foregroundColor(DN.warning)
+                    Text("UP").font(DN.label(6)).tracking(0.8).foregroundColor(DN.textDisabled)
+                    Spacer()
+                    Text(fmtBytes(monitor.netUp)).font(DN.mono(9, weight: .medium)).foregroundColor(DN.warning)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Widget: Uptime
+
+struct UptimeWidget: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    var body: some View {
+        NeutralCard {
+            HStack(spacing: DN.spaceSM) {
+                Image(systemName: "clock").font(.system(size: 14)).foregroundColor(DN.textDisabled)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("UPTIME").font(DN.label(7)).tracking(1.2).foregroundColor(DN.textDisabled)
+                    Text(monitor.uptimeString).font(DN.mono(14, weight: .light)).foregroundColor(DN.textDisplay)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// MARK: - Widget: Processes
+
+struct ProcessWidget: View {
+    @ObservedObject var monitor: SystemStatsMonitor
+    var body: some View {
+        NeutralCard {
+            HStack(spacing: DN.spaceSM) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("PROCESSES").font(DN.label(7)).tracking(1.2).foregroundColor(DN.textDisabled)
+                    Text("\(monitor.processes.count)").font(DN.mono(22, weight: .light)).foregroundColor(DN.textDisplay)
+                }
+                Spacer()
+                HStack(alignment: .bottom, spacing: 2) {
+                    ForEach(Array(monitor.processes.prefix(5).enumerated()), id: \.offset) { _, proc in
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(proc.cpu > 10 ? DN.warning : DN.textSecondary.opacity(0.5))
+                            .frame(width: 4, height: max(4, CGFloat(proc.cpu / 2)))
+                    }
+                }
+                .frame(height: 24)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+// Tracks each chip's midX in the scroll coordinate space
+// MARK: - Date strip: scroll state + trackpad interceptor
+
+private final class DateScrollState: ObservableObject {
+    @Published var offset: CGFloat = 0
+    var daysInMonth: Int = 30
+    /// chipW(26) + chipSpacing(4)
+    let stride: CGFloat = 30
+    /// Published so eventsContent and chip isSelected update immediately without a binding roundtrip
+    @Published var currentDay: Int = 1
+    var onDateChange: ((Int) -> Void)?
+    /// shadow copy: plain var (non-published) — @Published currentDay drives view updates directly
+    private var accumulator: CGFloat = 0
+    /// Scroll distance (px) needed to advance one date — half a chip stride feels snappy
+    private let threshold: CGFloat = 14
+
+    var maxOffset: CGFloat { CGFloat(max(0, daysInMonth - 1)) * stride }
+
+    /// Called on the main thread per scroll event. Advances dates in whole steps only —
+    /// no free-form position; always snaps to a date with spring animation.
+    func handleDelta(_ dx: CGFloat, isEnd: Bool = false) {
+        if isEnd {
+            // Lift fingers — ensure we're sitting exactly on a date
+            accumulator = 0
+            snapToDay(currentDay)
+            return
+        }
+        accumulator += dx
+        let steps = Int(accumulator / threshold)
+        guard steps != 0 else { return }
+        accumulator -= CGFloat(steps) * threshold
+        let target = max(1, min(daysInMonth, currentDay + steps))
+        guard target != currentDay else { return }
+        currentDay = target
+        withAnimation(.spring(response: 0.18, dampingFraction: 0.76)) {
+            offset = CGFloat(target - 1) * stride
+        }
+        onDateChange?(target)
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+    }
+
+    func snapToDay(_ day: Int) {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
+            offset = CGFloat(day - 1) * stride
+        }
+    }
+
+    func scrollTo(day: Int, animated: Bool) {
+        currentDay = day
+        accumulator = 0
+        let target = CGFloat(day - 1) * stride
+        if animated {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { offset = target }
+        } else {
+            offset = target
+        }
+    }
+}
+
+/// Invisible NSView that intercepts horizontal trackpad scroll anywhere over the strip,
+/// routes deltas to DateScrollState and consumes the event so SwiftUI doesn't also process it.
+private struct DateScrollInterceptor: NSViewRepresentable {
+    let state: DateScrollState
+
+    final class Coordinator {
+        let state: DateScrollState
+        var monitor: Any?
+        weak var view: NSView?
+
+        init(state: DateScrollState) { self.state = state }
+
+        func setup(_ v: NSView) {
+            view = v
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, let v = self.view, let win = v.window else { return event }
+                let ms = NSEvent.mouseLocation
+                let mw = win.convertPoint(fromScreen: ms)
+                let mv = v.convert(mw, from: nil)
+                guard v.bounds.contains(mv) else { return event }
+
+                // Consume but ignore momentum — snapping is driven only by direct touch
+                if event.momentumPhase != [] {
+                    return nil
+                }
+
+                let dx = event.scrollingDeltaX
+                let dy = event.scrollingDeltaY
+                // Only handle predominantly horizontal scroll
+                guard abs(dx) > abs(dy) * 0.4, abs(dx) > 0.1 else { return event }
+
+                let isEnd = event.phase == .ended || event.phase == .cancelled
+                DispatchQueue.main.async { self.state.handleDelta(dx, isEnd: isEnd) }
+                return nil  // consume — prevent inner views from also reacting
+            }
+        }
+
+        deinit { if let m = monitor { NSEvent.removeMonitor(m) } }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(state: state) }
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        context.coordinator.setup(v)
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+// Date strip card — hovers to expand upward as ONE card (no layout shift)
 struct DateStripCard: View {
     @ObservedObject var events: CalendarEventsMonitor
     @Binding var selectedDay: Int
+    var onDayTapped: (Int) -> Void = { _ in }
+
+    @StateObject private var scroll = DateScrollState()
+    @State private var isHovered = false
+
+    private let stripH: CGFloat = 62
+    private let expandH: CGFloat = 120
+    private let chipW: CGFloat = 26
+    private let chipSpacing: CGFloat = 4
 
     private var cal: Calendar { Calendar.current }
     private var today: Int { cal.component(.day, from: Date()) }
@@ -1468,33 +2291,111 @@ struct DateStripCard: View {
     private var monthName: String {
         let f = DateFormatter(); f.dateFormat = "MMM"; return f.string(from: Date()).uppercased()
     }
+    private var dayEvents: [EKEvent] { events.eventsByDay[scroll.currentDay] ?? [] }
+    private var dayLabel: String {
+        var c = cal.dateComponents([.year, .month], from: Date()); c.day = scroll.currentDay
+        guard let d = cal.date(from: c) else { return "" }
+        let f = DateFormatter(); f.dateFormat = "EEE d"; return f.string(from: d).uppercased()
+    }
 
     var body: some View {
-        NeutralCard {
-            VStack(alignment: .leading, spacing: 5) {
+        ZStack(alignment: .bottom) {
+            // Single unified card background — grows upward from fixed bottom edge
+            ZStack {
+                neutralCardBg
+                GrainOverlay(opacity: 0.35)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.white.opacity(0.07), lineWidth: 1)
+            )
+            .frame(height: isHovered ? stripH + expandH : stripH)
+
+            // Events section — top half when expanded
+            if isHovered {
+                eventsContent
+                    .frame(maxWidth: .infinity)
+                    .frame(height: expandH)
+                    .offset(y: -stripH)
+                    .transition(.opacity)
+            }
+
+            // Date strip — always visible at bottom
+            VStack(alignment: .leading, spacing: 0) {
                 Text(monthName)
                     .font(.system(size: 7, weight: .semibold))
                     .tracking(1.5)
                     .foregroundColor(.white.opacity(0.3))
+                    .padding(.horizontal, 6)
+                    .padding(.top, 6)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
+                GeometryReader { outer in
+                    let leadingPad = outer.size.width / 2 - chipW / 2
+
+                    HStack(spacing: chipSpacing) {
                         ForEach(1...daysInMonth, id: \.self) { day in
                             DayChip(
                                 day: day,
                                 isToday: day == today,
-                                isSelected: day == selectedDay,
+                                isSelected: day == scroll.currentDay,
                                 hasEvents: !(events.eventsByDay[day] ?? []).isEmpty
-                            ) { selectedDay = day }
+                            ) {
+                                scroll.scrollTo(day: day, animated: true)
+                                onDayTapped(day)
+                            }
                         }
                     }
-                    .padding(.horizontal, 1)
+                    .frame(minHeight: outer.size.height, alignment: .center)
+                    .offset(x: leadingPad - scroll.offset)
                 }
-                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+                .clipped()
+                .background(DateScrollInterceptor(state: scroll))
             }
-            .padding(4)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity)
+            .frame(height: stripH)
         }
+        .frame(height: stripH)  // layout height never changes
+        .shadow(color: isHovered ? .black.opacity(0.22) : .clear, radius: 14, x: 0, y: -8)
+        .animation(.spring(response: 0.32, dampingFraction: 0.78), value: isHovered)
+        .onHover { h in withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { isHovered = h } }
+        .onAppear {
+            scroll.daysInMonth = daysInMonth
+            scroll.currentDay = selectedDay
+            scroll.offset = CGFloat(selectedDay - 1) * scroll.stride
+            scroll.onDateChange = { day in onDayTapped(day) }
+        }
+        .onChange(of: selectedDay) { _, day in
+            // External change (e.g. calendar grid tap) → animate to new day
+            guard day != scroll.currentDay else { return }
+            scroll.scrollTo(day: day, animated: true)
+        }
+    }
+
+    private var eventsContent: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(dayLabel)
+                .font(.system(size: 7, weight: .semibold))
+                .tracking(1.5)
+                .foregroundColor(.white.opacity(0.3))
+
+            if dayEvents.isEmpty {
+                Text("No events")
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.2))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(dayEvents, id: \.eventIdentifier) { CompactEventRow(event: $0) }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 
@@ -1541,52 +2442,10 @@ private struct DayChip: View {
         .onHover { isHovered = $0 }
         .onTapGesture { action() }
         .handCursor()
-        .animation(.easeOut(duration: 0.1), value: isSelected)
+        .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 }
 
-// Right card: events for selected day
-struct EventsCard: View {
-    @ObservedObject var events: CalendarEventsMonitor
-    let selectedDay: Int
-
-    private var cal: Calendar { Calendar.current }
-    private var dayEvents: [EKEvent] { events.eventsByDay[selectedDay] ?? [] }
-    private var dayLabel: String {
-        var c = cal.dateComponents([.year, .month], from: Date()); c.day = selectedDay
-        guard let d = cal.date(from: c) else { return "" }
-        let f = DateFormatter(); f.dateFormat = "EEE d"; return f.string(from: d).uppercased()
-    }
-
-    var body: some View {
-        NeutralCard {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(dayLabel)
-                    .font(.system(size: 7, weight: .semibold))
-                    .tracking(1.5)
-                    .foregroundColor(.white.opacity(0.3))
-
-                if dayEvents.isEmpty {
-                    Spacer(minLength: 0)
-                    Text("No events")
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.2))
-                    Spacer(minLength: 0)
-                } else {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(dayEvents, id: \.eventIdentifier) { event in
-                                CompactEventRow(event: event)
-                            }
-                        }
-                    }
-                }
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        }
-    }
-}
 
 private struct CompactEventRow: View {
     let event: EKEvent
@@ -2104,6 +2963,266 @@ struct PinnedProcessView: View {
                 }
             }
             .frame(height: 24)
+        }
+    }
+}
+
+// MARK: - Widget Card Views
+// All follow the NeutralCard visual language: #111111 bg + grain overlay + white 0.07 border
+// Big numbers: Cakra-Normal (same as ClockWidget)
+// Labels: 7pt semibold, 1.5 tracking, white 0.28 opacity
+
+private func widgetLabel(_ text: String) -> some View {
+    Text(text)
+        .font(.system(size: 7, weight: .semibold))
+        .tracking(1.5)
+        .foregroundColor(.white.opacity(0.28))
+}
+
+private func widgetNumber(_ text: String, size: CGFloat = 26, color: Color = .white.opacity(0.88)) -> some View {
+    Text(text)
+        .font(.custom("Cakra-Normal", size: size))
+        .foregroundColor(color)
+        .monospacedDigit()
+}
+
+struct CPUCardWidget: View {
+    @ObservedObject var statsMonitor: SystemStatsMonitor
+
+    var body: some View {
+        NeutralCard {
+            VStack(spacing: 4) {
+                widgetNumber("\(Int(statsMonitor.cpuUsage))%", color: cpuColor)
+                widgetLabel("CPU")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var cpuColor: Color {
+        let u = statsMonitor.cpuUsage
+        if u > 80 { return Color(hexStr: "FF6B6B") }
+        if u > 50 { return Color(hexStr: "D4A843").opacity(0.9) }
+        return .white.opacity(0.88)
+    }
+}
+
+struct BatteryCardWidget: View {
+    @ObservedObject var monitor: BatteryMonitor
+
+    var body: some View {
+        NeutralCard {
+            VStack(spacing: 6) {
+                ZStack {
+                    Circle()
+                        .stroke(.white.opacity(0.1), lineWidth: 4)
+                        .frame(width: 38, height: 38)
+                    Circle()
+                        .trim(from: 0, to: CGFloat(monitor.level) / 100.0)
+                        .stroke(ringColor, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .frame(width: 38, height: 38)
+                    if monitor.isCharging {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(Color(hexStr: "D4A843"))
+                    } else {
+                        Text("\(monitor.level)%")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.75))
+                    }
+                }
+                widgetLabel("BATTERY")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var ringColor: Color {
+        if monitor.isCharging { return Color(hexStr: "D4A843") }
+        if monitor.level <= 20 { return Color(hexStr: "FF6B6B") }
+        return .white.opacity(0.72)
+    }
+}
+
+struct AgentCountCardWidget: View {
+    @ObservedObject var agentMonitor: AgentMonitor
+
+    private var runningCount: Int {
+        agentMonitor.agents.filter { $0.status == .running }.count
+    }
+
+    var body: some View {
+        NeutralCard {
+            VStack(spacing: 4) {
+                widgetNumber(
+                    "\(agentMonitor.agents.count)",
+                    color: runningCount > 0 ? Color(hexStr: "D4A843") : .white.opacity(0.88)
+                )
+                widgetLabel("AGENTS")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+struct RAMCardWidget: View {
+    @ObservedObject var statsMonitor: SystemStatsMonitor
+
+    private var usedGB: String {
+        String(format: "%.1f", statsMonitor.ramUsed / 1_073_741_824)
+    }
+    private var totalGB: String {
+        "\(Int(statsMonitor.ramTotal / 1_073_741_824))GB"
+    }
+
+    var body: some View {
+        NeutralCard {
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer(minLength: 0)
+                widgetNumber(usedGB, size: 24)
+                Text("OF \(totalGB)")
+                    .font(.system(size: 7, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundColor(.white.opacity(0.28))
+                    .padding(.top, 1)
+                Spacer(minLength: 0)
+                widgetLabel("MEMORY")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct DiskCardWidget: View {
+    @ObservedObject var statsMonitor: SystemStatsMonitor
+
+    private var usedGB: String {
+        "\(Int(statsMonitor.diskUsed / 1_073_741_824))GB"
+    }
+    private var totalGB: String {
+        "\(Int(statsMonitor.diskTotal / 1_073_741_824))GB"
+    }
+    private var fillRatio: CGFloat {
+        guard statsMonitor.diskTotal > 0 else { return 0 }
+        return CGFloat(statsMonitor.diskUsed / statsMonitor.diskTotal)
+    }
+
+    var body: some View {
+        NeutralCard {
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer(minLength: 0)
+
+                HStack(alignment: .lastTextBaseline, spacing: 3) {
+                    widgetNumber(usedGB, size: 20)
+                    Text("/ \(totalGB)")
+                        .font(.system(size: 7, weight: .semibold))
+                        .tracking(0.8)
+                        .foregroundColor(.white.opacity(0.28))
+                }
+
+                // Fill bar
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.08)).frame(height: 3)
+                        Capsule()
+                            .fill(fillRatio > 0.85 ? Color(hexStr: "FF6B6B") : .white.opacity(0.55))
+                            .frame(width: g.size.width * fillRatio, height: 3)
+                    }
+                }
+                .frame(height: 3)
+                .padding(.top, 6)
+
+                Spacer(minLength: 0)
+                widgetLabel("STORAGE")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct NetworkCardWidget: View {
+    @ObservedObject var statsMonitor: SystemStatsMonitor
+
+    var body: some View {
+        NeutralCard {
+            VStack(alignment: .leading, spacing: 6) {
+                Spacer(minLength: 0)
+
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 7, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.35))
+                    Text(formatBytes(statsMonitor.netUp))
+                        .font(.custom("Cakra-Normal", size: 14))
+                        .foregroundColor(.white.opacity(0.82))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.down")
+                        .font(.system(size: 7, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.35))
+                    Text(formatBytes(statsMonitor.netDown))
+                        .font(.custom("Cakra-Normal", size: 14))
+                        .foregroundColor(.white.opacity(0.82))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+                widgetLabel("NETWORK")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+
+    private func formatBytes(_ bps: Double) -> String {
+        if bps < 1024 { return "0 KB/s" }
+        if bps < 1_048_576 { return String(format: "%.0f KB/s", bps / 1024) }
+        return String(format: "%.1f MB/s", bps / 1_048_576)
+    }
+}
+
+struct UptimeCardWidget: View {
+    @ObservedObject var statsMonitor: SystemStatsMonitor
+
+    private var uptimeStr: String {
+        let t = Int(statsMonitor.uptime)
+        let h = t / 3600
+        let m = (t % 3600) / 60
+        if h >= 24 { return "\(h / 24)d \(h % 24)h" }
+        return String(format: "%dh %02dm", h, m)
+    }
+
+    var body: some View {
+        NeutralCard {
+            VStack(spacing: 4) {
+                widgetNumber(uptimeStr, size: 18)
+                widgetLabel("UPTIME")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+struct ProcessesCardWidget: View {
+    @ObservedObject var statsMonitor: SystemStatsMonitor
+
+    var body: some View {
+        NeutralCard {
+            VStack(spacing: 4) {
+                widgetNumber("\(statsMonitor.processCount)")
+                widgetLabel("PROCESSES")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }

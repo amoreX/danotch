@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 class DanotchPanel: NSPanel {
     override init(
@@ -50,6 +51,10 @@ class NotchWindowController: NSObject {
     var collapseTimer: Timer?
     var nudgeTimer: Timer?
     var swipeAccumulator: CGFloat = 0
+    private var cancellables: Set<AnyCancellable> = []
+
+    private let normalPanelWidth: CGFloat = 660
+    private let editModePanelWidth: CGFloat = 1060  // 660 + 400
 
     init(viewModel: NotchViewModel) {
         self.viewModel = viewModel
@@ -62,12 +67,11 @@ class NotchWindowController: NSObject {
             return
         }
 
-        let panelWidth: CGFloat = 660
-        let panelHeight: CGFloat = 400
+        let panelHeight: CGFloat = 520
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow]
 
         let panel = DanotchPanel(
-            contentRect: NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight),
+            contentRect: NSRect(x: 0, y: 0, width: normalPanelWidth, height: panelHeight),
             styleMask: styleMask,
             backing: .buffered,
             defer: false
@@ -85,6 +89,7 @@ class NotchWindowController: NSObject {
 
         startMouseTracking()
         startKeyboardShortcut()
+        observeEditMode()
 
         // Auto-expand on first launch for unauthenticated users
         if !viewModel.isAuthenticated {
@@ -99,6 +104,30 @@ class NotchWindowController: NSObject {
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
         )
+    }
+
+    private func observeEditMode() {
+        viewModel.$isWidgetEditMode
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isEditing in
+                guard let self, let screen = NSScreen.main else { return }
+                let targetWidth = isEditing ? self.editModePanelWidth : self.normalPanelWidth
+                let currentHeight = self.panel.frame.height
+                let newOriginX = screen.frame.origin.x + (screen.frame.width / 2) - targetWidth / 2
+                let newOriginY = self.panel.frame.origin.y
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.25
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                    self.panel.animator().setFrame(
+                        NSRect(x: newOriginX, y: newOriginY, width: targetWidth, height: currentHeight),
+                        display: true
+                    )
+                }
+                if isEditing {
+                    self.panel.ignoresMouseEvents = false
+                }
+            }
+            .store(in: &cancellables)
     }
 
     private func positionPanel(on screen: NSScreen) {
@@ -262,6 +291,8 @@ class NotchWindowController: NSObject {
                    viewModel.settings.keepOpenInChat {
                     return
                 }
+                // Don't auto-collapse while in widget edit mode
+                if viewModel.isWidgetEditMode { return }
                 // Instant collapse — no delay
                 collapse()
             }

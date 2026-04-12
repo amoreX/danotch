@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import IOKit.ps
 
 struct NotchShellView: View {
     @ObservedObject var viewModel: NotchViewModel
@@ -12,8 +11,15 @@ struct NotchShellView: View {
     private var notchH: CGFloat { screen.notchHeight }
     private var expanded: Bool { viewModel.isExpanded }
 
-    private let expandedWidth:  CGFloat = 540
-    private let expandedHeight: CGFloat = 320
+    private let notchContentWidth: CGFloat = 540
+    private let widgetEditPanelWidth: CGFloat = 400
+
+    private var expandedWidth: CGFloat {
+        viewModel.isWidgetEditMode ? notchContentWidth + widgetEditPanelWidth : notchContentWidth
+    }
+    private var expandedHeight: CGFloat {
+        viewModel.settings.notchExpandedHeight
+    }
 
     // Single source of truth — all size derived from viewModel.notchSize
     private var shapeWidth: CGFloat {
@@ -115,6 +121,11 @@ struct NotchShellView: View {
                     style: .continuous
                 )
             )
+            .shadow(
+                color: .black.opacity(viewModel.notchSize == .expanded ? 0.55 : 0),
+                radius: viewModel.notchSize == .expanded ? 28 : 0,
+                y: viewModel.notchSize == .expanded ? 10 : 0
+            )
         }
         .onHover { hovering in
             viewModel.mouseInContent = hovering
@@ -133,6 +144,7 @@ struct NotchShellView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.spring(response: 0.3, dampingFraction: 0.75), value: viewModel.notchSize)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: viewModel.isWidgetEditMode)
         .animation(.easeOut(duration: 0.25), value: viewModel.isPeeking)
         .animation(.easeOut(duration: 0.2), value: viewModel.peekHovering)
         .animation(.easeOut(duration: 0.18), value: viewModel.viewState)
@@ -160,17 +172,34 @@ struct NotchShellView: View {
 
     @ViewBuilder
     private var expandedContent: some View {
-        switch viewModel.viewState {
-        case .overview, .taskList, .agentChat:
-            NotchContentView(viewModel: viewModel)
-        case .stats:
-            StatsPanel(viewModel: viewModel)
-        case .processList:
-            ProcessListPanel(viewModel: viewModel)
-        case .settings:
-            SettingsPanel(viewModel: viewModel)
-        case .notifications:
-            NotificationsPanel(viewModel: viewModel)
+        if viewModel.isWidgetEditMode {
+            HStack(spacing: 0) {
+                NotchContentView(viewModel: viewModel)
+                    .frame(width: notchContentWidth - 8)  // subtract the 4px horizontal padding each side
+
+                Rectangle()
+                    .fill(DN.border)
+                    .frame(width: 1)
+                    .padding(.vertical, DN.spaceXS)
+
+                WidgetEditPanel(viewModel: viewModel)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .transition(.opacity)
+        } else {
+            switch viewModel.viewState {
+            case .overview, .taskList, .agentChat:
+                NotchContentView(viewModel: viewModel)
+            case .stats:
+                StatsPanel(viewModel: viewModel)
+            case .processList:
+                ProcessListPanel(viewModel: viewModel)
+            case .settings:
+                SettingsPanel(viewModel: viewModel)
+            case .notifications:
+                NotificationsPanel(viewModel: viewModel)
+            }
         }
     }
 
@@ -263,7 +292,7 @@ struct NotchShellView: View {
                 }
 
                 if viewModel.settings.showBattery {
-                    BatteryView()
+                    BatteryView(monitor: viewModel.batteryMonitor)
                         .padding(.leading, 4)
                 }
                 Spacer().frame(width: 4)
@@ -351,6 +380,7 @@ private struct NavTabButton<Label: View>: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
         .handCursor()
+        .animation(.spring(response: 0.28, dampingFraction: 0.75), value: active)
         .animation(.easeOut(duration: 0.12), value: isHovered)
     }
 }
@@ -376,13 +406,11 @@ private struct NotchCornerRight: Shape {
 // MARK: - Battery
 
 struct BatteryView: View {
-    @State private var level: Int = 0
-    @State private var isCharging: Bool = false
-    @State private var timer: Timer?
+    @ObservedObject var monitor: BatteryMonitor
 
     var body: some View {
         HStack(spacing: DN.spaceXS) {
-            Text("\(level)%")
+            Text("\(monitor.level)%")
                 .font(DN.mono(9))
                 .foregroundColor(DN.textSecondary)
                 .fixedSize()
@@ -394,7 +422,7 @@ struct BatteryView: View {
 
                 RoundedRectangle(cornerRadius: 1)
                     .fill(batteryColor)
-                    .frame(width: max(CGFloat(level) / 100.0 * 15, 2), height: 6)
+                    .frame(width: max(CGFloat(monitor.level) / 100.0 * 15, 2), height: 6)
                     .padding(.leading, 1.5)
 
                 RoundedRectangle(cornerRadius: 0.5)
@@ -403,35 +431,18 @@ struct BatteryView: View {
                     .offset(x: 18.5)
             }
 
-            if isCharging {
+            if monitor.isCharging {
                 Image(systemName: "bolt.fill")
                     .font(.system(size: 7))
                     .foregroundColor(DN.textPrimary)
             }
         }
-        .onAppear {
-            updateBattery()
-            timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
-                DispatchQueue.main.async { updateBattery() }
-            }
-        }
-        .onDisappear { timer?.invalidate() }
     }
 
     private var batteryColor: Color {
-        if isCharging { return DN.textPrimary }
-        if level <= 20 { return DN.accent }
+        if monitor.isCharging { return DN.textPrimary }
+        if monitor.level <= 20 { return DN.accent }
         return DN.textSecondary
-    }
-
-    private func updateBattery() {
-        let snapshot = IOPSCopyPowerSourcesInfo().takeRetainedValue()
-        let sources = IOPSCopyPowerSourcesList(snapshot).takeRetainedValue() as [CFTypeRef]
-        for source in sources {
-            guard let desc = IOPSGetPowerSourceDescription(snapshot, source).takeUnretainedValue() as? [String: Any] else { continue }
-            if let capacity = desc[kIOPSCurrentCapacityKey] as? Int { level = capacity }
-            if let charging = desc[kIOPSIsChargingKey] as? Bool { isCharging = charging }
-        }
     }
 }
 
@@ -714,19 +725,40 @@ struct SettingsPanel: View {
                     }
 
                     SettingsSection(title: "WIDGETS") {
-                        ForEach(PinnedWidget.allCases, id: \.rawValue) { widget in
-                            widgetToggleRow(widget)
-                        }
+                        Button(action: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                viewModel.viewState = .overview
+                                viewModel.isWidgetEditMode = true
+                            }
+                        }) {
+                            HStack(spacing: DN.spaceSM) {
+                                Image(systemName: "square.grid.2x2")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundColor(DN.accent)
+                                    .frame(width: 18)
 
-                        HStack {
-                            Spacer()
-                            Text("MAX 3 WIDGETS")
-                                .font(DN.label(7))
-                                .tracking(0.8)
-                                .foregroundColor(DN.textDisabled)
-                            Spacer()
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("Edit Widgets")
+                                        .font(DN.body(11))
+                                        .foregroundColor(DN.textPrimary)
+                                    Text("\(viewModel.settings.widgetSlots.count) active · tap to add or remove")
+                                        .font(DN.mono(8))
+                                        .foregroundColor(DN.textDisabled)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(DN.textDisabled)
+                            }
+                            .padding(.horizontal, DN.spaceSM)
+                            .padding(.vertical, 8)
+                            .background(DN.surface)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, DN.spaceXS)
+                        .buttonStyle(.plain)
                     }
 
                     SettingsSection(title: "DISPLAY") {
@@ -759,6 +791,50 @@ struct SettingsPanel: View {
                         }
                     }
 
+                    SettingsSection(title: "MUSIC") {
+                        HStack(spacing: DN.spaceSM) {
+                            Image(systemName: "music.note")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(DN.textDisabled)
+                                .frame(width: 18)
+
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Music source")
+                                    .font(DN.body(11))
+                                    .foregroundColor(DN.textPrimary)
+                                Text("Which app to show now playing from")
+                                    .font(DN.mono(8))
+                                    .foregroundColor(DN.textDisabled)
+                            }
+
+                            Spacer()
+
+                            HStack(spacing: 2) {
+                                ForEach(MusicSource.allCases, id: \.rawValue) { src in
+                                    Button(src.label) {
+                                        viewModel.settings.musicSource = src
+                                    }
+                                    .font(DN.label(7))
+                                    .tracking(0.5)
+                                    .foregroundColor(viewModel.settings.musicSource == src ? DN.textDisplay : DN.textDisabled)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                            .fill(viewModel.settings.musicSource == src ? Color.white.opacity(0.1) : Color.clear)
+                                    )
+                                    .buttonStyle(.plain)
+                                    .handCursor()
+                                }
+                            }
+                            .padding(2)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(DN.surface))
+                        }
+                        .padding(.horizontal, DN.spaceSM)
+                        .padding(.vertical, 6)
+                        .background(DN.surface)
+                    }
+
                     SettingsSection(title: "AGENTS") {
                         SettingsToggleRow(
                             icon: "waveform",
@@ -782,39 +858,151 @@ struct SettingsPanel: View {
         }
     }
 
-    @ViewBuilder
-    private func widgetToggleRow(_ widget: PinnedWidget) -> some View {
-        let isPinned = viewModel.settings.pinnedWidgets.contains(widget)
-        let atMax = viewModel.settings.pinnedWidgets.count >= 3
-        SettingsToggleRow(
-            icon: widget.icon,
-            title: widget.label,
-            subtitle: widgetSubtitle(widget),
-            isOn: Binding(
-                get: { viewModel.settings.pinnedWidgets.contains(widget) },
-                set: { newValue in
-                    withAnimation(.easeOut(duration: DN.microDuration)) {
-                        if !newValue {
-                            viewModel.settings.pinnedWidgets.removeAll { $0 == widget }
-                        } else if viewModel.settings.pinnedWidgets.count < 3 {
-                            viewModel.settings.pinnedWidgets.append(widget)
+}
+
+// MARK: - Widget Edit Panel
+
+struct WidgetEditPanel: View {
+    @ObservedObject var viewModel: NotchViewModel
+    @State private var searchText: String = ""
+
+    private var inactiveWidgets: [PinnedWidget] {
+        let active = Set(viewModel.settings.widgetSlots.map { $0.type })
+        let all = PinnedWidget.allCases.filter { !active.contains($0) }
+        guard !searchText.isEmpty else { return all }
+        return all.filter { $0.label.lowercased().contains(searchText.lowercased()) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("ADD WIDGETS")
+                    .font(DN.label(9))
+                    .tracking(1.0)
+                    .foregroundColor(DN.textSecondary)
+
+                Spacer()
+
+                Button(action: {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        viewModel.isWidgetEditMode = false
+                    }
+                }) {
+                    Text("DONE")
+                        .font(DN.label(8))
+                        .tracking(0.6)
+                        .foregroundColor(DN.accent)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(DN.accent.opacity(0.4), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.bottom, DN.spaceSM)
+
+            // Search bar
+            HStack(spacing: DN.spaceXS) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundColor(DN.textDisabled)
+
+                TextField("Search widgets...", text: $searchText)
+                    .font(DN.body(11))
+                    .foregroundColor(DN.textPrimary)
+                    .textFieldStyle(.plain)
+
+                if !searchText.isEmpty {
+                    Button(action: { searchText = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundColor(DN.textDisabled)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(DN.surface))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(DN.border, lineWidth: 1))
+            .padding(.bottom, DN.spaceSM)
+
+            // Inactive widget list
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 1) {
+                    if inactiveWidgets.isEmpty {
+                        VStack(spacing: DN.spaceXS) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 20))
+                                .foregroundColor(DN.success.opacity(0.6))
+                            Text(searchText.isEmpty ? "All widgets active" : "No matches")
+                                .font(DN.body(10))
+                                .foregroundColor(DN.textDisabled)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, DN.spaceMD)
+                    } else {
+                        ForEach(inactiveWidgets, id: \.rawValue) { widget in
+                            Button(action: {
+                                withAnimation(.easeOut(duration: DN.microDuration)) {
+                                    viewModel.settings.widgetSlots.append(
+                                        WidgetSlot(type: widget, size: widget.defaultSize)
+                                    )
+                                }
+                            }) {
+                                HStack(spacing: DN.spaceSM) {
+                                    Image(systemName: widget.icon)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor(DN.textSecondary)
+                                        .frame(width: 18)
+
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(widget.label)
+                                            .font(DN.body(11))
+                                            .foregroundColor(DN.textPrimary)
+                                        Text(widgetSubtitle(widget))
+                                            .font(DN.mono(8))
+                                            .foregroundColor(DN.textDisabled)
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "plus.circle")
+                                        .font(.system(size: 13))
+                                        .foregroundColor(DN.accent)
+                                }
+                                .padding(.horizontal, DN.spaceSM)
+                                .padding(.vertical, 6)
+                                .background(DN.surface)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
-            )
-        )
-        .opacity(!isPinned && atMax ? 0.4 : 1.0)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+        }
+        .padding(.leading, DN.spaceSM)
     }
 
     private func widgetSubtitle(_ w: PinnedWidget) -> String {
         switch w {
-        case .calendar: return "Date grid on overview"
-        case .music: return "Now playing controls"
-        case .ram: return "Memory usage gauge"
-        case .disk: return "Storage usage ring"
-        case .network: return "Upload & download speeds"
-        case .uptime: return "System uptime counter"
-        case .processes: return "Running process count"
+        case .clock:      return "Digital clock & date"
+        case .calendar:   return "Date strip & events"
+        case .music:      return "Now playing controls"
+        case .cpu:        return "CPU usage gauge"
+        case .battery:    return "Battery level ring"
+        case .agentCount: return "Running AI agents"
+        case .ram:        return "Memory usage"
+        case .disk:       return "Storage usage"
+        case .network:    return "Upload & download speeds"
+        case .uptime:     return "System uptime counter"
+        case .processes:  return "Running process count"
         }
     }
 }
