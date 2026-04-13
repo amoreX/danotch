@@ -245,6 +245,24 @@ struct ScheduledTask: Identifiable {
     let notifyUser: Bool
 }
 
+// MARK: - Connection Requests
+
+enum ConnectionRequestStatus: String {
+    case pending
+    case connecting
+    case approved
+    case denied
+}
+
+struct PendingConnectionRequest {
+    let requestId: String
+    let sessionId: String
+    let appType: String
+    let displayName: String
+    let reason: String
+    var status: ConnectionRequestStatus
+}
+
 struct NotificationItem: Identifiable {
     let id: String
     let title: String

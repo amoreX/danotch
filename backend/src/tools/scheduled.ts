@@ -1,16 +1,16 @@
-import type Anthropic from '@anthropic-ai/sdk';
+import type { CanonicalTool } from '../providers/types.js';
 import { supabase } from '../lib/supabase.js';
 import { computeNextRun, isValidCron, cronToHuman, scheduleToHuman } from '../scheduler/compute-next.js';
 
-// ── Tool Definitions (Anthropic format) ──
+// ── Tool Definitions ──
 
-export const scheduledTaskTools: Anthropic.Tool[] = [
+export const scheduledTaskTools: CanonicalTool[] = [
   {
     name: 'create_scheduled_task',
     description:
       'Create a recurring scheduled task that runs automatically. Use this when the user asks you to do something on a schedule, e.g. "check my emails every morning", "summarize my day at 6pm", "remind me every hour". You must translate the user\'s request into a cron expression or poll interval.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
         name: { type: 'string', description: 'Short descriptive name for the task (e.g. "Morning email summary")' },
         prompt: {
@@ -32,7 +32,7 @@ export const scheduledTaskTools: Anthropic.Tool[] = [
         },
         target_app: {
           type: 'string',
-          description: 'Optional: the app this task targets (gmail, googlecalendar, googledocs, linear). Null for general tasks.',
+          description: 'Optional: the app this task targets (gmail, googlecalendar, googledocs, github). Null for general tasks.',
         },
         notify_user: {
           type: 'boolean',
@@ -46,7 +46,7 @@ export const scheduledTaskTools: Anthropic.Tool[] = [
     name: 'list_scheduled_tasks',
     description: "List all of the user's scheduled tasks with their status, schedule, and next run time.",
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {},
     },
   },
@@ -54,7 +54,7 @@ export const scheduledTaskTools: Anthropic.Tool[] = [
     name: 'update_scheduled_task',
     description: 'Update an existing scheduled task. Can enable/disable, change the schedule, or modify the prompt.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
         id: { type: 'string', description: 'The task ID to update' },
         enabled: { type: 'boolean', description: 'Enable or disable the task' },
@@ -70,7 +70,7 @@ export const scheduledTaskTools: Anthropic.Tool[] = [
     name: 'delete_scheduled_task',
     description: 'Permanently delete a scheduled task.',
     input_schema: {
-      type: 'object' as const,
+      type: 'object',
       properties: {
         id: { type: 'string', description: 'The task ID to delete' },
       },

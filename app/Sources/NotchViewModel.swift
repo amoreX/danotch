@@ -294,9 +294,16 @@ class NotchViewModel: ObservableObject {
     var authManager: AuthManager?
     @Published var isAuthenticated: Bool = AuthManager.shared.isAuthenticated
 
-    // Gmail connection state
-    @Published var gmailConnected = false
-    @Published var gmailLoading = false
+    // App connection states (keyed by app_type: gmail, googlecalendar, googledocs, linear)
+    @Published var appConnected: [String: Bool] = [:]
+    @Published var appLoading: [String: Bool] = [:]
+    @Published var appError: [String: String?] = [:]
+
+    // WebSocket send callback (set by WebSocketServer)
+    var wsSend: (([String: Any]) -> Void)?
+
+    // Pending connection requests from agent (requestId → metadata)
+    @Published var pendingConnectionRequests: [String: PendingConnectionRequest] = [:]
 
     @Published var settings = NotchSettings()
     @Published var agentMonitor = AgentMonitor()
@@ -735,57 +742,72 @@ class NotchViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Gmail
+    // MARK: - App Connections (Generic)
 
-    func checkGmailStatus() {
+    func checkAppStatus(_ appType: String) {
         guard let auth = authManager else { return }
-        gmailLoading = true
+        appLoading[appType] = true
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else {
-                await MainActor.run { self.gmailLoading = false }
+                await MainActor.run { self.appLoading[appType] = false }
                 return
             }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/gmail/status")!)
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/apps/\(appType)/status")!)
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
             guard let (data, _) = try? await URLSession.shared.data(for: request),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let connected = json["connected"] as? Bool else {
-                await MainActor.run { self.gmailLoading = false }
+                await MainActor.run { self.appLoading[appType] = false }
                 return
             }
             await MainActor.run {
-                self.gmailConnected = connected
-                self.gmailLoading = false
+                self.appConnected[appType] = connected
+                self.appLoading[appType] = false
             }
         }
     }
 
-    func connectGmail() {
+    func connectApp(_ appType: String) {
         guard let auth = authManager else { return }
-        gmailLoading = true
+        appLoading[appType] = true
+        appError[appType] = nil
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else {
-                await MainActor.run { self.gmailLoading = false }
+                await MainActor.run {
+                    self.appError[appType] = "Not authenticated"
+                    self.appLoading[appType] = false
+                }
                 return
             }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/gmail/connect")!)
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/apps/\(appType)/connect")!)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
             guard let (data, _) = try? await URLSession.shared.data(for: request),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                await MainActor.run { self.gmailLoading = false }
+                await MainActor.run {
+                    self.appError[appType] = "Failed to reach server"
+                    self.appLoading[appType] = false
+                }
+                return
+            }
+
+            if let error = json["error"] as? String {
+                await MainActor.run {
+                    self.appError[appType] = error
+                    self.appLoading[appType] = false
+                }
                 return
             }
 
             if json["already_connected"] as? Bool == true {
                 await MainActor.run {
-                    self.gmailConnected = true
-                    self.gmailLoading = false
+                    self.appConnected[appType] = true
+                    self.appLoading[appType] = false
                 }
                 return
             }
@@ -794,45 +816,45 @@ class NotchViewModel: ObservableObject {
                let url = URL(string: redirectUrl) {
                 await MainActor.run {
                     NSWorkspace.shared.open(url)
-                    self.gmailLoading = false
+                    self.appLoading[appType] = false
                 }
                 // Poll for connection after user completes OAuth
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                self.checkGmailStatus()
+                self.checkAppStatus(appType)
                 return
             }
 
             // Auto-connected (no redirect needed)
             if json["connected"] as? Bool == true {
                 await MainActor.run {
-                    self.gmailConnected = true
-                    self.gmailLoading = false
+                    self.appConnected[appType] = true
+                    self.appLoading[appType] = false
                 }
                 return
             }
 
-            await MainActor.run { self.gmailLoading = false }
+            await MainActor.run { self.appLoading[appType] = false }
         }
     }
 
-    func disconnectGmail() {
+    func disconnectApp(_ appType: String) {
         guard let auth = authManager else { return }
-        gmailLoading = true
+        appLoading[appType] = true
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else {
-                await MainActor.run { self.gmailLoading = false }
+                await MainActor.run { self.appLoading[appType] = false }
                 return
             }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/gmail/disconnect")!)
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/apps/\(appType)/disconnect")!)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
             _ = try? await URLSession.shared.data(for: request)
             await MainActor.run {
-                self.gmailConnected = false
-                self.gmailLoading = false
+                self.appConnected[appType] = false
+                self.appLoading[appType] = false
             }
         }
     }
@@ -846,7 +868,107 @@ class NotchViewModel: ObservableObject {
         case "task_summary": processBulkUpdate(json)
         case "notification": processNotification(json)
         case "peek_notification": processPeekNotification(json)
+        case "connection_request": processConnectionRequest(json)
         default: break
+        }
+    }
+
+    private func processConnectionRequest(_ json: [String: Any]) {
+        guard let requestId = json["request_id"] as? String,
+              let sessionId = json["session_id"] as? String,
+              let appType = json["app_type"] as? String,
+              let displayName = json["display_name"] as? String,
+              let reason = json["reason"] as? String else { return }
+
+        let request = PendingConnectionRequest(
+            requestId: requestId, sessionId: sessionId,
+            appType: appType, displayName: displayName,
+            reason: reason, status: .pending
+        )
+        pendingConnectionRequests[requestId] = request
+
+        // Add to the task's chat history as a special message
+        if let idx = tasks.firstIndex(where: { $0.id == sessionId }) {
+            withAnimation(.snappy(duration: 0.3)) {
+                tasks[idx].chatHistory.append(ChatMessage(
+                    id: requestId, role: "connection_request",
+                    content: reason, toolName: appType,
+                    toolInput: displayName, toolOutput: nil,
+                    draftCard: nil, timestamp: Date()
+                ))
+            }
+        }
+    }
+
+    func approveConnectionRequest(_ requestId: String) {
+        guard var request = pendingConnectionRequests[requestId] else { return }
+        request.status = .connecting
+        pendingConnectionRequests[requestId] = request
+
+        // Update the chat message to show connecting state
+        updateConnectionRequestMessage(requestId, status: .connecting)
+
+        let appType = request.appType
+
+        // Start the OAuth connection flow
+        connectApp(appType)
+
+        // Poll until connected, then send response
+        Task {
+            var attempts = 0
+            while attempts < 24 { // 120s total (24 × 5s)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                attempts += 1
+
+                if await MainActor.run(body: { self.appConnected[appType] == true }) {
+                    await MainActor.run {
+                        self.pendingConnectionRequests[requestId]?.status = .approved
+                        self.updateConnectionRequestMessage(requestId, status: .approved)
+                        self.wsSend?([
+                            "type": "connection_response",
+                            "request_id": requestId,
+                            "approved": true,
+                        ])
+                    }
+                    return
+                }
+            }
+
+            // Timed out waiting for connection
+            await MainActor.run {
+                self.pendingConnectionRequests[requestId]?.status = .denied
+                self.updateConnectionRequestMessage(requestId, status: .denied)
+                self.wsSend?([
+                    "type": "connection_response",
+                    "request_id": requestId,
+                    "approved": false,
+                ])
+            }
+        }
+    }
+
+    func denyConnectionRequest(_ requestId: String) {
+        guard var request = pendingConnectionRequests[requestId] else { return }
+        request.status = .denied
+        pendingConnectionRequests[requestId] = request
+
+        updateConnectionRequestMessage(requestId, status: .denied)
+
+        wsSend?([
+            "type": "connection_response",
+            "request_id": requestId,
+            "approved": false,
+        ])
+    }
+
+    private func updateConnectionRequestMessage(_ requestId: String, status: ConnectionRequestStatus) {
+        guard let request = pendingConnectionRequests[requestId],
+              let taskIdx = tasks.firstIndex(where: { $0.id == request.sessionId }),
+              let msgIdx = tasks[taskIdx].chatHistory.firstIndex(where: { $0.id == requestId }) else { return }
+
+        withAnimation(.snappy(duration: 0.2)) {
+            // Store the status in toolOutput so the UI can read it
+            tasks[taskIdx].chatHistory[msgIdx].toolOutput = status.rawValue
         }
     }
 
@@ -908,6 +1030,14 @@ class NotchViewModel: ObservableObject {
             switch progressType {
             case "token":
                 if let text = data["text"] as? String { tasks[idx].streamingText += text }
+            case "text_flush":
+                if let text = data["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    tasks[idx].chatHistory.append(ChatMessage(
+                        id: UUID().uuidString, role: "agent", content: text,
+                        toolName: nil, draftCard: nil, timestamp: Date()
+                    ))
+                    tasks[idx].streamingText = ""
+                }
             case "tool_start":
                 let toolName = data["tool_name"] as? String
                 let toolInput = data["tool_input"] as? String
@@ -941,6 +1071,7 @@ class NotchViewModel: ObservableObject {
             tasks[idx].status = TaskStatus(rawValue: statusStr) ?? .completed
             tasks[idx].completedAt = Date()
             tasks[idx].currentToolName = nil
+            tasks[idx].streamingText = ""
             if let result = data["result"] as? String {
                 tasks[idx].result = result
                 // Add agent response to chat history

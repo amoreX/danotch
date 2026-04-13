@@ -15,5 +15,8 @@ ghost-desktop-mono/
 # Env
 .env
 
+# Docs
+docs/
+
 # OS
 .DS_Store

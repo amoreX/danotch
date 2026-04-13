@@ -10,7 +10,7 @@ const anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const SUPPORTED_APPS = ['gmail', 'googlecalendar', 'googledocs', 'linear'];
+const SUPPORTED_APPS = ['gmail', 'googlecalendar', 'googledocs', 'github'];
 
 export function createAuthRoutes(): Router {
   const router = Router();

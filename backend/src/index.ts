@@ -5,7 +5,8 @@ import { createTaskRoutes } from './routes/tasks.js';
 import { createAuthRoutes } from './routes/auth.js';
 import { createScheduledRoutes } from './routes/scheduled.js';
 import { createNotificationRoutes } from './routes/notifications.js';
-import { createGmailRoutes } from './routes/gmail.js';
+import { createAppRoutes } from './routes/apps.js';
+import { createProviderRoutes } from './routes/provider.js';
 import { startScheduler, stopScheduler } from './scheduler/index.js';
 import { config } from './config.js';
 
@@ -33,7 +34,8 @@ app.use('/auth', createAuthRoutes());
 app.use('/api', createTaskRoutes(notch));
 app.use('/api/scheduled', createScheduledRoutes());
 app.use('/api/notifications', createNotificationRoutes());
-app.use('/api/gmail', createGmailRoutes());
+app.use('/api/apps', createAppRoutes());
+app.use('/api/provider', createProviderRoutes());
 
 app.listen(config.port, () => {
   console.log(`[danotch-backend] http://localhost:${config.port}`);

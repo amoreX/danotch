@@ -1,10 +1,8 @@
 import { supabase } from '../lib/supabase.js';
 import { computeNextRun } from './compute-next.js';
 import type { NotchBridge } from '../events/notch.js';
-import Anthropic from '@anthropic-ai/sdk';
+import { getProviderForUser } from '../providers/factory.js';
 import { config } from '../config.js';
-
-const anthropic = new Anthropic();
 
 const TICK_INTERVAL = 30_000; // 30 seconds
 
@@ -85,36 +83,35 @@ async function executeTask(task: Record<string, unknown>, notch: NotchBridge) {
   let errorMsg: string | undefined;
   let shouldNotify = false;
 
+  // Resolve the user's LLM provider (BYOK or server fallback)
+  let providerName = 'unknown';
   try {
+    const provider = await getProviderForUser(userId);
+    providerName = `${provider.providerName}/${provider.modelId}`;
+
     // Build system prompt
     let systemPrompt = `You are running a scheduled task inside Danotch. The user set this up to run automatically. Be concise and actionable. Task name: "${taskName}".`;
 
     // For conditional notify tasks, add [NOTIFY]/[SKIP] instruction
     let actualPrompt = prompt;
     if (notifyUser) {
-      // Check if the prompt implies a condition (contains words like "if", "when", "threshold", "above", "below", "reaches")
       const conditionWords = /\b(if|when|unless|threshold|above|below|reaches|exceeds|drops|falls|greater|less|more than|fewer)\b/i;
       const isConditional = conditionWords.test(prompt);
 
       if (isConditional) {
         actualPrompt = `${prompt}\n\nIMPORTANT: Evaluate the condition in the task. If the condition IS met, start your response with [NOTIFY]. If NOT met, start with [SKIP] and briefly note the current state.`;
       } else {
-        // Non-conditional notify task — always notify (e.g. "give me fun facts", "write me a poem")
         actualPrompt = `${prompt}\n\nStart your response with [NOTIFY] — the user wants to be notified with your output.`;
       }
     }
 
-    const response = await anthropic.messages.create({
-      model: config.api.model,
-      max_tokens: config.api.maxTokens,
-      system: systemPrompt,
+    const result = await provider.complete({
       messages: [{ role: 'user', content: actualPrompt }],
+      systemPrompt,
+      maxTokens: config.api.maxTokens,
     });
 
-    resultText = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('');
+    resultText = result.text;
 
     // Parse [NOTIFY]/[SKIP] prefix for conditional tasks
     if (notifyUser) {
@@ -125,42 +122,43 @@ async function executeTask(task: Record<string, unknown>, notch: NotchBridge) {
         shouldNotify = false;
         resultText = resultText.slice('[SKIP]'.length).trimStart();
       } else {
-        // No prefix — default to notify (safer)
         shouldNotify = true;
       }
     }
-    // Silent tasks (notify_user=false) never notify
   } catch (err) {
     status = 'failed';
     errorMsg = err instanceof Error ? err.message : 'Unknown error';
     resultText = errorMsg;
-    console.error(`[scheduler] Task "${taskName}" failed:`, errorMsg);
+    console.error(`[scheduler] Task "${taskName}" failed (${providerName}):`, errorMsg);
   }
 
-  // Update task state (always, regardless of mode)
+  // Update task state
   await supabase
     .from('scheduled_tasks')
     .update({
       last_run_at: new Date().toISOString(),
       run_count: (task.run_count as number ?? 0) + 1,
-      last_result: { status, summary: resultText.slice(0, 500), error: errorMsg ?? null, notified: shouldNotify },
+      last_result: {
+        status,
+        summary: resultText.slice(0, 500),
+        error: errorMsg ?? null,
+        notified: shouldNotify,
+        provider: providerName,
+      },
     })
     .eq('id', taskId);
 
-  // Only create notification + push if: notify_user=false (silent background save) OR notify_user=true AND shouldNotify
   if (!notifyUser) {
-    // Silent mode — no notification, no peek. Just log.
-    console.log(`[scheduler] Task "${taskName}" ${status} (silent)`);
+    console.log(`[scheduler] Task "${taskName}" ${status} via ${providerName} (silent)`);
     return;
   }
 
   if (!shouldNotify) {
-    // Conditional mode but condition not met — skip notification
-    console.log(`[scheduler] Task "${taskName}" ${status} (condition not met, skipped notification)`);
+    console.log(`[scheduler] Task "${taskName}" ${status} via ${providerName} (condition not met)`);
     return;
   }
 
-  // Create notification (only for notify_user=true AND condition met)
+  // Create notification
   const { data: notifData } = await supabase
     .from('notifications')
     .insert({
@@ -173,9 +171,8 @@ async function executeTask(task: Record<string, unknown>, notch: NotchBridge) {
     .select('id, created_at')
     .single();
 
-  console.log(`[scheduler] Task "${taskName}" ${status}, notification + peek`);
+  console.log(`[scheduler] Task "${taskName}" ${status} via ${providerName}, notification + peek`);
 
-  // Push peek notification via WebSocket
   if (notifData) {
     notch.send({
       type: 'peek_notification' as any,

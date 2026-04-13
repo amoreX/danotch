@@ -851,7 +851,10 @@ struct SettingsPanel: View {
                     }
 
                     SettingsSection(title: "INTEGRATIONS") {
-                        GmailConnectionRow(viewModel: viewModel)
+                        AppConnectionRow(viewModel: viewModel, appType: "gmail", displayName: "Gmail", icon: "envelope.fill")
+                        AppConnectionRow(viewModel: viewModel, appType: "googlecalendar", displayName: "Google Calendar", icon: "calendar")
+                        AppConnectionRow(viewModel: viewModel, appType: "googledocs", displayName: "Google Docs", icon: "doc.text.fill")
+                        AppConnectionRow(viewModel: viewModel, appType: "github", displayName: "GitHub", icon: "chevron.left.forwardslash.chevron.right")
                     }
                 }
             }
@@ -1009,61 +1012,79 @@ struct WidgetEditPanel: View {
 
 // MARK: - Settings Components
 
-// MARK: - Gmail Connection Row
+// MARK: - App Connection Row (Generic)
 
-struct GmailConnectionRow: View {
+struct AppConnectionRow: View {
     @ObservedObject var viewModel: NotchViewModel
+    let appType: String
+    let displayName: String
+    let icon: String
+
+    private var isConnected: Bool { viewModel.appConnected[appType] ?? false }
+    private var isLoading: Bool { viewModel.appLoading[appType] ?? false }
+    private var error: String? { viewModel.appError[appType] ?? nil }
 
     var body: some View {
-        HStack(spacing: DN.spaceSM) {
-            Image(systemName: "envelope.fill")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(viewModel.gmailConnected ? DN.success : DN.textDisabled)
-                .frame(width: 18)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: DN.spaceSM) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isConnected ? DN.success : DN.textDisabled)
+                    .frame(width: 18)
 
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Gmail")
-                    .font(DN.body(11))
-                    .foregroundColor(DN.textPrimary)
-                Text(viewModel.gmailLoading ? "Checking..." : (viewModel.gmailConnected ? "Connected" : "Not connected"))
-                    .font(DN.mono(8))
-                    .foregroundColor(viewModel.gmailConnected ? DN.success : DN.textDisabled)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(displayName)
+                        .font(DN.body(11))
+                        .foregroundColor(DN.textPrimary)
+                    Text(isLoading ? "Checking..." : (isConnected ? "Connected" : "Not connected"))
+                        .font(DN.mono(8))
+                        .foregroundColor(isConnected ? DN.success : DN.textDisabled)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 32, height: 18)
+                } else {
+                    Button(action: {
+                        if isConnected {
+                            viewModel.disconnectApp(appType)
+                        } else {
+                            viewModel.connectApp(appType)
+                        }
+                    }) {
+                        Text(isConnected ? "DISCONNECT" : "CONNECT")
+                            .font(DN.label(7))
+                            .tracking(0.6)
+                            .foregroundColor(isConnected ? DN.accent : DN.success)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(isConnected ? DN.accent.opacity(0.4) : DN.success.opacity(0.4), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
-            Spacer()
-
-            if viewModel.gmailLoading {
-                ProgressView()
-                    .scaleEffect(0.5)
-                    .frame(width: 32, height: 18)
-            } else {
-                Button(action: {
-                    if viewModel.gmailConnected {
-                        viewModel.disconnectGmail()
-                    } else {
-                        viewModel.connectGmail()
-                    }
-                }) {
-                    Text(viewModel.gmailConnected ? "DISCONNECT" : "CONNECT")
-                        .font(DN.label(7))
-                        .tracking(0.6)
-                        .foregroundColor(viewModel.gmailConnected ? DN.accent : DN.success)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(viewModel.gmailConnected ? DN.accent.opacity(0.4) : DN.success.opacity(0.4), lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
+            if let error = error {
+                Text(error)
+                    .font(DN.mono(8))
+                    .foregroundColor(DN.accent)
+                    .lineLimit(2)
+                    .padding(.top, 4)
+                    .padding(.leading, 26)
             }
         }
         .padding(.horizontal, DN.spaceSM)
         .padding(.vertical, 6)
         .background(DN.surface)
         .onAppear {
-            viewModel.checkGmailStatus()
+            viewModel.checkAppStatus(appType)
         }
     }
 }

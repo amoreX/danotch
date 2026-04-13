@@ -31,4 +31,13 @@ export interface SubagentEvent {
   data: Record<string, unknown>;
 }
 
-export type NotchEvent = SubagentEvent;
+export interface ConnectionRequestEvent {
+  type: 'connection_request';
+  request_id: string;
+  session_id: string;
+  app_type: string;
+  display_name: string;
+  reason: string;
+}
+
+export type NotchEvent = SubagentEvent | ConnectionRequestEvent;
