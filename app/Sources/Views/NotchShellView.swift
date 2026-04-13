@@ -645,6 +645,13 @@ struct SettingsPanel: View {
                         )
                     }
 
+                    SettingsSection(title: "PROVIDER") {
+                        DefaultProviderRow(viewModel: viewModel)
+                        ProviderRow(viewModel: viewModel, providerType: "anthropic")
+                        ProviderRow(viewModel: viewModel, providerType: "openai")
+                        ProviderRow(viewModel: viewModel, providerType: "openrouter")
+                    }
+
                     SettingsSection(title: "WIDGETS") {
                         ForEach(PinnedWidget.allCases, id: \.rawValue) { widget in
                             widgetToggleRow(widget)
@@ -715,6 +722,9 @@ struct SettingsPanel: View {
                 }
             }
         }
+        .onAppear {
+            viewModel.loadProviderConfigs()
+        }
     }
 
     @ViewBuilder
@@ -757,6 +767,301 @@ struct SettingsPanel: View {
 // MARK: - Settings Components
 
 // MARK: - App Connection Row (Generic)
+
+struct DefaultProviderRow: View {
+    @ObservedObject var viewModel: NotchViewModel
+
+    private var isActive: Bool {
+        !viewModel.providerConfigs.contains { $0.isActive }
+    }
+
+    var body: some View {
+        HStack(spacing: DN.spaceSM) {
+            Image(systemName: "server.rack")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(isActive ? DN.success : DN.textDisabled)
+                .frame(width: 18)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Default")
+                    .font(DN.body(11))
+                    .foregroundColor(DN.textPrimary)
+                Text("Server API key")
+                    .font(DN.mono(8))
+                    .foregroundColor(isActive ? DN.success : DN.textDisabled)
+            }
+
+            Spacer()
+
+            if isActive {
+                Text("ACTIVE")
+                    .font(DN.label(7))
+                    .tracking(0.6)
+                    .foregroundColor(DN.success)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .stroke(DN.success.opacity(0.4), lineWidth: 1)
+                    )
+            } else {
+                Button(action: {
+                    viewModel.deactivateAllProviders()
+                }) {
+                    Text("USE")
+                        .font(DN.label(7))
+                        .tracking(0.6)
+                        .foregroundColor(DN.textSecondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(DN.border, lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, DN.spaceSM)
+        .padding(.vertical, 6)
+        .background(DN.surface)
+    }
+}
+
+struct ProviderRow: View {
+    @ObservedObject var viewModel: NotchViewModel
+    let providerType: String
+
+    @State private var isExpanded = false
+    @State private var apiKey = ""
+    @State private var modelId = ""
+
+    private var config: ProviderConfig? {
+        viewModel.providerConfigs.first { $0.provider == providerType }
+    }
+    private var isActive: Bool { config?.isActive ?? false }
+    private var isConfigured: Bool { config != nil }
+    private var isVerifying: Bool { viewModel.providerVerifying[providerType] ?? false }
+    private var isVerified: Bool {
+        (viewModel.providerVerified[providerType] ?? false) || (config?.isVerified ?? false)
+    }
+    private var error: String? { viewModel.providerError[providerType] ?? nil }
+
+    private var displayName: String {
+        config?.displayName ?? ProviderConfig(
+            id: "", provider: providerType, modelId: "", isActive: false
+        ).displayName
+    }
+
+    private var icon: String {
+        config?.icon ?? ProviderConfig(
+            id: "", provider: providerType, modelId: "", isActive: false
+        ).icon
+    }
+
+    private var defaultModel: String {
+        ProviderConfig.defaultModels[providerType] ?? ""
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header row — always visible
+            HStack(spacing: DN.spaceSM) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isActive ? DN.success : DN.textDisabled)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(displayName)
+                        .font(DN.body(11))
+                        .foregroundColor(DN.textPrimary)
+                    if isConfigured {
+                        Text(isActive ? "Active · \(config?.modelId ?? "")" : config?.modelId ?? "")
+                            .font(DN.mono(8))
+                            .foregroundColor(isActive ? DN.success : DN.textDisabled)
+                            .lineLimit(1)
+                    } else {
+                        Text("Not configured")
+                            .font(DN.mono(8))
+                            .foregroundColor(DN.textDisabled)
+                    }
+                }
+
+                Spacer()
+
+                if isActive {
+                    Text("ACTIVE")
+                        .font(DN.label(7))
+                        .tracking(0.6)
+                        .foregroundColor(DN.success)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(DN.success.opacity(0.4), lineWidth: 1)
+                        )
+                }
+
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundColor(DN.textDisabled)
+            }
+            .padding(.horizontal, DN.spaceSM)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                withAnimation(.easeOut(duration: DN.microDuration)) {
+                    isExpanded.toggle()
+                    if isExpanded && modelId.isEmpty {
+                        modelId = config?.modelId ?? defaultModel
+                    }
+                }
+            }
+
+            // Expanded form
+            if isExpanded {
+                VStack(alignment: .leading, spacing: DN.spaceXS) {
+                    // API Key
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("API KEY")
+                            .font(DN.label(7))
+                            .tracking(0.8)
+                            .foregroundColor(DN.textDisabled)
+                        SecureField("Enter API key...", text: $apiKey)
+                            .font(DN.mono(10))
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(DN.black)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(DN.border, lineWidth: 1)
+                            )
+                    }
+
+                    // Model ID
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("MODEL")
+                            .font(DN.label(7))
+                            .tracking(0.8)
+                            .foregroundColor(DN.textDisabled)
+                        TextField(defaultModel, text: $modelId)
+                            .font(DN.mono(10))
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(DN.black)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(DN.border, lineWidth: 1)
+                            )
+                    }
+
+                    // Action buttons
+                    HStack(spacing: DN.spaceXS) {
+                        // Verify
+                        Button(action: {
+                            guard !apiKey.isEmpty else { return }
+                            let model = modelId.isEmpty ? defaultModel : modelId
+                            viewModel.verifyProviderKey(provider: providerType, apiKey: apiKey, modelId: model)
+                        }) {
+                            HStack(spacing: 4) {
+                                if isVerifying {
+                                    ProgressView()
+                                        .scaleEffect(0.4)
+                                        .frame(width: 10, height: 10)
+                                } else if isVerified && apiKey.isEmpty {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 7, weight: .bold))
+                                }
+                                Text(isVerifying ? "VERIFYING" : (isVerified && apiKey.isEmpty ? "VERIFIED" : "VERIFY"))
+                                    .font(DN.label(7))
+                                    .tracking(0.6)
+                            }
+                            .foregroundColor(isVerified && apiKey.isEmpty ? DN.success : DN.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke((isVerified && apiKey.isEmpty ? DN.success : DN.border).opacity(0.6), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(apiKey.isEmpty || isVerifying)
+                        .opacity(apiKey.isEmpty && !isVerified ? 0.4 : 1)
+
+                        // Save
+                        Button(action: {
+                            guard !apiKey.isEmpty else { return }
+                            let model = modelId.isEmpty ? defaultModel : modelId
+                            viewModel.saveProviderConfig(provider: providerType, apiKey: apiKey, modelId: model)
+                            apiKey = ""
+                        }) {
+                            Text("SAVE")
+                                .font(DN.label(7))
+                                .tracking(0.6)
+                                .foregroundColor(DN.black)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(apiKey.isEmpty ? DN.textDisabled : DN.success)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(apiKey.isEmpty)
+
+                        Spacer()
+
+                        // Delete
+                        if isConfigured {
+                            Button(action: {
+                                viewModel.deleteProviderConfig(provider: providerType)
+                                apiKey = ""
+                                modelId = defaultModel
+                            }) {
+                                Text("DELETE")
+                                    .font(DN.label(7))
+                                    .tracking(0.6)
+                                    .foregroundColor(DN.accent)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .stroke(DN.accent.opacity(0.4), lineWidth: 1)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    // Error
+                    if let error = error {
+                        Text(error)
+                            .font(DN.mono(8))
+                            .foregroundColor(DN.accent)
+                            .lineLimit(2)
+                    }
+
+                    // Verified success
+                    if viewModel.providerVerified[providerType] == true {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 9))
+                                .foregroundColor(DN.success)
+                            Text("Key verified")
+                                .font(DN.mono(8))
+                                .foregroundColor(DN.success)
+                        }
+                    }
+                }
+                .padding(.horizontal, DN.spaceSM)
+                .padding(.bottom, 8)
+                .transition(.opacity)
+            }
+        }
+        .background(DN.surface)
+    }
+}
 
 struct AppConnectionRow: View {
     @ObservedObject var viewModel: NotchViewModel

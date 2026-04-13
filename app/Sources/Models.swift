@@ -263,6 +263,42 @@ struct PendingConnectionRequest {
     var status: ConnectionRequestStatus
 }
 
+// MARK: - Provider Config (BYOK)
+
+struct ProviderConfig: Identifiable {
+    let id: String
+    let provider: String
+    var modelId: String
+    var isActive: Bool
+    var verifiedAt: String?
+
+    var displayName: String {
+        switch provider {
+        case "anthropic": return "Anthropic"
+        case "openai": return "OpenAI"
+        case "openrouter": return "OpenRouter"
+        default: return provider.capitalized
+        }
+    }
+
+    var icon: String {
+        switch provider {
+        case "anthropic": return "brain"
+        case "openai": return "sparkles"
+        case "openrouter": return "arrow.triangle.branch"
+        default: return "cpu"
+        }
+    }
+
+    var isVerified: Bool { verifiedAt != nil }
+
+    static let defaultModels: [String: String] = [
+        "anthropic": "claude-sonnet-4-20250514",
+        "openai": "gpt-5",
+        "openrouter": "anthropic/claude-sonnet-4-20250514",
+    ]
+}
+
 struct NotificationItem: Identifiable {
     let id: String
     let title: String

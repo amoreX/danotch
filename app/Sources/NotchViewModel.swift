@@ -186,6 +186,13 @@ class NotchViewModel: ObservableObject {
     @Published var appLoading: [String: Bool] = [:]
     @Published var appError: [String: String?] = [:]
 
+    // Provider configs (BYOK)
+    @Published var providerConfigs: [ProviderConfig] = []
+    @Published var providerLoading = false
+    @Published var providerVerifying: [String: Bool] = [:]
+    @Published var providerError: [String: String?] = [:]
+    @Published var providerVerified: [String: Bool] = [:]
+
     // WebSocket send callback (set by WebSocketServer)
     var wsSend: (([String: Any]) -> Void)?
 
@@ -721,6 +728,158 @@ class NotchViewModel: ObservableObject {
             await MainActor.run {
                 self.appConnected[appType] = false
                 self.appLoading[appType] = false
+            }
+        }
+    }
+
+    // MARK: - Provider Config (BYOK)
+
+    func loadProviderConfigs() {
+        guard let auth = authManager, let token = auth.accessToken else { return }
+        providerLoading = true
+
+        Task {
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider")!)
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let configs = json["configs"] as? [[String: Any]] else {
+                await MainActor.run { self.providerLoading = false }
+                return
+            }
+
+            let parsed: [ProviderConfig] = configs.compactMap { c in
+                guard let id = c["id"] as? String,
+                      let provider = c["provider"] as? String,
+                      let modelId = c["model_id"] as? String else { return nil }
+                return ProviderConfig(
+                    id: id,
+                    provider: provider,
+                    modelId: modelId,
+                    isActive: c["is_active"] as? Bool ?? false,
+                    verifiedAt: c["verified_at"] as? String
+                )
+            }
+
+            await MainActor.run {
+                self.providerConfigs = parsed
+                self.providerLoading = false
+            }
+        }
+    }
+
+    func saveProviderConfig(provider: String, apiKey: String, modelId: String) {
+        guard let auth = authManager, let token = auth.accessToken else { return }
+
+        providerError[provider] = nil
+
+        Task {
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider")!)
+            request.httpMethod = "POST"
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            let body: [String: Any] = ["provider": provider, "api_key": apiKey, "model_id": modelId]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
+                await MainActor.run { self.providerError[provider] = "Network error" }
+                return
+            }
+
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+
+            if status == 200 {
+                await MainActor.run {
+                    self.providerError[provider] = nil
+                    self.loadProviderConfigs()
+                }
+            } else {
+                let errorMsg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+                await MainActor.run {
+                    self.providerError[provider] = errorMsg ?? "Save failed"
+                }
+            }
+        }
+    }
+
+    func verifyProviderKey(provider: String, apiKey: String, modelId: String) {
+        guard let auth = authManager, let token = auth.accessToken else { return }
+
+        providerVerifying[provider] = true
+        providerVerified[provider] = false
+        providerError[provider] = nil
+
+        Task {
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider/verify")!)
+            request.httpMethod = "POST"
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            let body: [String: Any] = ["provider": provider, "api_key": apiKey, "model_id": modelId]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
+                await MainActor.run {
+                    self.providerVerifying[provider] = false
+                    self.providerError[provider] = "Network error"
+                }
+                return
+            }
+
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+
+            await MainActor.run {
+                self.providerVerifying[provider] = false
+                if status == 200 && json["verified"] as? Bool == true {
+                    self.providerVerified[provider] = true
+                    self.providerError[provider] = nil
+                } else {
+                    self.providerVerified[provider] = false
+                    self.providerError[provider] = json["error"] as? String ?? "Verification failed"
+                }
+            }
+        }
+    }
+
+    func deactivateAllProviders() {
+        guard let auth = authManager, let token = auth.accessToken else { return }
+
+        Task {
+            // Deactivate by deleting all configs — fallback kicks in
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider")!)
+            request.httpMethod = "DELETE"
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: [:] as [String: Any])
+
+            _ = try? await URLSession.shared.data(for: request)
+            await MainActor.run {
+                self.providerConfigs.removeAll()
+                self.providerError = [:]
+                self.providerVerified = [:]
+            }
+        }
+    }
+
+    func deleteProviderConfig(provider: String) {
+        guard let auth = authManager, let token = auth.accessToken else { return }
+
+        Task {
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider")!)
+            request.httpMethod = "DELETE"
+            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: ["provider": provider])
+
+            _ = try? await URLSession.shared.data(for: request)
+            await MainActor.run {
+                self.providerConfigs.removeAll { $0.provider == provider }
+                self.providerError[provider] = nil
+                self.providerVerified[provider] = false
             }
         }
     }

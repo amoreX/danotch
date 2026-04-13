@@ -15,7 +15,7 @@ export const config = {
   // Default models per provider (for BYOK)
   defaultModels: {
     anthropic: 'claude-sonnet-4-20250514',
-    openai: 'gpt-4o',
+    openai: 'gpt-5',
     openrouter: 'anthropic/claude-sonnet-4-20250514',
   } as Record<ProviderType, string>,
 
