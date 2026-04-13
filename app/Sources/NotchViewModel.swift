@@ -53,6 +53,51 @@ struct WidgetSlot: Identifiable, Codable {
     var size: WidgetSize
 }
 
+// MARK: - Widget Grid Packing
+
+struct GridPlacement {
+    let slot: WidgetSlot
+    let row: Int
+    let col: Int
+}
+
+/// Left-to-right, top-to-bottom bin packing for the 3-column widget grid.
+func packWidgetsIntoGrid(_ slots: [WidgetSlot], cols: Int = 3) -> [GridPlacement] {
+    let maxRows = 30
+    var occupied = Array(repeating: Array(repeating: false, count: cols), count: maxRows)
+    var result: [GridPlacement] = []
+
+    for slot in slots {
+        let cs = min(slot.size.colSpan, cols)
+        let rs = slot.size.rowSpan
+        var placed = false
+
+        outer: for row in 0..<(maxRows - rs) {
+            for col in 0...(cols - cs) {
+                var fits = true
+                checkFit: for dr in 0..<rs {
+                    for dc in 0..<cs {
+                        if occupied[row + dr][col + dc] { fits = false; break checkFit }
+                    }
+                }
+                if fits {
+                    for dr in 0..<rs {
+                        for dc in 0..<cs { occupied[row + dr][col + dc] = true }
+                    }
+                    result.append(GridPlacement(slot: slot, row: row, col: col))
+                    placed = true
+                    break outer
+                }
+            }
+        }
+        if !placed {
+            let lastRow = result.map { $0.row + $0.slot.size.rowSpan }.max() ?? 0
+            result.append(GridPlacement(slot: slot, row: lastRow, col: 0))
+        }
+    }
+    return result
+}
+
 enum PinnedWidget: String, CaseIterable, Codable {
     case clock      = "clock"
     case music      = "music"
@@ -158,24 +203,29 @@ class NotchSettings: ObservableObject {
         widgetSlots.first { $0.type == .music }.map { $0.size == .small ? .mini : .big } ?? .big
     }
 
-    // Calculate the notch expanded height based on active widget slots
+    // Calculate the notch expanded height based on grid-packed widget slots
     static func calcExpandedHeight(for slots: [WidgetSlot]) -> CGFloat {
         guard !slots.isEmpty else { return 240 }
-        let totalH = slots.map { $0.type.minHeight }.reduce(0, +)
-        let gaps = CGFloat(max(0, slots.count - 1)) * 6
-        return max(200, totalH + gaps + 8)
+        let placements = packWidgetsIntoGrid(slots)
+        let maxRow = placements.map { $0.row + $0.slot.size.rowSpan }.max() ?? 1
+        let gridH = CGFloat(maxRow) * 80 + CGFloat(maxRow - 1) * 6
+        return max(200, gridH + 8)
     }
 
     // UI state (persisted across restarts)
     @Published var collapsedGroups: Set<String> { didSet { save() } }
 
     private static var defaultSlots: [WidgetSlot] {
+        // Produces a 3-row, 3-column grid:
+        //  Row 0: [ Clock (wide, 3×1)              ]
+        //  Row 1: [ Music (medium, 2×1)  ][ CPU     ]
+        //  Row 2: [ Battery ][ Calendar (medium, 2×1)]
         [
             WidgetSlot(type: .clock,    size: .wide),
             WidgetSlot(type: .music,    size: .medium),
             WidgetSlot(type: .cpu,      size: .small),
-            WidgetSlot(type: .calendar, size: .large),
             WidgetSlot(type: .battery,  size: .small),
+            WidgetSlot(type: .calendar, size: .medium),
         ]
     }
 

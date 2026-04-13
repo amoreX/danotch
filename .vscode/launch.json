@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:danotch}/app",
+            "name": "Debug Danotch (app)",
+            "target": "Danotch",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Danotch (app)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:danotch}/app",
+            "name": "Release Danotch (app)",
+            "target": "Danotch",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Danotch (app)"
+        }
+    ]
+}

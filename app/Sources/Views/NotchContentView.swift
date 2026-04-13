@@ -34,30 +34,181 @@ struct NotchContentView: View {
         }
     }
 
-    // MARK: - Left Column (Dynamic widget layout)
+    // MARK: - Widget Grid Constants
+    // Content area: 540px expanded width − 8px horizontal padding = 532px
+    private let gridCols = 3
+    private let gridGap: CGFloat = 6
+    private let gridRowH: CGFloat = 80
+    private let gridW: CGFloat = 532
+    private var gridColW: CGFloat { (gridW - CGFloat(gridCols - 1) * gridGap) / CGFloat(gridCols) }
+
+    // MARK: - Left Column (Grid layout)
 
     @State private var calSelectedDay = Calendar.current.component(.day, from: Date())
 
+    // Drag state
+    @State private var draggingSlotId: String? = nil
+    @State private var ghostX: CGFloat = 0
+    @State private var ghostY: CGFloat = 0
+    @State private var ghostW: CGFloat = 0
+    @State private var ghostH: CGFloat = 0
+    @State private var dragHitSlotId: String? = nil
+    @State private var editHoveredId: String? = nil
+    @State private var borderWidth: [String: CGFloat] = [:]
+
+    @ViewBuilder
     private var leftColumn: some View {
-        VStack(spacing: 6) {
-            if viewModel.settings.widgetSlots.isEmpty {
-                emptyWidgetState
+        if viewModel.settings.widgetSlots.isEmpty {
+            emptyWidgetState
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            let placements = packWidgetsIntoGrid(viewModel.settings.widgetSlots)
+            let maxRow = placements.map { $0.row + $0.slot.size.rowSpan }.max() ?? 1
+            let totalH = CGFloat(maxRow) * gridRowH + CGFloat(maxRow - 1) * gridGap
+
+            ZStack(alignment: .topLeading) {
+                Color.clear.frame(width: gridW, height: totalH)
+
+                ForEach(placements, id: \.slot.id) { placement in
+                    widgetCell(placement, placements: placements)
+                }
+
+                // Ghost widget — follows cursor during drag
+                if let dragId = draggingSlotId,
+                   let dragged = placements.first(where: { $0.slot.id == dragId }) {
+                    widgetView(for: dragged.slot, cellHeight: ghostH, expandsUpward: dragged.row > 1)
+                        .frame(width: ghostW, height: ghostH)
+                        .clipped()
+                        .scaleEffect(1.03)
+                        .opacity(0.88)
+                        .shadow(color: .black.opacity(0.5), radius: 16, y: 8)
+                        .offset(x: ghostX - ghostW / 2, y: ghostY - ghostH / 2)
+                        .allowsHitTesting(false)
+                        .zIndex(100)
+                }
+            }
+            .coordinateSpace(name: "widgetGrid")
+            .frame(width: gridW, height: totalH, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .animation(.spring(response: 0.35, dampingFraction: 0.82), value: viewModel.settings.widgetSlots.count)
+            .animation(.easeOut(duration: DN.microDuration), value: viewModel.isWidgetEditMode)
+        }
+    }
+
+    private func widgetCell(_ placement: GridPlacement, placements: [GridPlacement]) -> some View {
+        let cs = placement.slot.size.colSpan
+        let rs = placement.slot.size.rowSpan
+        let w = CGFloat(cs) * gridColW + CGFloat(cs - 1) * gridGap
+        let h = CGFloat(rs) * gridRowH + CGFloat(rs - 1) * gridGap
+        let x = CGFloat(placement.col) * (gridColW + gridGap)
+        let y = CGFloat(placement.row) * (gridRowH + gridGap)
+
+        let isCalendar = placement.slot.type == .calendar
+        let isDragging = draggingSlotId == placement.slot.id
+        let isHovered = editHoveredId == placement.slot.id
+        let bw = borderWidth[placement.slot.id] ?? 0
+
+        return Group {
+            if isDragging && viewModel.isWidgetEditMode {
+                // Placeholder: dashed outline where dragged widget was
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.white.opacity(0.03))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                            .foregroundColor(.white.opacity(0.12))
+                    )
+                    .frame(width: w, height: h)
             } else {
-                ForEach(Array(viewModel.settings.widgetSlots.enumerated()), id: \.element.id) { idx, slot in
-                    widgetView(for: slot, isLast: idx == viewModel.settings.widgetSlots.count - 1)
-                        .zIndex(slot.type == .calendar ? 5 : 0) // calendar renders above for expand
-                        .overlay(alignment: .topLeading) {
-                            if viewModel.isWidgetEditMode {
-                                widgetMinusButton(slot: slot)
-                                    .transition(.scale.combined(with: .opacity))
+                // Normal widget — block all interactivity in edit mode
+                Group {
+                    if isCalendar {
+                        widgetView(for: placement.slot, cellHeight: h, expandsUpward: placement.row > 1)
+                            .frame(width: w, height: h)
+                    } else {
+                        widgetView(for: placement.slot, cellHeight: h, expandsUpward: placement.row > 1)
+                            .frame(width: w, height: h)
+                            .clipped()
+                    }
+                }
+                .allowsHitTesting(!viewModel.isWidgetEditMode)
+                // Animated border on hover in edit mode
+                .overlay {
+                    if viewModel.isWidgetEditMode {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.white.opacity(0.5), lineWidth: bw)
+                            .animation(.easeOut(duration: 0.14), value: bw)
+                    }
+                }
+                // Delete button
+                .overlay(alignment: .topLeading) {
+                    if viewModel.isWidgetEditMode {
+                        widgetMinusButton(slot: placement.slot)
+                            .transition(.scale.combined(with: .opacity))
+                    }
+                }
+                // Drag gesture in edit mode
+                .gesture(
+                    viewModel.isWidgetEditMode
+                        ? DragGesture(minimumDistance: 3, coordinateSpace: .named("widgetGrid"))
+                            .onChanged { val in
+                                if draggingSlotId == nil {
+                                    draggingSlotId = placement.slot.id
+                                    ghostW = w
+                                    ghostH = h
+                                    NSCursor.closedHand.push()
+                                }
+                                ghostX = val.location.x
+                                ghostY = val.location.y
+                                // Find which slot the ghost center is over
+                                for p in placements where p.slot.id != placement.slot.id {
+                                    let px = CGFloat(p.col) * (gridColW + gridGap)
+                                    let py = CGFloat(p.row) * (gridRowH + gridGap)
+                                    let pw = CGFloat(p.slot.size.colSpan) * gridColW + CGFloat(p.slot.size.colSpan - 1) * gridGap
+                                    let ph = CGFloat(p.slot.size.rowSpan) * gridRowH + CGFloat(p.slot.size.rowSpan - 1) * gridGap
+                                    if val.location.x >= px && val.location.x <= px + pw &&
+                                       val.location.y >= py && val.location.y <= py + ph {
+                                        dragHitSlotId = p.slot.id
+                                        break
+                                    }
+                                }
                             }
+                            .onEnded { _ in
+                                if let targetId = dragHitSlotId {
+                                    var slots = viewModel.settings.widgetSlots
+                                    if let fromIdx = slots.firstIndex(where: { $0.id == placement.slot.id }),
+                                       let toIdx = slots.firstIndex(where: { $0.id == targetId }) {
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) {
+                                            slots.swapAt(fromIdx, toIdx)
+                                            viewModel.settings.widgetSlots = slots
+                                        }
+                                    }
+                                }
+                                draggingSlotId = nil
+                                dragHitSlotId = nil
+                                NSCursor.pop()
+                            }
+                        : nil
+                )
+                // Grab cursor + border on hover in edit mode
+                .onHover { hovering in
+                    if viewModel.isWidgetEditMode {
+                        editHoveredId = hovering ? placement.slot.id : nil
+                        withAnimation(.easeOut(duration: 0.14)) {
+                            borderWidth[placement.slot.id] = hovering ? 1.5 : 0
                         }
+                        if hovering && draggingSlotId == nil {
+                            NSCursor.openHand.push()
+                        } else if !hovering {
+                            NSCursor.pop()
+                        }
+                    }
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(.easeOut(duration: DN.microDuration), value: viewModel.isWidgetEditMode)
-        .animation(.easeOut(duration: DN.microDuration), value: viewModel.settings.widgetSlots.count)
+        .zIndex(isDragging ? 0 : (isCalendar ? 5 : 0))
+        .animation(.spring(response: 0.3, dampingFraction: 0.78), value: isDragging)
+        .offset(x: x, y: y)
     }
 
     private var emptyWidgetState: some View {
@@ -76,53 +227,47 @@ struct NotchContentView: View {
     }
 
     @ViewBuilder
-    private func widgetView(for slot: WidgetSlot, isLast: Bool) -> some View {
+    private func widgetView(for slot: WidgetSlot, cellHeight: CGFloat = 80, expandsUpward: Bool = true) -> some View {
         switch slot.type {
         case .music:
             MusicCard(monitor: viewModel.nowPlaying)
-                .frame(height: slot.type.minHeight)
 
         case .calendar:
-            DateStripCard(events: viewModel.calendarEvents, selectedDay: $calSelectedDay) { day in
+            DateStripCard(
+                events: viewModel.calendarEvents,
+                selectedDay: $calSelectedDay,
+                height: cellHeight,
+                expandsUpward: expandsUpward
+            ) { day in
                 calSelectedDay = day
             }
-            .frame(height: slot.type.minHeight)
 
         case .clock:
-            ClockWidget(viewModel: viewModel, size: .wide)
-                .frame(minHeight: slot.type.minHeight, maxHeight: isLast ? .infinity : slot.type.minHeight)
+            ClockWidget(viewModel: viewModel, size: slot.size)
 
         case .cpu:
             CPUCardWidget(statsMonitor: viewModel.statsMonitor)
-                .frame(height: slot.type.minHeight)
 
         case .battery:
             BatteryCardWidget(monitor: viewModel.batteryMonitor)
-                .frame(height: slot.type.minHeight)
 
         case .agentCount:
             AgentCountCardWidget(agentMonitor: viewModel.agentMonitor)
-                .frame(height: slot.type.minHeight)
 
         case .ram:
             RAMCardWidget(statsMonitor: viewModel.statsMonitor)
-                .frame(height: slot.type.minHeight)
 
         case .disk:
             DiskCardWidget(statsMonitor: viewModel.statsMonitor)
-                .frame(height: slot.type.minHeight)
 
         case .network:
             NetworkCardWidget(statsMonitor: viewModel.statsMonitor)
-                .frame(height: slot.type.minHeight)
 
         case .uptime:
             UptimeCardWidget(statsMonitor: viewModel.statsMonitor)
-                .frame(height: slot.type.minHeight)
 
         case .processes:
             ProcessesCardWidget(statsMonitor: viewModel.statsMonitor)
-                .frame(height: slot.type.minHeight)
         }
     }
 
@@ -1625,8 +1770,8 @@ private struct ClockWidget: View {
     let size: WidgetSize
 
     private let shape = UnevenRoundedRectangle(
-        topLeadingRadius: 8, bottomLeadingRadius: 12,
-        bottomTrailingRadius: 12, topTrailingRadius: 8, style: .continuous
+        topLeadingRadius: 8, bottomLeadingRadius: 10,
+        bottomTrailingRadius: 10, topTrailingRadius: 8, style: .continuous
     )
 
     var body: some View {
@@ -2252,7 +2397,7 @@ private struct DateScrollInterceptor: NSViewRepresentable {
                 guard abs(dx) > abs(dy) * 0.4, abs(dx) > 0.1 else { return event }
 
                 let isEnd = event.phase == .ended || event.phase == .cancelled
-                DispatchQueue.main.async { self.state.handleDelta(dx, isEnd: isEnd) }
+                DispatchQueue.main.async { self.state.handleDelta(-dx, isEnd: isEnd) }
                 return nil  // consume — prevent inner views from also reacting
             }
         }
@@ -2275,12 +2420,14 @@ private struct DateScrollInterceptor: NSViewRepresentable {
 struct DateStripCard: View {
     @ObservedObject var events: CalendarEventsMonitor
     @Binding var selectedDay: Int
+    var height: CGFloat = 80
+    var expandsUpward: Bool = true
     var onDayTapped: (Int) -> Void = { _ in }
 
     @StateObject private var scroll = DateScrollState()
     @State private var isHovered = false
 
-    private let stripH: CGFloat = 62
+    private var stripH: CGFloat { height }
     private let expandH: CGFloat = 120
     private let chipW: CGFloat = 26
     private let chipSpacing: CGFloat = 4
@@ -2299,8 +2446,41 @@ struct DateStripCard: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // Single unified card background — grows upward from fixed bottom edge
+        // Date strip is the fixed base — it never moves
+        VStack(alignment: .leading, spacing: 0) {
+            Text(monthName)
+                .font(.system(size: 7, weight: .semibold))
+                .tracking(1.5)
+                .foregroundColor(.white.opacity(0.3))
+                .padding(.horizontal, 6)
+                .padding(.top, 6)
+
+            GeometryReader { outer in
+                let leadingPad = outer.size.width / 2 - chipW / 2
+
+                HStack(spacing: chipSpacing) {
+                    ForEach(1...daysInMonth, id: \.self) { day in
+                        DayChip(
+                            day: day,
+                            isToday: day == today,
+                            isSelected: day == scroll.currentDay,
+                            hasEvents: !(events.eventsByDay[day] ?? []).isEmpty
+                        ) {
+                            scroll.scrollTo(day: day, animated: true)
+                            onDayTapped(day)
+                        }
+                    }
+                }
+                .frame(minHeight: outer.size.height, alignment: .center)
+                .offset(x: leadingPad - scroll.offset)
+            }
+            .clipped()
+            .background(DateScrollInterceptor(state: scroll))
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: stripH)
+        // Card background anchored to the NON-expansion edge, grows in the expansion direction
+        .background(alignment: expandsUpward ? .bottom : .top) {
             ZStack {
                 neutralCardBg
                 GrainOverlay(opacity: 0.35)
@@ -2311,52 +2491,23 @@ struct DateStripCard: View {
                     .stroke(Color.white.opacity(0.07), lineWidth: 1)
             )
             .frame(height: isHovered ? stripH + expandH : stripH)
-
-            // Events section — top half when expanded
+        }
+        // Events section anchored at the expansion edge, offset outward
+        .overlay(alignment: expandsUpward ? .top : .bottom) {
             if isHovered {
                 eventsContent
                     .frame(maxWidth: .infinity)
                     .frame(height: expandH)
-                    .offset(y: -stripH)
+                    .offset(y: expandsUpward ? -expandH : expandH)
                     .transition(.opacity)
             }
-
-            // Date strip — always visible at bottom
-            VStack(alignment: .leading, spacing: 0) {
-                Text(monthName)
-                    .font(.system(size: 7, weight: .semibold))
-                    .tracking(1.5)
-                    .foregroundColor(.white.opacity(0.3))
-                    .padding(.horizontal, 6)
-                    .padding(.top, 6)
-
-                GeometryReader { outer in
-                    let leadingPad = outer.size.width / 2 - chipW / 2
-
-                    HStack(spacing: chipSpacing) {
-                        ForEach(1...daysInMonth, id: \.self) { day in
-                            DayChip(
-                                day: day,
-                                isToday: day == today,
-                                isSelected: day == scroll.currentDay,
-                                hasEvents: !(events.eventsByDay[day] ?? []).isEmpty
-                            ) {
-                                scroll.scrollTo(day: day, animated: true)
-                                onDayTapped(day)
-                            }
-                        }
-                    }
-                    .frame(minHeight: outer.size.height, alignment: .center)
-                    .offset(x: leadingPad - scroll.offset)
-                }
-                .clipped()
-                .background(DateScrollInterceptor(state: scroll))
-            }
-            .frame(maxWidth: .infinity)
-            .frame(height: stripH)
         }
-        .frame(height: stripH)  // layout height never changes
-        .shadow(color: isHovered ? .black.opacity(0.22) : .clear, radius: 14, x: 0, y: -8)
+        .shadow(
+            color: isHovered ? .black.opacity(0.22) : .clear,
+            radius: 14,
+            x: 0,
+            y: expandsUpward ? -8 : 8
+        )
         .animation(.spring(response: 0.32, dampingFraction: 0.78), value: isHovered)
         .onHover { h in withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { isHovered = h } }
         .onAppear {
@@ -3150,7 +3301,7 @@ struct NetworkCardWidget: View {
 
     var body: some View {
         NeutralCard {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
 
                 HStack(spacing: 4) {
@@ -3158,7 +3309,7 @@ struct NetworkCardWidget: View {
                         .font(.system(size: 7, weight: .semibold))
                         .foregroundColor(.white.opacity(0.35))
                     Text(formatBytes(statsMonitor.netUp))
-                        .font(.custom("Cakra-Normal", size: 14))
+                        .font(.custom("Cakra-Normal", size: 13))
                         .foregroundColor(.white.opacity(0.82))
                         .monospacedDigit()
                         .lineLimit(1)
@@ -3169,11 +3320,12 @@ struct NetworkCardWidget: View {
                         .font(.system(size: 7, weight: .semibold))
                         .foregroundColor(.white.opacity(0.35))
                     Text(formatBytes(statsMonitor.netDown))
-                        .font(.custom("Cakra-Normal", size: 14))
+                        .font(.custom("Cakra-Normal", size: 13))
                         .foregroundColor(.white.opacity(0.82))
                         .monospacedDigit()
                         .lineLimit(1)
                 }
+                .padding(.top, 4)
 
                 Spacer(minLength: 0)
                 widgetLabel("NETWORK")
