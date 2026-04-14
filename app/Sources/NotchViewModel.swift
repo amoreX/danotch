@@ -156,7 +156,7 @@ class NotchSettings: ObservableObject {
     }
 }
 
-private enum APIConfig {
+enum APIConfig {
     static let baseURL = "http://localhost:3001"
 }
 

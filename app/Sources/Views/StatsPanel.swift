@@ -269,46 +269,6 @@ private func fmtGB(_ bytes: Double) -> String {
     String(format: "%.1f", bytes / (1024 * 1024 * 1024))
 }
 
-// MARK: - Glass cell modifier
-
-private struct GlassCell: ViewModifier {
-    var cornerRadius: CGFloat = 10
-
-    func body(content: Content) -> some View {
-        content
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(DN.surface.opacity(0.55))
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.04), Color.white.opacity(0.01)],
-                                startPoint: .topLeading, endPoint: .bottomTrailing
-                            )
-                        )
-                }
-            )
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.1), Color.white.opacity(0.03)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-    }
-}
-
-private extension View {
-    func glassCell(cornerRadius: CGFloat = 10) -> some View {
-        modifier(GlassCell(cornerRadius: cornerRadius))
-    }
-}
-
 // MARK: - Stats Panel (Bento Grid)
 
 struct StatsPanel: View {

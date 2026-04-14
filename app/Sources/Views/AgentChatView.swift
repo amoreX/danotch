@@ -611,7 +611,7 @@ struct MarkdownView: View {
                 let code = remaining[remaining.index(after: remaining.startIndex)..<end]
                 result = result + Text(String(code))
                     .font(DN.mono(11))
-                    .foregroundColor(Color(hex: 0xD97757))
+                    .foregroundColor(DN.claudeOrange)
                 remaining = remaining[remaining.index(after: end)...]
             }
             // Bold: **...**

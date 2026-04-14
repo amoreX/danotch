@@ -20,7 +20,7 @@ class AuthManager: ObservableObject {
 
     private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
     private static let authFile = configDir.appendingPathComponent("auth.json")
-    private let baseURL = "http://localhost:3001"
+    private var baseURL: String { APIConfig.baseURL }
 
     var userName: String {
         session?.fullName ?? session?.email.components(separatedBy: "@").first ?? ""

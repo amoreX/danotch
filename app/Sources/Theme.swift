@@ -20,6 +20,9 @@ enum DN {
     static let success         = Color(hex: 0x4A9E5C)
     static let warning         = Color(hex: 0xD4A843)
 
+    // Agent brand colors
+    static let claudeOrange    = Color(hex: 0xD97757)
+
     // MARK: Typography
 
     static func display(_ size: CGFloat) -> Font {
@@ -103,6 +106,76 @@ func relativeTimeString(_ date: Date, fallbackFormat: String = "MMM d") -> Strin
     let df = DateFormatter()
     df.dateFormat = fallbackFormat
     return df.string(from: date)
+}
+
+// MARK: - Glass Cell Modifier
+
+private struct GlassCell: ViewModifier {
+    var cornerRadius: CGFloat = 10
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                ZStack {
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(DN.surface.opacity(0.55))
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.04), Color.white.opacity(0.01)],
+                                startPoint: .topLeading, endPoint: .bottomTrailing
+                            )
+                        )
+                }
+            )
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.1), Color.white.opacity(0.03)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+    }
+}
+
+extension View {
+    func glassCell(cornerRadius: CGFloat = 10) -> some View {
+        modifier(GlassCell(cornerRadius: cornerRadius))
+    }
+}
+
+// MARK: - Set Toggle Helper
+
+extension Set {
+    mutating func toggle(_ member: Element) {
+        if contains(member) {
+            remove(member)
+        } else {
+            insert(member)
+        }
+    }
+}
+
+// MARK: - Active Badge View
+
+struct ActiveBadge: View {
+    let count: Int
+
+    var body: some View {
+        if count > 0 {
+            HStack(spacing: 3) {
+                Circle().fill(DN.warning).frame(width: 4, height: 4)
+                Text("\(count) ACTIVE")
+                    .font(DN.label(7))
+                    .tracking(0.6)
+                    .foregroundColor(DN.warning)
+            }
+        }
+    }
 }
 
 // MARK: - Color hex initializer

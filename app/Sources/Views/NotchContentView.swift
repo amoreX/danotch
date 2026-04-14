@@ -295,7 +295,7 @@ struct NotchContentView: View {
                         .foregroundColor(DN.textPrimary)
                         .lineLimit(1)
 
-                    Text(formatThreadDate(thread.updatedAt))
+                    Text(formatRelativeDate(thread.updatedAt, fallbackFormat: "MMM d"))
                         .font(DN.mono(8))
                         .foregroundColor(DN.textDisabled)
                 }
@@ -318,9 +318,6 @@ struct NotchContentView: View {
         .buttonStyle(.plain)
     }
 
-    private func formatThreadDate(_ iso: String) -> String {
-        formatRelativeDate(iso, fallbackFormat: "MMM d")
-    }
 
     // MARK: - Chat Input Bar
 
@@ -390,11 +387,7 @@ struct NotchContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: {
                 withAnimation(.easeOut(duration: DN.microDuration)) {
-                    if isTasksExpanded {
-                        viewModel.settings.collapsedGroups.insert("tasks")
-                    } else {
-                        viewModel.settings.collapsedGroups.remove("tasks")
-                    }
+                    viewModel.settings.collapsedGroups.toggle("tasks")
                 }
             }) {
                 HStack(spacing: DN.spaceSM) {
@@ -414,16 +407,7 @@ struct NotchContentView: View {
 
                     Spacer()
 
-                    let active = activeTasks.filter { $0.isActive }.count
-                    if active > 0 {
-                        HStack(spacing: 3) {
-                            Circle().fill(DN.warning).frame(width: 4, height: 4)
-                            Text("\(active) ACTIVE")
-                                .font(DN.label(7))
-                                .tracking(0.6)
-                                .foregroundColor(DN.warning)
-                        }
-                    }
+                    ActiveBadge(count: activeTasks.filter { $0.isActive }.count)
 
                     Image(systemName: isTasksExpanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 8, weight: .semibold))
@@ -515,11 +499,7 @@ struct AgentGroupView: View {
             Button(action: {
                 guard canCollapse else { return }
                 withAnimation(.easeOut(duration: DN.microDuration)) {
-                    if collapsedGroups.contains(group.id) {
-                        collapsedGroups.remove(group.id)
-                    } else {
-                        collapsedGroups.insert(group.id)
-                    }
+                    collapsedGroups.toggle(group.id)
                 }
             }) {
                 HStack(spacing: DN.spaceSM) {
@@ -541,15 +521,7 @@ struct AgentGroupView: View {
 
                     Spacer()
 
-                    if group.runningCount > 0 {
-                        HStack(spacing: 3) {
-                            Circle().fill(DN.warning).frame(width: 4, height: 4)
-                            Text("\(group.runningCount) ACTIVE")
-                                .font(DN.label(7))
-                                .tracking(0.6)
-                                .foregroundColor(DN.warning)
-                        }
-                    }
+                    ActiveBadge(count: group.runningCount)
 
                     if canCollapse {
                         Image(systemName: "chevron.right")
@@ -1109,11 +1081,7 @@ struct ScheduledTasksSection: View {
             // Header
             Button(action: {
                 withAnimation(.easeOut(duration: DN.microDuration)) {
-                    if isExpanded {
-                        viewModel.settings.collapsedGroups.insert("scheduled")
-                    } else {
-                        viewModel.settings.collapsedGroups.remove("scheduled")
-                    }
+                    viewModel.settings.collapsedGroups.toggle("scheduled")
                 }
             }) {
                 HStack(spacing: DN.spaceSM) {

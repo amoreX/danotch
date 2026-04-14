@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase.js';
+import { COMPOSIO_APPS } from '../composio/tools.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY!;
@@ -10,7 +11,11 @@ const anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const SUPPORTED_APPS = ['gmail', 'googlecalendar', 'googledocs', 'github'];
+const SUPPORTED_APPS = COMPOSIO_APPS.map(a => a.appType);
+
+function usernameFromEmail(email: string): string {
+  return email.split('@')[0];
+}
 
 export function createAuthRoutes(): Router {
   const router = Router();
@@ -58,7 +63,7 @@ export function createAuthRoutes(): Router {
     const { error: profileError } = await supabase.from('user_profiles').insert({
       id: userId,
       email,
-      full_name: full_name || email.split('@')[0],
+      full_name: full_name || usernameFromEmail(email),
     });
 
     if (profileError) {
@@ -81,7 +86,7 @@ export function createAuthRoutes(): Router {
       user: {
         id: userId,
         email,
-        full_name: full_name || email.split('@')[0],
+        full_name: full_name || usernameFromEmail(email),
       },
       session: {
         access_token: loginData.session.access_token,
@@ -122,7 +127,7 @@ export function createAuthRoutes(): Router {
       user: {
         id: data.user.id,
         email: data.user.email,
-        full_name: profile?.full_name ?? email.split('@')[0],
+        full_name: profile?.full_name ?? usernameFromEmail(email),
         avatar_url: profile?.avatar_url,
         plan: profile?.plan ?? 'free',
       },

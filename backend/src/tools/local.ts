@@ -4,6 +4,12 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+const BASH_TIMEOUT_MS = 30_000;
+const BASH_MAX_BUFFER = 1024 * 1024; // 1MB
+const MAX_RESULT_CHARS = 5000;
+const MAX_SEARCH_CHARS = 2000;
+const MAX_ERROR_CHARS = 2000;
+
 function stripHtml(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
@@ -98,8 +104,8 @@ async function bashExecute(input: Record<string, unknown>): Promise<string> {
   try {
     const { stdout, stderr } = await execAsync(command, {
       cwd,
-      timeout: 30_000,
-      maxBuffer: 1024 * 1024, // 1MB
+      timeout: BASH_TIMEOUT_MS,
+      maxBuffer: BASH_MAX_BUFFER,
       shell: '/bin/bash',
     });
 
@@ -110,10 +116,10 @@ async function bashExecute(input: Record<string, unknown>): Promise<string> {
     if (output) result += output;
     if (errors) result += (result ? '\n\nSTDERR:\n' : '') + errors;
 
-    return result.slice(0, 5000) || '(no output)';
+    return result.slice(0, MAX_RESULT_CHARS) || '(no output)';
   } catch (err: any) {
     const msg = err.stderr?.trim() || err.stdout?.trim() || err.message;
-    return `Error (exit ${err.code ?? '?'}): ${msg}`.slice(0, 2000);
+    return `Error (exit ${err.code ?? '?'}): ${msg}`.slice(0, MAX_ERROR_CHARS);
   }
 }
 
@@ -147,7 +153,7 @@ async function webSearch(input: Record<string, unknown>): Promise<string> {
     if (results.length === 0) {
       // Fallback: try to extract any text content
       const textContent = stripHtml(html);
-      return `Search results for "${query}":\n${textContent.slice(0, 2000)}`;
+      return `Search results for "${query}":\n${textContent.slice(0, MAX_SEARCH_CHARS)}`;
     }
 
     return `Search results for "${query}":\n\n${results.join('\n\n')}`;
@@ -170,13 +176,13 @@ async function webFetch(input: Record<string, unknown>): Promise<string> {
 
     if (contentType.includes('json')) {
       const json = await resp.json();
-      return JSON.stringify(json, null, 2).slice(0, 5000);
+      return JSON.stringify(json, null, 2).slice(0, MAX_RESULT_CHARS);
     }
 
     const html = await resp.text();
     const text = stripHtml(html);
 
-    return text.slice(0, 5000) || '(empty page)';
+    return text.slice(0, MAX_RESULT_CHARS) || '(empty page)';
   } catch (err) {
     return `Fetch failed: ${toErrorMessage(err)}`;
   }

@@ -86,7 +86,7 @@ enum AgentType: String, CaseIterable {
 
     var brandColor: Color {
         switch self {
-        case .claudeCode: return Color(hex: 0xD97757) // Claude orange
+        case .claudeCode: return DN.claudeOrange
         case .cursor: return Color(hex: 0x00B4D8) // Cursor blue
         case .codex: return Color(hex: 0x10A37F) // OpenAI green
         case .windsurf: return Color(hex: 0x00C896) // Windsurf teal
@@ -134,7 +134,7 @@ enum AgentLiveState: Equatable {
         switch self {
         case .idle: return DN.textDisabled
         case .thinking: return DN.warning
-        case .toolUse: return Color(hex: 0xD97757)
+        case .toolUse: return DN.claudeOrange
         case .responding: return DN.success
         case .waitingForUser: return DN.textSecondary
         }

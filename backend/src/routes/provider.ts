@@ -3,15 +3,12 @@ import { requireAuth } from '../middleware/auth.js';
 import { supabase } from '../lib/supabase.js';
 import { encrypt } from '../providers/crypto.js';
 import { createProvider } from '../providers/factory.js';
+import { config } from '../config.js';
 import type { ProviderType } from '../providers/types.js';
 
 const VALID_PROVIDERS: ProviderType[] = ['anthropic', 'openai', 'openrouter'];
 
-const DEFAULT_MODELS: Record<ProviderType, string> = {
-  anthropic: 'claude-sonnet-4-20250514',
-  openai: 'gpt-5',
-  openrouter: 'anthropic/claude-sonnet-4-20250514',
-};
+const DEFAULT_MODELS = config.defaultModels;
 
 function maskKey(key: string): string {
   if (key.length <= 8) return '••••••••';
