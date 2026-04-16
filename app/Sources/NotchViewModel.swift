@@ -181,7 +181,7 @@ class NotchViewModel: ObservableObject {
 
     var authManager: AuthManager?
 
-    // App connection states (keyed by app_type: gmail, googlecalendar, googledocs, linear)
+    // App connection states (keyed by app_type: gmail, googlecalendar, googledocs, github)
     @Published var appConnected: [String: Bool] = [:]
     @Published var appLoading: [String: Bool] = [:]
     @Published var appError: [String: String?] = [:]

@@ -13,7 +13,7 @@ import { syncConnectionToDb } from '../composio/connection.js';
 // Tool: request_app_connection — lets the agent ask the user to connect an app
 const requestAppConnectionTool: CanonicalTool = {
   name: 'request_app_connection',
-  description: 'Request the user to connect an app integration (Gmail, Google Calendar, Google Docs, Linear). Use this when you need tools from an app that is not yet connected. The user will see a permission prompt and can approve or deny. If approved, the app\'s tools become available immediately.',
+  description: 'Request the user to connect an app integration (Gmail, Google Calendar, Google Docs, GitHub). Use this when you need tools from an app that is not yet connected. The user will see a permission prompt and can approve or deny. If approved, the app\'s tools become available immediately.',
   input_schema: {
     type: 'object',
     properties: {
