@@ -100,6 +100,41 @@ export async function getBillingStatus(userId: string): Promise<BillingStatus> {
   };
 }
 
+export async function markUserPaid(
+  userId: string,
+  { dodoCustomerId, dodoPaymentId }: { dodoCustomerId: string | null; dodoPaymentId: string },
+): Promise<{ alreadyProcessed: boolean }> {
+  const { data: profile, error } = await supabase
+    .from('danotch_user_profiles')
+    .select('id, dodo_payment_id')
+    .eq('id', userId)
+    .single();
+
+  if (error || !profile) {
+    throw new EntitlementError('profile_not_found', `Cannot mark user ${userId} as paid: profile not found.`);
+  }
+
+  if (profile.dodo_payment_id === dodoPaymentId) {
+    return { alreadyProcessed: true };
+  }
+
+  const { error: updateError } = await supabase
+    .from('danotch_user_profiles')
+    .update({
+      billing_status: 'paid',
+      lifetime_purchased_at: new Date().toISOString(),
+      dodo_customer_id: dodoCustomerId,
+      dodo_payment_id: dodoPaymentId,
+    })
+    .eq('id', userId);
+
+  if (updateError) {
+    throw new Error(`Failed to mark user ${userId} as paid (payment ${dodoPaymentId}): ${updateError.message}`);
+  }
+
+  return { alreadyProcessed: false };
+}
+
 export async function resolveProviderForUser(
   userId: string,
   modelOverride?: string,

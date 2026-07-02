@@ -12,6 +12,11 @@ import { startScheduler, stopScheduler } from './scheduler/index.js';
 import { config } from './config.js';
 
 const app = express();
+// Webhook signature verification needs the exact raw request bytes, so this
+// path gets its own raw-body parser ahead of the global JSON parser. Scoped
+// only to /api/billing/webhook — body-parser skips re-parsing a request whose
+// body was already consumed by an earlier parser.
+app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
 // Request logging

@@ -240,6 +240,9 @@ class NotchViewModel: ObservableObject {
     @Published var billingStatus: BillingStatus?
     @Published var billingLoading = false
     @Published var billingError: String?
+    private var checkoutPollTimer: Timer?
+    private var checkoutPollAttempts = 0
+    private let checkoutPollMaxAttempts = 40 // ~2 min at 3s intervals
 
     // WebSocket send callback (set by WebSocketServer)
     var wsSend: (([String: Any]) -> Void)?
@@ -277,6 +280,10 @@ class NotchViewModel: ObservableObject {
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+    }
+
+    deinit {
+        checkoutPollTimer?.invalidate()
     }
 
     func startClock() {
@@ -818,7 +825,30 @@ class NotchViewModel: ObservableObject {
                 self.billingStatus = parsed
                 self.billingLoading = false
                 self.billingError = nil
+                if parsed.billingStatus == "paid" {
+                    self.stopCheckoutPolling()
+                }
             }
+        }
+    }
+
+    private func stopCheckoutPolling() {
+        checkoutPollTimer?.invalidate()
+        checkoutPollTimer = nil
+        checkoutPollAttempts = 0
+    }
+
+    private func startCheckoutPolling() {
+        stopCheckoutPolling() // invalidate any existing timer so repeated "Buy $5" taps never leak timers
+        checkoutPollAttempts = 0
+        checkoutPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.checkoutPollAttempts += 1
+            if self.checkoutPollAttempts >= self.checkoutPollMaxAttempts {
+                self.stopCheckoutPolling()
+                return
+            }
+            self.loadBillingStatus()
         }
     }
 
@@ -849,6 +879,7 @@ class NotchViewModel: ObservableObject {
                 self.billingLoading = false
                 if status == 200, let urlString = json["checkout_url"] as? String, let url = URL(string: urlString) {
                     NSWorkspace.shared.open(url)
+                    self.startCheckoutPolling()
                 } else {
                     self.billingError = json["error"] as? String ?? "Checkout is not ready yet"
                 }
