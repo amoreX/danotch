@@ -1169,10 +1169,33 @@ class NowPlayingMonitor: ObservableObject {
 
     func poll() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Cheap native check first (NSWorkspace, no subprocess) — most of the
+            // time neither app is running, so this avoids two osascript spawns
+            // every 2 seconds forever. Each osascript spawn is heavier than a
+            // plain subprocess (loads the AppleScript component) and was, along
+            // with AgentMonitor's old `ps` polling, part of what hammered
+            // syspolicyd/launchservicesd and caused system-wide input lag.
+            let running = NSWorkspace.shared.runningApplications
+            let musicRunning = running.contains { $0.bundleIdentifier == "com.apple.Music" }
+            let spotifyRunning = running.contains { $0.bundleIdentifier == "com.spotify.client" }
+
+            guard musicRunning || spotifyRunning else {
+                DispatchQueue.main.async {
+                    guard self?.track != nil || self?.source != nil else { return }
+                    self?.source = nil
+                    self?.track = nil
+                    self?.artist = nil
+                    self?.isPlaying = false
+                    self?.artworkImage = nil
+                    self?.lastTrackKey = nil
+                }
+                return
+            }
+
             // Query both apps; pick whichever is actively playing. If neither
             // is playing we fall back to whichever has a track loaded (paused).
-            let music = Self.fetch(.appleMusic)
-            let spotify = Self.fetch(.spotify)
+            let music = musicRunning ? Self.fetch(.appleMusic) : .empty
+            let spotify = spotifyRunning ? Self.fetch(.spotify) : .empty
             let chosen = Self.pick(music: music, spotify: spotify)
 
             let trackKey = chosen.result.track.map { "\(chosen.source?.rawValue ?? "_")|\($0)" }

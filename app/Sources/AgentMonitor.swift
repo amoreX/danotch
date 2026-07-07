@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import AppKit
+import Darwin
 
 class AgentMonitor: ObservableObject {
     @Published var agents: [DetectedAgent] = []
@@ -352,21 +353,128 @@ class AgentMonitor: ObservableObject {
     }
 
     // MARK: - Shell Helpers
+    //
+    // NOTE: this used to spawn `/bin/ps` every 3s (see git history). Each subprocess
+    // spawn on macOS triggers a Gatekeeper/codesign check via syspolicyd, and doing
+    // that every 3 seconds forever measurably hammered syspolicyd/launchservicesd
+    // and caused system-wide keyboard input lag. Replaced with a native
+    // sysctl(KERN_PROC_ALL) + sysctl(KERN_PROCARGS2) scan — no subprocess, no
+    // Gatekeeper check, same data.
 
     private static func runPS() -> [String] {
-        let pipe = Pipe()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-eo", "pid,pcpu,rss,etime,args"]
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
+        guard let pids = listAllPIDs() else { return [] }
+        var lines: [String] = []
+        lines.reserveCapacity(pids.count)
+        for pid in pids {
+            guard let info = procInfo(pid: pid), let args = procArgs(pid: pid) else { continue }
+            // Mirror the old `ps -eo pid,pcpu,rss,etime,args` column shape so
+            // parsePSLine below keeps working unmodified.
+            lines.append("\(pid) \(info.cpu) \(info.rssKB) \(info.etime) \(args)")
+        }
+        return lines
+    }
 
-        do { try process.run() } catch { return [] }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+    private static func listAllPIDs() -> [pid_t]? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        var size = 0
+        guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0, size > 0 else { return nil }
 
-        guard let output = String(data: data, encoding: .utf8) else { return [] }
-        return output.components(separatedBy: "\n")
+        let count = size / MemoryLayout<kinfo_proc>.size
+        var procs = [kinfo_proc](repeating: kinfo_proc(), count: count)
+        var actualSize = size
+        guard sysctl(&mib, UInt32(mib.count), &procs, &actualSize, nil, 0) == 0 else { return nil }
+
+        let actualCount = actualSize / MemoryLayout<kinfo_proc>.size
+        return procs.prefix(actualCount).map { $0.kp_proc.p_pid }
+    }
+
+    private struct ProcMetrics {
+        let cpu: String   // formatted like ps's %CPU column
+        let rssKB: Int
+        let etime: String
+    }
+
+    private static var startTimeCache: [pid_t: Date] = [:]
+
+    /// Best-effort CPU%/RSS/elapsed via proc_pidinfo (TASK_BASIC_INFO-equivalent).
+    /// We don't need ps-grade precision here — this only feeds a UI status dot
+    /// (idle vs running), so approximations are fine.
+    private static func procInfo(pid: pid_t) -> ProcMetrics? {
+        var usage = rusage_info_current()
+        let result = withUnsafeMutablePointer(to: &usage) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rptr in
+                proc_pid_rusage(pid, RUSAGE_INFO_CURRENT, rptr)
+            }
+        }
+        guard result == 0 else { return nil }
+
+        let rssKB = Int(usage.ri_resident_size / 1024)
+
+        var kp = kinfo_proc()
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var size = MemoryLayout<kinfo_proc>.size
+        guard sysctl(&mib, UInt32(mib.count), &kp, &size, nil, 0) == 0 else { return nil }
+
+        let startSeconds = TimeInterval(kp.kp_proc.p_starttime.tv_sec)
+        let startDate = Date(timeIntervalSince1970: startSeconds)
+        let elapsedSeconds = max(0, Date().timeIntervalSince(startDate))
+        let etime = formatEtimeRaw(elapsedSeconds)
+
+        // Approximate %CPU from total CPU time / wall-clock elapsed since start.
+        let cpuSeconds = Double(usage.ri_user_time + usage.ri_system_time) / 1_000_000_000.0
+        let cpuPct = elapsedSeconds > 0 ? min(100.0, (cpuSeconds / elapsedSeconds) * 100.0) : 0
+        let cpuStr = String(format: "%.1f", cpuPct)
+
+        return ProcMetrics(cpu: cpuStr, rssKB: rssKB, etime: etime)
+    }
+
+    /// Formats seconds into ps's `etime` raw shape (`[[dd-]hh:]mm:ss`) so
+    /// formatElapsed(_:) downstream doesn't need to change.
+    private static func formatEtimeRaw(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let s = total % 60
+        let m = (total / 60) % 60
+        let h = (total / 3600) % 24
+        let d = total / 86400
+        if d > 0 { return "\(d)-\(String(format: "%02d", h)):\(String(format: "%02d", m)):\(String(format: "%02d", s))" }
+        if h > 0 { return "\(h):\(String(format: "%02d", m)):\(String(format: "%02d", s))" }
+        return "\(m):\(String(format: "%02d", s))"
+    }
+
+    /// Reads argv for a pid via sysctl(KERN_PROCARGS2) — same info `ps ... args`
+    /// exposes, no subprocess required.
+    private static func procArgs(pid: pid_t) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0, size > 0 else { return nil }
+
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, UInt32(mib.count), &buffer, &size, nil, 0) == 0 else { return nil }
+
+        // Layout: Int32 argc, then argv[0] (executable path), NUL-padded,
+        // then argv[1...] each NUL-terminated.
+        guard buffer.count >= MemoryLayout<Int32>.size else { return nil }
+        let argc = buffer.withUnsafeBytes { $0.load(as: Int32.self) }
+
+        var offset = MemoryLayout<Int32>.size
+        func readCString() -> String? {
+            guard offset < buffer.count else { return nil }
+            let start = offset
+            while offset < buffer.count, buffer[offset] != 0 { offset += 1 }
+            let str = String(bytes: buffer[start..<offset], encoding: .utf8)
+            // Skip the NUL and any padding NULs before the next string.
+            while offset < buffer.count, buffer[offset] == 0 { offset += 1 }
+            return str
+        }
+
+        guard let execPath = readCString() else { return nil }
+        var args: [String] = [execPath]
+        var i: Int32 = 0
+        while i < argc, let arg = readCString() {
+            args.append(arg)
+            i += 1
+        }
+        return args.joined(separator: " ")
     }
 
     private struct PSLine {
@@ -418,22 +526,24 @@ class AgentMonitor: ObservableObject {
         return raw
     }
 
+    /// Native replacement for the old `lsof -a -p {pid} -d cwd -Fn` subprocess.
+    /// Uses libproc's PROC_PIDVNODEPATHINFO, same info lsof reports, no spawn.
     private static func getCwd(pid: Int32) -> String? {
-        let pipe = Pipe()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-a", "-p", "\(pid)", "-d", "cwd", "-Fn"]
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-
-        do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
-        guard let output = String(data: data, encoding: .utf8) else { return nil }
-        for line in output.components(separatedBy: "\n") {
-            if line.hasPrefix("n/") { return String(line.dropFirst(1)) }
+        var vnodeInfo = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        let result = withUnsafeMutablePointer(to: &vnodeInfo) { ptr -> Int32 in
+            proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, ptr, size)
         }
-        return nil
+        guard result == size else { return nil }
+
+        let cwdPathBytes = withUnsafePointer(to: vnodeInfo.pvi_cdir.vip_path) { ptr -> [UInt8] in
+            ptr.withMemoryRebound(to: UInt8.self, capacity: Int(MAXPATHLEN)) { buf in
+                Array(UnsafeBufferPointer(start: buf, count: Int(MAXPATHLEN)))
+            }
+        }
+        guard let nulIdx = cwdPathBytes.firstIndex(of: 0) else {
+            return String(bytes: cwdPathBytes, encoding: .utf8)
+        }
+        return String(bytes: cwdPathBytes[..<nulIdx], encoding: .utf8)
     }
 }

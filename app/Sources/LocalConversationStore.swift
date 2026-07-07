@@ -16,6 +16,15 @@ final class LocalConversationStore {
     private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
     private static let storeFile = configDir.appendingPathComponent("conversations.json")
 
+    // All reads/writes go through this serial queue. `upsert` is a
+    // read-modify-write over the whole file and gets called synchronously from
+    // the main actor on every tool_start/tool_result/text_flush/done WebSocket
+    // event — during a busy agent run that's a full JSON decode+encode+disk
+    // write on the main thread multiple times a second, which shows up as UI
+    // stutter. Moving it to a background serial queue keeps the writes
+    // ordered (no lost updates) without blocking the UI thread.
+    private static let ioQueue = DispatchQueue(label: "com.danotch.conversationstore", qos: .utility)
+
     private struct StoreFile: Codable {
         var conversations: [LocalConversationRecord]
     }
@@ -44,38 +53,45 @@ final class LocalConversationStore {
         loadAll().first { $0.id == id }
     }
 
+    /// Queues the read-modify-write on a background serial queue so callers
+    /// (main actor) don't block on disk I/O. Writes for the same store are
+    /// strictly ordered since they all funnel through `ioQueue`.
     func upsert(_ record: LocalConversationRecord) {
-        var records = loadAll()
-        if let idx = records.firstIndex(where: { $0.id == record.id }) {
-            records[idx] = record
-        } else {
-            records.append(record)
+        Self.ioQueue.async { [self] in
+            var records = loadAll()
+            if let idx = records.firstIndex(where: { $0.id == record.id }) {
+                records[idx] = record
+            } else {
+                records.append(record)
+            }
+            save(records)
         }
-        save(records)
     }
 
     func markInProgressInterrupted() {
-        var records = loadAll()
-        var changed = false
-        let now = Date()
+        Self.ioQueue.sync { [self] in
+            var records = loadAll()
+            var changed = false
+            let now = Date()
 
-        for idx in records.indices where records[idx].status.isInProgress {
-            records[idx].status = .cancelled
-            records[idx].updatedAt = now
-            records[idx].completedAt = now
-            records[idx].messages.append(ChatMessage(
-                id: UUID().uuidString,
-                role: "agent",
-                content: "Conversation interrupted because the app quit.",
-                toolName: nil,
-                draftCard: nil,
-                timestamp: now
-            ))
-            changed = true
-        }
+            for idx in records.indices where records[idx].status.isInProgress {
+                records[idx].status = .cancelled
+                records[idx].updatedAt = now
+                records[idx].completedAt = now
+                records[idx].messages.append(ChatMessage(
+                    id: UUID().uuidString,
+                    role: "agent",
+                    content: "Conversation interrupted because the app quit.",
+                    toolName: nil,
+                    draftCard: nil,
+                    timestamp: now
+                ))
+                changed = true
+            }
 
-        if changed {
-            save(records)
+            if changed {
+                save(records)
+            }
         }
     }
 
