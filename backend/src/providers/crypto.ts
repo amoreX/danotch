@@ -6,8 +6,10 @@ const IV_LENGTH = 16;
 function getKey(): Buffer {
   const secret = process.env.PROVIDER_KEY_SECRET;
   if (!secret) {
-    console.warn('[crypto] PROVIDER_KEY_SECRET not set — using weak dev fallback');
-    return scryptSync('perch-dev-fallback', 'salt', 32);
+    throw new Error(
+      'PROVIDER_KEY_SECRET is required to encrypt/decrypt provider API keys. ' +
+        'Set it in backend/.env before starting the server.',
+    );
   }
   return scryptSync(secret, 'perch-provider-keys', 32);
 }

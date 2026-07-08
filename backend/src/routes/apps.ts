@@ -125,26 +125,13 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
   });
 
   // OAuth callback — Composio redirects here after user authorizes.
-  // The userId comes as a query param that Composio passes through (entity_id).
-  router.get('/callback', async (req, res) => {
-    console.log(`${tag} OAuth callback received:`, req.query);
-
-    const userId = (req.query.user_id as string) ?? (req.query.entity_id as string) ?? (req.query.entityId as string);
-    const connAccountId = req.query.connectedAccountId as string | undefined;
-    console.log(`${tag} Callback userId=${userId}, connectedAccountId=${connAccountId}`);
-    if (userId) {
-      await supabase
-        .from('danotch_connected_apps')
-        .update({
-          active: true,
-          composio_conn_id: connAccountId ?? null,
-          connected_at: new Date().toISOString(),
-          disconnected_at: null,
-        })
-        .eq('user_id', userId)
-        .eq('app_type', appType);
-      invalidateActiveAppsCache(userId);
-    }
+  // This endpoint intentionally does NOT write to the database. Query parameters
+  // are client-controlled and can be forged (e.g., an attacker could craft a
+  // callback URL with another user's user_id). The macOS app polls
+  // /api/apps/:appType/status, which queries Composio directly as the source of
+  // truth, so the DB state is updated from a trusted source instead.
+  router.get('/callback', async (_req, res) => {
+    console.log(`${tag} OAuth callback received — rendering success page only`);
 
     res.send(`
       <html>

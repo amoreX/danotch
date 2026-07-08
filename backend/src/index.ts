@@ -12,12 +12,24 @@ import { startScheduler, stopScheduler } from './scheduler/index.js';
 import { config } from './config.js';
 
 const app = express();
+// Disable framework fingerprinting
+app.disable('x-powered-by');
+
 // Webhook signature verification needs the exact raw request bytes, so this
 // path gets its own raw-body parser ahead of the global JSON parser. Scoped
 // only to /api/billing/webhook — body-parser skips re-parsing a request whose
 // body was already consumed by an earlier parser.
-app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/billing/webhook', express.raw({ type: '*/*' }));
 app.use(express.json());
+
+// Security headers
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 
 // Request logging
 app.use((req, _res, next) => {
@@ -44,7 +56,7 @@ app.use('/api/apps', createAppRoutes());
 app.use('/api/provider', createProviderRoutes());
 app.use('/api/billing', createBillingRoutes());
 
-app.listen(config.port, () => {
+app.listen(config.port, '127.0.0.1', () => {
   console.log(`[perch-backend] http://localhost:${config.port}`);
 
   // Start scheduler after server is up

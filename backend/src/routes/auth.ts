@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
+import { rateLimit } from 'express-rate-limit';
 import { supabase } from '../lib/supabase.js';
 import { COMPOSIO_APPS } from '../composio/tools.js';
+import { requireAuth } from '../middleware/auth.js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY!;
@@ -19,6 +21,17 @@ function usernameFromEmail(email: string): string {
 
 export function createAuthRoutes(): Router {
   const router = Router();
+
+  // Limit brute-force attempts on auth endpoints
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+    message: { error: 'Too many attempts, please try again later.' },
+  });
+  router.use(authLimiter);
 
   // Sign up with email + password
   router.post('/signup', async (req, res) => {
@@ -185,35 +198,20 @@ export function createAuthRoutes(): Router {
   });
 
   // Get current user profile (requires auth)
-  router.get('/me', async (req, res) => {
-    const header = req.headers.authorization;
-    if (!header?.startsWith('Bearer ')) {
-      res.status(401).json({ error: 'Unauthorized' });
+  router.get('/me', requireAuth, async (req, res) => {
+    const userId = req.user!.sub;
+    const { data: profile, error } = await supabase
+      .from('danotch_user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    if (error || !profile) {
+      res.status(404).json({ error: 'Profile not found' });
       return;
     }
 
-    // Decode token to get user ID (without full middleware since this is in auth routes)
-    const jwt = await import('jsonwebtoken');
-    try {
-      const payload = jwt.default.verify(header.slice(7), process.env.SUPABASE_JWT_SECRET!, {
-        algorithms: ['HS256'],
-      }) as { sub: string };
-
-      const { data: profile, error } = await supabase
-        .from('danotch_user_profiles')
-        .select('*')
-        .eq('id', payload.sub)
-        .single();
-
-      if (error || !profile) {
-        res.status(404).json({ error: 'Profile not found' });
-        return;
-      }
-
-      res.json({ user: profile });
-    } catch {
-      res.status(401).json({ error: 'Invalid token' });
-    }
+    res.json({ user: profile });
   });
 
   return router;

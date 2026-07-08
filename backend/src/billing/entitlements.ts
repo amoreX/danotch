@@ -118,7 +118,10 @@ export async function markUserPaid(
     return { alreadyProcessed: true };
   }
 
-  const { error: updateError } = await supabase
+  // Atomic idempotency guard: only write if the stored payment id is still different.
+  // If another concurrent webhook updated the row between our read and write, the
+  // .neq filter will match no rows and we return alreadyProcessed: true.
+  const { data: updated, error: updateError } = await supabase
     .from('danotch_user_profiles')
     .update({
       billing_status: 'paid',
@@ -126,10 +129,17 @@ export async function markUserPaid(
       dodo_customer_id: dodoCustomerId,
       dodo_payment_id: dodoPaymentId,
     })
-    .eq('id', userId);
+    .eq('id', userId)
+    .neq('dodo_payment_id', dodoPaymentId)
+    .select('id')
+    .single();
 
   if (updateError) {
     throw new Error(`Failed to mark user ${userId} as paid (payment ${dodoPaymentId}): ${updateError.message}`);
+  }
+
+  if (!updated) {
+    return { alreadyProcessed: true };
   }
 
   return { alreadyProcessed: false };
