@@ -18,18 +18,18 @@ export function createBillingRoutes(): Router {
   });
 
   router.post('/checkout', requireAuth, async (req, res) => {
-    if (!isCheckoutConfigured()) {
-      res.status(503).json({
-        error: 'Checkout is not configured yet.',
-        code: 'checkout_not_configured',
-      });
-      return;
-    }
-
     try {
       const status = await getBillingStatus(req.user!.sub);
       if (status.billingStatus === 'paid') {
         res.json({ checkout_url: null, error: 'Already purchased — nothing to check out.' });
+        return;
+      }
+
+      if (!isCheckoutConfigured()) {
+        res.status(503).json({
+          error: 'Checkout is not configured yet.',
+          code: 'checkout_not_configured',
+        });
         return;
       }
 

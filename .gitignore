@@ -17,3 +17,6 @@ ghost-desktop-mono/
 
 # OS
 .DS_Store
+
+# Pentest artifacts
+pentest_findings.db

@@ -1,6 +1,7 @@
 import type { CanonicalTool } from '../providers/types.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import path from 'path';
 
 const execAsync = promisify(exec);
 
@@ -9,6 +10,28 @@ const BASH_MAX_BUFFER = 1024 * 1024; // 1MB
 const MAX_RESULT_CHARS = 5000;
 const MAX_SEARCH_CHARS = 2000;
 const MAX_ERROR_CHARS = 2000;
+
+const PRIVATE_IP_REGEX = /^(127\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|169\.254\.|0\.0\.0\.0|::1|fc00:|fe80:)/i;
+
+function isUnsafeUrl(urlString: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(urlString);
+  } catch {
+    return 'Invalid URL';
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return 'Only http:// and https:// URLs are allowed';
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === 'localhost' || hostname.endsWith('.localhost') || PRIVATE_IP_REGEX.test(hostname)) {
+    return 'Private/internal addresses are not allowed';
+  }
+
+  return null;
+}
 
 function stripHtml(html: string): string {
   return html
@@ -95,9 +118,28 @@ export async function executeLocalTool(
   }
 }
 
+function validateCwd(cwd: string): string | null {
+  if (!cwd || typeof cwd !== 'string') return 'cwd must be a non-empty string';
+  const home = process.env.HOME;
+  if (!home) return 'HOME environment variable is not set';
+  const resolved = path.resolve(cwd);
+  const homeResolved = path.resolve(home);
+  const homePrefix = homeResolved.endsWith(path.sep) ? homeResolved : homeResolved + path.sep;
+  if (resolved !== homeResolved && !resolved.startsWith(homePrefix)) {
+    return 'cwd must be inside the home directory';
+  }
+  return null;
+}
+
 async function bashExecute(input: Record<string, unknown>): Promise<string> {
   const command = input.command as string;
-  const cwd = (input.cwd as string) || process.env.HOME || '/';
+  const rawCwd = (input.cwd as string) || process.env.HOME || '/';
+
+  const cwdError = validateCwd(rawCwd);
+  if (cwdError) {
+    return `Error: ${cwdError}`;
+  }
+  const cwd = rawCwd;
 
   console.log(`[tool:bash] $ ${command}`);
 
@@ -165,6 +207,11 @@ async function webSearch(input: Record<string, unknown>): Promise<string> {
 async function webFetch(input: Record<string, unknown>): Promise<string> {
   const url = input.url as string;
   console.log(`[tool:web_fetch] ${url}`);
+
+  const unsafe = isUnsafeUrl(url);
+  if (unsafe) {
+    return `Fetch blocked: ${unsafe}`;
+  }
 
   try {
     const resp = await fetch(url, {

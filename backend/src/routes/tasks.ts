@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { runChat, getTask, getAllTasks, getThreads, getThreadMessages, deleteThread } from '../agent/runner.js';
 import type { NotchBridge } from '../events/notch.js';
 import { requireAuth, extractUserId } from '../middleware/auth.js';
@@ -8,26 +9,37 @@ export function createTaskRoutes(notch: NotchBridge): Router {
 
   // ── In-memory tasks (real-time state) ──
 
-  router.get('/tasks', (_req, res) => {
+  router.get('/tasks', requireAuth, (_req, res) => {
     const tasks = getAllTasks();
     console.log(`[tasks] GET /tasks → ${tasks.length} tasks`);
     res.json({ tasks });
   });
 
-  router.get('/tasks/:id', (req, res) => {
-    const task = getTask(req.params.id);
+  router.get('/tasks/:id', requireAuth, (req, res) => {
+    const taskId = req.params.id as string;
+    const task = getTask(taskId);
     if (!task) {
-      console.log(`[tasks] GET /tasks/${req.params.id} → not found`);
+      console.log(`[tasks] GET /tasks/${taskId} → not found`);
       res.status(404).json({ error: 'Task not found' });
       return;
     }
-    console.log(`[tasks] GET /tasks/${req.params.id} → ${task.status}`);
+    console.log(`[tasks] GET /tasks/${taskId} → ${task.status}`);
     res.json({ task });
   });
 
   // ── Chat (auth optional — works with or without token) ──
+  // Local tools (shell, file fetch) are gated to authenticated users, but rate
+  // limiting still applies to prevent LLM quota exhaustion and abuse.
 
-  router.post('/chat', async (req, res) => {
+  const chatLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many chat requests, please slow down.' },
+  });
+
+  router.post('/chat', chatLimiter, async (req, res) => {
     const { message, session_id, conversation_id, model_id } = req.body;
     if (!message || typeof message !== 'string') {
       res.status(400).json({ error: 'message is required' });

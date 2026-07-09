@@ -374,10 +374,20 @@ class NotchViewModel: ObservableObject {
             }
         }
 
-        let restoredTasks: [SubagentTask] = records.compactMap { record in
-            guard !existingIds.contains(record.id), !record.messages.isEmpty else { return nil }
+        // `records` is already sorted most-recent-first by loadAll(). Perch is
+        // designed to run indefinitely in the background, and this used to
+        // hydrate every historical conversation ever saved into the in-memory
+        // `tasks` array with no cap — over months of use that's unbounded RAM
+        // growth (every past chatHistory held live forever). Cap to a
+        // reasonable recent window; older threads are still on disk and can be
+        // opened on demand via loadThread(_:).
+        let maxHydratedThreads = 50
+        var restoredTasks: [SubagentTask] = []
+        for record in records {
+            guard !existingIds.contains(record.id), !record.messages.isEmpty else { continue }
             existingIds.insert(record.id)
-            return task(from: record)
+            restoredTasks.append(task(from: record))
+            if restoredTasks.count >= maxHydratedThreads { break }
         }
 
         guard !restoredTasks.isEmpty else { return }
@@ -414,8 +424,9 @@ class NotchViewModel: ObservableObject {
             title = fallbackTitle
         }
         let updatedAt = task.completedAt ?? task.chatHistory.last?.timestamp ?? Date()
+        let recordId = task.threadId ?? task.id
         let record = LocalConversationRecord(
-            id: task.threadId ?? task.id,
+            id: recordId,
             title: title,
             task: task.task,
             status: task.status,
@@ -426,7 +437,22 @@ class NotchViewModel: ObservableObject {
             messages: task.chatHistory
         )
         localConversationStore.upsert(record)
-        loadThreadHistory()
+
+        // NOTE: this used to call loadThreadHistory() here, which does a full
+        // disk read+decode of the whole conversations.json file. persistTask
+        // fires on every tool_start/tool_result/text_flush WebSocket event —
+        // during an active agent run that's a full file read AND write on the
+        // main thread multiple times a second (compounding the write cost
+        // fixed in LocalConversationStore.upsert above). The `tasks` array is
+        // already the live source of truth for the active chat UI, so we only
+        // need to keep the `threadHistory` sidebar summary in sync, which we
+        // can do in-memory from the record we just built — no disk round trip.
+        let summary = ThreadSummary(id: recordId, title: record.title, updatedAt: Self.isoString(updatedAt))
+        if let idx = threadHistory.firstIndex(where: { $0.id == recordId }) {
+            threadHistory[idx] = summary
+        } else {
+            threadHistory.insert(summary, at: 0)
+        }
     }
 
     private func persistTask(at idx: Int) {
@@ -1503,6 +1529,16 @@ class NotchViewModel: ObservableObject {
             withAnimation(.snappy(duration: 0.3)) {
                 notifications.insert(item, at: 0)
                 unreadCount += item.read ? 0 : 1
+                // Perch runs indefinitely in the background; without a cap this
+                // array (and unreadCount below) would grow forever as
+                // peek_notification events arrive over weeks/months. Full
+                // history is still fetchable from the backend via
+                // loadNotifications(); this only bounds the in-memory list fed
+                // by live WebSocket pushes.
+                let maxNotifications = 200
+                if notifications.count > maxNotifications {
+                    notifications.removeLast(notifications.count - maxNotifications)
+                }
             }
         }
         unreadCount = notifications.filter { !$0.read }.count

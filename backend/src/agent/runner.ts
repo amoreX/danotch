@@ -184,9 +184,11 @@ export async function runChat(
         content: m.content,
       }));
 
-    // All tools: local (bash, web) always, scheduled only if authed
+    // Local tools (bash, web, fetch) are only available to authenticated users.
+    // Unauthenticated chat requests should not be able to execute shell commands,
+    // fetch arbitrary URLs, or read the local filesystem.
     const tools: CanonicalTool[] = [
-      ...localTools,
+      ...(userId ? localTools : []),
       ...(userId ? scheduledTaskTools : []),
     ];
 

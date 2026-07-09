@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.js';
 import { supabase } from '../lib/supabase.js';
 import { encrypt, decrypt } from '../providers/crypto.js';
@@ -15,11 +16,6 @@ type ModelOption = {
   name: string;
   context_length?: number;
 };
-
-function maskKey(key: string): string {
-  if (key.length <= 8) return '••••••••';
-  return key.slice(0, 7) + '••••' + key.slice(-4);
-}
 
 export function createProviderRoutes(): Router {
   const router = Router();
@@ -142,12 +138,20 @@ export function createProviderRoutes(): Router {
     console.log(`[provider] User ${userId} → ${provider} (${modelId})`);
 
     res.json({
-      config: { ...data, api_key_masked: maskKey(api_key) },
+      config: data,
     });
   });
 
   // Verify a provider key with a minimal test call
-  router.post('/verify', requireAuth, async (req, res) => {
+  const verifyLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many verification attempts, please slow down.' },
+  });
+
+  router.post('/verify', verifyLimiter, requireAuth, async (req, res) => {
     const { provider, api_key, model_id } = req.body;
 
     if (!provider || !VALID_PROVIDERS.includes(provider)) {
@@ -169,13 +173,34 @@ export function createProviderRoutes(): Router {
         maxTokens: 5,
       });
 
-      // Update verified_at if user already has this provider saved
+      // Update verified_at only if the tested key matches the user's saved config.
+      // This prevents marking a stored key as verified when the user was testing a
+      // different raw key in the verify form.
       const userId = req.user!.sub;
-      await supabase
+      const { data: savedConfig } = await supabase
         .from('danotch_provider_configs')
-        .update({ verified_at: new Date().toISOString() })
+        .select('api_key_encrypted')
         .eq('user_id', userId)
-        .eq('provider', provider);
+        .eq('provider', provider)
+        .single();
+
+      let matchesStored = false;
+      if (savedConfig?.api_key_encrypted) {
+        try {
+          const storedKey = decrypt(savedConfig.api_key_encrypted);
+          matchesStored = storedKey === api_key;
+        } catch {
+          matchesStored = false;
+        }
+      }
+
+      if (matchesStored) {
+        await supabase
+          .from('danotch_provider_configs')
+          .update({ verified_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('provider', provider);
+      }
 
       console.log(`[provider] Verified ${provider} key (model: ${modelId})`);
       res.json({ verified: true, model: modelId, response: result.text.slice(0, 50) });
