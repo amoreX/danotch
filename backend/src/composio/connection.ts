@@ -11,17 +11,22 @@ export async function getConnectionStatus(userId: string, toolkitSlug: string): 
 }> {
   try {
     const c = getComposio();
-    // Check ACTIVE first, then fall back to any status (account may still be initializing after OAuth)
-    for (const statuses of [['ACTIVE'], undefined]) {
-      const query: any = { userIds: [userId], toolkitSlugs: [toolkitSlug] };
-      if (statuses) query.statuses = statuses;
-      const result = await c.connectedAccounts.list(query);
-      const account = result.items?.[0];
-      if (account) {
-        return { connected: true, accountId: account.id, status: account.status };
-      }
+    // Only an ACTIVE account is tool-usable. A pending/initiated/failed account
+    // must NOT be reported as connected or synced as active — doing so exposes
+    // tools that will fail at call time.
+    const result = await c.connectedAccounts.list({
+      userIds: [userId],
+      toolkitSlugs: [toolkitSlug],
+      statuses: ['ACTIVE'],
+    } as any);
+    const account = result.items?.[0];
+    if (account && account.status === 'ACTIVE') {
+      return { connected: true, accountId: account.id, status: account.status };
     }
-    return { connected: false };
+    // Surface a non-active account's status for logging, but not as connected.
+    const anyResult = await c.connectedAccounts.list({ userIds: [userId], toolkitSlugs: [toolkitSlug] } as any);
+    const pending = anyResult.items?.[0];
+    return { connected: false, status: pending?.status };
   } catch (err) {
     console.error(`[composio:${toolkitSlug}] Connection status check failed:`, err);
     return { connected: false };
@@ -36,7 +41,21 @@ export async function initiateConnection(
   try {
     const c = getComposio();
 
-    // Delete all existing connected accounts first to prevent duplicates
+    // Validate an auth config exists BEFORE deleting any existing account.
+    // Destroying a working connection and then failing to initiate a new one
+    // would leave the user disconnected (audit finding).
+    const authConfigs = await (c as any).authConfigs.list({ toolkitSlugs: [toolkitSlug] });
+    const allConfigs = authConfigs?.items ?? authConfigs ?? [];
+    console.log(`[composio:${toolkitSlug}] Auth configs found:`, allConfigs.map((c: any) => ({ id: c.id, appName: c.appName })));
+    // Pick the config matching our toolkit, not a random Google OAuth one
+    const appConfig = allConfigs.find((c: any) => c.appName === toolkitSlug) ?? allConfigs[0];
+
+    if (!appConfig?.id) {
+      return { error: `No auth config found for ${toolkitSlug}. Set it up in your Composio dashboard first.` };
+    }
+    console.log(`[composio:${toolkitSlug}] Using auth config: ${appConfig.id} (appName: ${appConfig.appName})`);
+
+    // Only now, with a validated auth config, clear existing accounts to prevent duplicates.
     try {
       const existing = await c.connectedAccounts.list({
         userIds: [userId],
@@ -51,17 +70,6 @@ export async function initiateConnection(
     } catch (cleanupErr) {
       console.warn(`[composio:${toolkitSlug}] Cleanup of existing accounts failed (continuing):`, cleanupErr);
     }
-
-    const authConfigs = await (c as any).authConfigs.list({ toolkitSlugs: [toolkitSlug] });
-    const allConfigs = authConfigs?.items ?? authConfigs ?? [];
-    console.log(`[composio:${toolkitSlug}] Auth configs found:`, allConfigs.map((c: any) => ({ id: c.id, appName: c.appName })));
-    // Pick the config matching our toolkit, not a random Google OAuth one
-    const appConfig = allConfigs.find((c: any) => c.appName === toolkitSlug) ?? allConfigs[0];
-
-    if (!appConfig?.id) {
-      return { error: `No auth config found for ${toolkitSlug}. Set it up in your Composio dashboard first.` };
-    }
-    console.log(`[composio:${toolkitSlug}] Using auth config: ${appConfig.id} (appName: ${appConfig.appName})`);
 
     const connectionRequest = await c.connectedAccounts.initiate(
       userId,

@@ -155,6 +155,15 @@ export async function runChat(
   const userId = options?.userId;
   const threadId = options?.conversationId ?? id;
 
+  // Resolve the LLM provider BEFORE creating a task or emitting status. An
+  // entitlement failure (trial expired, provider key required, operational)
+  // must propagate to the route as a deterministic error, not be swallowed
+  // into a "failed" task. Authenticated users can use the server key only
+  // during trial; after that they need an active BYOK provider.
+  const provider = userId
+    ? (await resolveProviderForUser(userId, options?.modelId)).provider
+    : getFallbackProvider(options?.modelId);
+
   const task = createOrUpdateTask(id, message);
 
   notch.sendStatus(id, {
@@ -168,11 +177,6 @@ export async function runChat(
   const toolsUsed: { name: string; input?: string; timestamp: string }[] = [];
 
   try {
-    // Resolve the LLM provider. Authenticated users can use the server key only
-    // during trial; after that they need an active BYOK provider.
-    const provider = userId
-      ? (await resolveProviderForUser(userId, options?.modelId)).provider
-      : getFallbackProvider(options?.modelId);
 
     // Conversation history is owned by the app and sent with each request.
     const canonicalMessages: CanonicalMessage[] = [
@@ -282,6 +286,11 @@ export async function runChat(
             const approved = await notch.requestConnection(requestId, id, appType, displayName, reason);
 
             if (approved) {
+              // Persist the connection to the DB so it survives into later
+              // chats (tool loading reads only active DB rows), then load tools
+              // for this in-flight conversation.
+              const toolkitSlug = app?.toolkitSlug ?? appType;
+              await syncConnectionToDb(userId, appType, toolkitSlug);
               const newTools = await loadToolsForApp(userId, appType);
               if (newTools.tools.length > 0) {
                 tools.push(...(newTools.tools as unknown as CanonicalTool[]));
