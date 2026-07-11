@@ -1,6 +1,8 @@
+import { SITE } from './site-config';
+
 const FOOTER_LINKS = [
-  { label: 'GitHub', href: 'https://github.com/amoreX/perch' },
-  { label: 'Issues', href: 'https://github.com/amoreX/perch/issues' },
+  { label: 'GitHub', href: SITE.githubUrl },
+  { label: 'Issues', href: SITE.issuesUrl },
   { label: 'Download', href: '#download' },
 ];
 
