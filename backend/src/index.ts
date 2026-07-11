@@ -58,7 +58,11 @@ app.use('/api/provider', createProviderRoutes());
 app.use('/api/billing', createBillingRoutes());
 app.use('/api/actions', createActionRoutes());
 
-app.listen(config.port, '127.0.0.1', () => {
+// Bind to 0.0.0.0 on cloud platforms (Render, Railway, etc.) so the load
+// balancer can reach the server. Fall back to loopback in local dev so the
+// port is not externally exposed by default.
+const host = process.env.HOST ?? (process.env.RENDER ? '0.0.0.0' : '127.0.0.1');
+app.listen(config.port, host, () => {
   console.log(`[perch-backend] http://localhost:${config.port}`);
 
   // Start scheduler after server is up
