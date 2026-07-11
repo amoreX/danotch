@@ -31,5 +31,11 @@ export const config = {
     productId: process.env.DODO_PAYMENTS_PRODUCT_ID || '',
     returnUrl: process.env.DODO_PAYMENTS_RETURN_URL || '',
     environment: process.env.DODO_PAYMENTS_ENVIRONMENT || 'test_mode',
+    // Expected commercial contract. A verified payment must match these exactly
+    // (in addition to the product id) before it grants an entitlement. Amount is
+    // in the currency's minor units (e.g. cents). Quantity defaults to 1.
+    expectedAmount: parseInt(process.env.DODO_PAYMENTS_EXPECTED_AMOUNT || '500', 10),
+    expectedCurrency: (process.env.DODO_PAYMENTS_EXPECTED_CURRENCY || 'USD').toUpperCase(),
+    expectedQuantity: parseInt(process.env.DODO_PAYMENTS_EXPECTED_QUANTITY || '1', 10),
   },
 } as const;
