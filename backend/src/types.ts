@@ -40,4 +40,14 @@ export interface ConnectionRequestEvent {
   reason: string;
 }
 
-export type NotchEvent = SubagentEvent | ConnectionRequestEvent;
+// A draft external action awaiting the user's explicit approval. The app renders
+// an approve/reject card and calls /api/actions/:id/{approve,reject}.
+export interface PendingActionEvent {
+  type: 'pending_action';
+  action_id: string;
+  session_id: string;
+  action_type: string;
+  summary: string;
+}
+
+export type NotchEvent = SubagentEvent | ConnectionRequestEvent | PendingActionEvent;

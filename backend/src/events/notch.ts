@@ -145,6 +145,17 @@ export class NotchBridge {
     });
   }
 
+  // Notify the app of a draft action awaiting the user's approval.
+  sendPendingAction(actionId: string, sessionId: string, actionType: string, summary: string) {
+    this.send({
+      type: 'pending_action',
+      action_id: actionId,
+      session_id: sessionId,
+      action_type: actionType,
+      summary,
+    });
+  }
+
   get connected(): boolean {
     return this.ws?.readyState === WebSocket.OPEN;
   }

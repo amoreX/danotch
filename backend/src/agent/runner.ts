@@ -10,6 +10,8 @@ import { scheduledTaskTools, executeScheduledTool } from '../tools/scheduled.js'
 import { localTools, executeLocalTool } from '../tools/local.js';
 import { loadComposioTools, executeComposioTool, loadToolsForApp, COMPOSIO_APPS } from '../composio/tools.js';
 import { syncConnectionToDb } from '../composio/connection.js';
+import { requiresApproval, summarizeAction } from '../actions/allowlist.js';
+import { createPendingAction } from '../actions/pending.js';
 
 // Tool: request_app_connection — lets the agent ask the user to connect an app
 const requestAppConnectionTool: CanonicalTool = {
@@ -301,6 +303,23 @@ export async function runChat(
             } else {
               result = `User denied the ${displayName} connection. Do not request this app again in this conversation. Answer their question another way or explain what you would need.`;
               console.log(`[chat] ${displayName} connection denied by user`);
+            }
+          } else if (isComposioTool && userId && requiresApproval(toolBlock.name)) {
+            // Mutating external action: do NOT execute. Create a durable pending
+            // action holding the immutable payload and ask the user to approve.
+            const summary = summarizeAction(toolBlock.name, toolInput);
+            const created = await createPendingAction({
+              userId,
+              sessionId: id,
+              actionType: toolBlock.name,
+              summary,
+              payload: toolInput,
+            });
+            if ('error' in created) {
+              result = `Could not prepare this action for approval: ${created.error}`;
+            } else {
+              notch.sendPendingAction(created.id, id, toolBlock.name, summary);
+              result = `This action needs the user's approval before it runs. A draft (${summary}) is now awaiting their decision in the app. Do not retry it; wait for the user to approve or reject.`;
             }
           } else if (isComposioTool && userId) {
             result = await executeComposioTool(userId, {
