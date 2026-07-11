@@ -532,33 +532,64 @@ class NotchViewModel: ObservableObject {
     }
 
     func markNotificationRead(_ id: String) {
-        if let idx = notifications.firstIndex(where: { $0.id == id }) {
-            notifications[idx].read = true
-            unreadCount = notifications.filter { !$0.read }.count
-        }
+        guard let idx = notifications.firstIndex(where: { $0.id == id }) else { return }
+        // Already read: nothing to do (also covers repeat taps on no-body rows).
+        if notifications[idx].read { return }
+        let previous = notifications[idx].read
+        notifications[idx].read = true
+        unreadCount = notifications.filter { !$0.read }.count
+
         guard let auth = authManager else { return }
         Task {
             await auth.ensureValidToken()
-            guard let token = auth.accessToken else { return }
+            guard let token = auth.accessToken else {
+                await MainActor.run { self.revertNotificationRead(id, to: previous) }
+                return
+            }
             var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications/\(id)/read")!)
             request.httpMethod = "POST"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            _ = try? await URLSession.shared.data(for: request)
+            let status = (try? await URLSession.shared.data(for: request))
+                .flatMap { ($0.1 as? HTTPURLResponse)?.statusCode } ?? 0
+            if !(200...299).contains(status) {
+                await MainActor.run { self.revertNotificationRead(id, to: previous) }
+            }
+        }
+    }
+
+    private func revertNotificationRead(_ id: String, to previous: Bool) {
+        if let idx = notifications.firstIndex(where: { $0.id == id }) {
+            notifications[idx].read = previous
+            unreadCount = notifications.filter { !$0.read }.count
         }
     }
 
     func markAllRead() {
+        let previous = notifications.map { $0.read }
         notifications.indices.forEach { notifications[$0].read = true }
         unreadCount = 0
         guard let auth = authManager else { return }
         Task {
             await auth.ensureValidToken()
-            guard let token = auth.accessToken else { return }
+            guard let token = auth.accessToken else {
+                await MainActor.run { self.restoreNotificationReadStates(previous) }
+                return
+            }
             var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications/read-all")!)
             request.httpMethod = "POST"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            _ = try? await URLSession.shared.data(for: request)
+            let status = (try? await URLSession.shared.data(for: request))
+                .flatMap { ($0.1 as? HTTPURLResponse)?.statusCode } ?? 0
+            if !(200...299).contains(status) {
+                await MainActor.run { self.restoreNotificationReadStates(previous) }
+            }
         }
+    }
+
+    private func restoreNotificationReadStates(_ previous: [Bool]) {
+        guard previous.count == notifications.count else { return }
+        for (i, wasRead) in previous.enumerated() { notifications[i].read = wasRead }
+        unreadCount = notifications.filter { !$0.read }.count
     }
 
     // MARK: - Scheduled Tasks
@@ -624,7 +655,12 @@ class NotchViewModel: ObservableObject {
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.httpBody = try? JSONSerialization.data(withJSONObject: ["enabled": enabled])
-            _ = try? await URLSession.shared.data(for: request)
+            let result = try? await URLSession.shared.data(for: request)
+            let status = (result?.1 as? HTTPURLResponse)?.statusCode ?? 0
+            if !(200...299).contains(status) {
+                // Reconcile optimistic toggle with server truth.
+                await MainActor.run { self.loadScheduledTasks() }
+            }
         }
     }
 
@@ -638,7 +674,12 @@ class NotchViewModel: ObservableObject {
             var request = URLRequest(url: url)
             request.httpMethod = "DELETE"
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            _ = try? await URLSession.shared.data(for: request)
+            let result = try? await URLSession.shared.data(for: request)
+            let status = (result?.1 as? HTTPURLResponse)?.statusCode ?? 0
+            if !(200...299).contains(status) {
+                // Delete failed — restore the list from the server.
+                await MainActor.run { self.loadScheduledTasks() }
+            }
         }
     }
 
@@ -787,9 +828,17 @@ class NotchViewModel: ObservableObject {
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
-            _ = try? await URLSession.shared.data(for: request)
+            let result = try? await URLSession.shared.data(for: request)
+            let status = (result?.1 as? HTTPURLResponse)?.statusCode ?? 0
+            let ok = (200...299).contains(status)
             await MainActor.run {
-                self.appConnected[appType] = false
+                // Only reflect disconnected when the server confirms it — otherwise
+                // Settings would falsely claim the app is disconnected.
+                if ok {
+                    self.appConnected[appType] = false
+                } else {
+                    self.appError[appType] = "Failed to disconnect — please try again."
+                }
                 self.appLoading[appType] = false
             }
         }
@@ -803,11 +852,16 @@ class NotchViewModel: ObservableObject {
     // MARK: - Billing
 
     func loadBillingStatus() {
-        guard let auth = authManager, let token = auth.accessToken else { return }
+        guard let auth = authManager, auth.accessToken != nil else { return }
         billingLoading = true
         billingError = nil
 
         Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else {
+                await MainActor.run { self.billingLoading = false }
+                return
+            }
             var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/billing/status")!)
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
 
@@ -879,11 +933,19 @@ class NotchViewModel: ObservableObject {
     }
 
     func startCheckout() {
-        guard let auth = authManager, let token = auth.accessToken else { return }
+        guard let auth = authManager, auth.accessToken != nil else { return }
         billingLoading = true
         billingError = nil
 
         Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else {
+                await MainActor.run {
+                    self.billingLoading = false
+                    self.billingError = "Session expired — please sign in again."
+                }
+                return
+            }
             var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/billing/checkout")!)
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -1220,7 +1282,80 @@ class NotchViewModel: ObservableObject {
         case "notification": processNotification(json)
         case "peek_notification": processPeekNotification(json)
         case "connection_request": processConnectionRequest(json)
+        case "pending_action": processPendingAction(json)
         default: break
+        }
+    }
+
+    private func processPendingAction(_ json: [String: Any]) {
+        guard let actionId = json["action_id"] as? String,
+              let sessionId = json["session_id"] as? String,
+              let actionType = json["action_type"] as? String,
+              let summary = json["summary"] as? String else { return }
+
+        guard let idx = tasks.firstIndex(where: { $0.id == sessionId }) else { return }
+        // Skip if we already have this action's card (dedupe re-delivery).
+        if tasks[idx].chatHistory.contains(where: { $0.id == actionId }) { return }
+
+        let card = DraftCard(
+            type: actionType,
+            title: summary,
+            preview: "This action needs your approval before it runs.",
+            recipient: nil
+        )
+        withAnimation(.snappy(duration: 0.3)) {
+            tasks[idx].chatHistory.append(ChatMessage(
+                id: actionId, role: "draft",
+                content: summary, toolName: actionType,
+                toolInput: nil, toolOutput: "pending",
+                draftCard: card, timestamp: Date()
+            ))
+        }
+        persistTask(at: idx)
+    }
+
+    func approveDraftAction(_ actionId: String) {
+        updateDraftActionStatus(actionId, status: "executing")
+        performDraftDecision(actionId, path: "approve")
+    }
+
+    func rejectDraftAction(_ actionId: String) {
+        updateDraftActionStatus(actionId, status: "rejected")
+        performDraftDecision(actionId, path: "reject")
+    }
+
+    private func performDraftDecision(_ actionId: String, path: String) {
+        guard let auth = authManager else { return }
+        Task {
+            await auth.ensureValidToken()
+            guard let token = auth.accessToken else {
+                await MainActor.run { self.updateDraftActionStatus(actionId, status: "failed") }
+                return
+            }
+            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/actions/\(actionId)/\(path)")!)
+            request.httpMethod = "POST"
+            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let result = try? await URLSession.shared.data(for: request)
+            let status = (result?.1 as? HTTPURLResponse)?.statusCode ?? 0
+            await MainActor.run {
+                if path == "approve" {
+                    self.updateDraftActionStatus(actionId, status: (200...299).contains(status) ? "completed" : "failed")
+                } else {
+                    self.updateDraftActionStatus(actionId, status: (200...299).contains(status) ? "rejected" : "pending")
+                }
+            }
+        }
+    }
+
+    private func updateDraftActionStatus(_ actionId: String, status: String) {
+        for taskIdx in tasks.indices {
+            if let msgIdx = tasks[taskIdx].chatHistory.firstIndex(where: { $0.id == actionId }) {
+                withAnimation(.snappy(duration: 0.2)) {
+                    tasks[taskIdx].chatHistory[msgIdx].toolOutput = status
+                }
+                persistTask(at: taskIdx)
+                return
+            }
         }
     }
 
@@ -1322,6 +1457,9 @@ class NotchViewModel: ObservableObject {
             // Store the status in toolOutput so the UI can read it
             tasks[taskIdx].chatHistory[msgIdx].toolOutput = status.rawValue
         }
+        // Persist so a resolved (approved/denied) request survives app restart
+        // instead of reappearing as a dangling pending card.
+        persistTask(at: taskIdx)
     }
 
     private func processSubagentEvent(_ json: [String: Any]) {
@@ -1740,7 +1878,7 @@ class NotchViewModel: ObservableObject {
             ]
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-            URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
+            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self = self,
                       let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
@@ -1749,16 +1887,31 @@ class NotchViewModel: ObservableObject {
                         self.tasks[idx].status = .failed
                         self.tasks[idx].error = error.localizedDescription
                     }
+                    self.persistTask(at: idx)
+                    return
+                }
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                let json = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                // A rejected request (auth, entitlement, validation, server error)
+                // must fail the task — otherwise it waits forever for WebSocket
+                // events that a rejected request never produces.
+                guard (200...299).contains(status) else {
+                    let serverMessage = json?["error"] as? String
+                    withAnimation(.snappy(duration: 0.3)) {
+                        self.tasks[idx].status = .failed
+                        self.tasks[idx].error = serverMessage ?? "Request failed (\(status))"
+                    }
+                    self.persistTask(at: idx)
+                    if status == 401 { self.authManager?.logout() }
                     return
                 }
                 // Capture thread_id from response for follow-ups
-                if let data = data,
-                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                   let threadId = json["thread_id"] as? String {
+                if let threadId = json?["thread_id"] as? String {
                     self.tasks[idx].threadId = threadId
+                    self.persistTask(at: idx)
                 }
             }
-            // Success is handled by WebSocket events updating the task
+            // Success streaming is handled by WebSocket events updating the task
         }.resume()
         } // Task
     }
