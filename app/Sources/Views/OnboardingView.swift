@@ -535,7 +535,6 @@ struct OnboardingView: View {
             pageHeader("Approve local access", "Choose what Perch can use on this Mac.")
 
             VStack(spacing: OB.itemSpacing) {
-                permissionRow(title: "Shell commands", subtitle: "Run local commands when a task needs your Mac.", icon: "terminal", isOn: $localToolConsent)
                 permissionRow(title: "Agent monitoring", subtitle: "Show active AI sessions, CPU, memory, and project.", icon: "cpu", isOn: $agentMonitoring)
                 permissionRow(title: "Music controls", subtitle: "Read and control Apple Music for the media widget.", icon: "music.note", isOn: $musicControls)
                 permissionRow(title: "Notifications", subtitle: "macOS alerts for scheduled tasks and updates.", icon: "bell.badge", isOn: $systemNotifications)
@@ -828,7 +827,7 @@ struct OnboardingView: View {
         switch step {
         case .account: return canSubmitAuth && !auth.isLoading
         case .model: return useDefaultModel || isProviderVerified || activeProvider != nil
-        case .permissions: return localToolConsent
+        case .permissions: return true
         default: return true
         }
     }

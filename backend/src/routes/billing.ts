@@ -1,8 +1,15 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
-import { getBillingStatus, markUserPaid } from '../billing/entitlements.js';
+import {
+  getBillingStatus,
+  recordPayment,
+  createCheckoutRecord,
+  attachCheckoutSession,
+  EntitlementError,
+} from '../billing/entitlements.js';
 import { config } from '../config.js';
 import { getDodoClient, isCheckoutConfigured, isWebhookConfigured } from '../billing/dodo-client.js';
+import { validatePaymentContract, type WebhookPayload } from '../billing/contract.js';
 
 export function createBillingRoutes(): Router {
   const router = Router();
@@ -12,8 +19,14 @@ export function createBillingRoutes(): Router {
       const status = await getBillingStatus(req.user!.sub);
       res.json(status);
     } catch (err) {
+      // Distinguish a genuinely missing profile (client should re-auth) from a
+      // transient operational failure (client must NOT log out).
+      if (err instanceof EntitlementError && err.code === 'profile_not_found') {
+        res.status(404).json({ error: err.message, code: 'profile_not_found' });
+        return;
+      }
       const message = err instanceof Error ? err.message : 'Failed to load billing status';
-      res.status(404).json({ error: message });
+      res.status(503).json({ error: message, code: 'billing_unavailable' });
     }
   });
 
@@ -33,13 +46,29 @@ export function createBillingRoutes(): Router {
         return;
       }
 
+      // Create a server-owned checkout record first so the webhook can bind the
+      // eventual payment to this authenticated user and expected commercial terms.
+      const recordId = await createCheckoutRecord(req.user!.sub, {
+        productId: config.dodo.productId,
+        expectedAmount: config.dodo.expectedAmount,
+        expectedCurrency: config.dodo.expectedCurrency,
+        expectedQuantity: config.dodo.expectedQuantity,
+        environment: config.dodo.environment,
+      });
+
       const client = getDodoClient();
       const session = await client.checkoutSessions.create({
-        product_cart: [{ product_id: config.dodo.productId, quantity: 1 }],
+        product_cart: [{ product_id: config.dodo.productId, quantity: config.dodo.expectedQuantity }],
         customer: { email: req.user!.email },
         return_url: config.dodo.returnUrl,
-        metadata: { user_id: req.user!.sub },
+        metadata: { user_id: req.user!.sub, checkout_record_id: recordId },
       });
+
+      const sessionId = (session as { session_id?: string; id?: string }).session_id
+        ?? (session as { id?: string }).id;
+      if (sessionId) {
+        await attachCheckoutSession(recordId, sessionId);
+      }
 
       res.json({ checkout_url: session.checkout_url });
     } catch (err) {
@@ -77,7 +106,7 @@ export function createBillingRoutes(): Router {
     }
 
     const client = getDodoClient();
-    let payload: any;
+    let payload: WebhookPayload;
     try {
       const rawBody = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body);
       payload = client.webhooks.unwrap(rawBody, {
@@ -86,7 +115,7 @@ export function createBillingRoutes(): Router {
           'webhook-signature': req.headers['webhook-signature'] as string,
           'webhook-timestamp': req.headers['webhook-timestamp'] as string,
         },
-      });
+      }) as WebhookPayload;
     } catch (err) {
       console.warn('[billing] webhook signature verification failed:', err instanceof Error ? err.message : err);
       res.status(401).json({ error: 'Invalid signature' });
@@ -99,34 +128,38 @@ export function createBillingRoutes(): Router {
       return;
     }
 
-    const userId = payload.data?.metadata?.user_id;
-    const paymentId = payload.data?.payment_id;
-    const customerId = payload.data?.customer?.customer_id ?? null;
-
-    if (!userId || !paymentId) {
-      console.warn('[billing] payment.succeeded missing metadata.user_id or payment_id — acknowledging without a DB write.');
+    const contract = validatePaymentContract(payload);
+    if (!contract.ok) {
+      // Verified but does not match the configured commercial contract. This is a
+      // terminal decision (retrying won't change it), so acknowledge with 200
+      // WITHOUT granting anything.
+      console.warn(`[billing] payment.succeeded rejected: ${contract.reason}`);
       res.json({ received: true });
       return;
     }
 
     try {
-      const result = await markUserPaid(userId, { dodoCustomerId: customerId, dodoPaymentId: paymentId });
-      if (result.alreadyProcessed) {
-        console.log(`[billing] payment ${paymentId} already processed for user ${userId} — skipping duplicate write.`);
-      } else {
-        console.log(`[billing] user ${userId} marked paid (payment ${paymentId}).`);
-      }
+      const outcome = await recordPayment({
+        deliveryId: (req.headers['webhook-id'] as string) ?? null,
+        paymentId: contract.paymentId,
+        claimedUserId: contract.userId,
+        dodoCustomerId: contract.customerId,
+        eventType: payload.type,
+        amount: contract.amount,
+        currency: contract.currency,
+        productId: contract.productId,
+      });
+      console.log(`[billing] payment ${contract.paymentId} → ${outcome} (user ${contract.userId}).`);
+      // granted / duplicate / unknown_profile / rejected are all terminal.
+      res.json({ received: true, outcome });
     } catch (err) {
-      // Unmatched/unknown user_id (or any other write failure): log for manual
-      // reconciliation and still ack 200 — retrying won't resolve an unknown
-      // user, so this avoids an infinite Dodo retry loop.
+      // Operational/database failure. Return non-2xx so Dodo retries with backoff.
       console.error(
-        `[billing] markUserPaid failed for user_id=${userId} payment_id=${paymentId}:`,
+        `[billing] recordPayment failed for user_id=${contract.userId} payment_id=${contract.paymentId}:`,
         err instanceof Error ? err.message : err,
       );
+      res.status(503).json({ error: 'Temporary failure recording payment; please retry.' });
     }
-
-    res.json({ received: true });
   });
 
   return router;

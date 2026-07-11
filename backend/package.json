@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "db:billing": "node scripts/apply-billing-schema.mjs",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:verify": "node scripts/migrate.mjs --verify",
+    "db:billing": "node scripts/migrate.mjs",
+    "test": "node --import tsx --test src/**/*.test.ts",
     "start": "node dist/index.js"
   },
   "dependencies": {

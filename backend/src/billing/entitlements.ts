@@ -21,7 +21,7 @@ export type BillingStatus = {
 };
 
 export class EntitlementError extends Error {
-  readonly code: 'profile_not_found' | 'trial_expired' | 'provider_key_required';
+  readonly code: 'profile_not_found' | 'trial_expired' | 'provider_key_required' | 'operational';
   readonly billingStatus?: BillingStatus;
 
   constructor(
@@ -36,6 +36,9 @@ export class EntitlementError extends Error {
   }
 }
 
+// Payment recording outcomes returned by the danotch_record_payment RPC.
+export type PaymentOutcome = 'granted' | 'duplicate' | 'unknown_profile' | 'rejected';
+
 export async function getBillingStatus(userId: string): Promise<BillingStatus> {
   const { data: profile, error } = await supabase
     .from('danotch_user_profiles')
@@ -43,7 +46,16 @@ export async function getBillingStatus(userId: string): Promise<BillingStatus> {
     .eq('id', userId)
     .single();
 
-  if (error || !profile) {
+  if (error) {
+    // PGRST116 = no rows returned → the profile genuinely doesn't exist.
+    // Any other error is an operational/database failure and must not be
+    // conflated with a missing profile (the client logs out on not-found).
+    if ((error as { code?: string }).code === 'PGRST116') {
+      throw new EntitlementError('profile_not_found', 'Your account profile was not found. Please sign in again.');
+    }
+    throw new EntitlementError('operational', `Billing status is temporarily unavailable: ${error.message}`);
+  }
+  if (!profile) {
     throw new EntitlementError('profile_not_found', 'Your account profile was not found. Please sign in again.');
   }
 
@@ -100,49 +112,87 @@ export async function getBillingStatus(userId: string): Promise<BillingStatus> {
   };
 }
 
-export async function markUserPaid(
+/**
+ * Create a server-owned checkout record before redirecting to Dodo. The webhook
+ * can only grant an entitlement when a verified payment matches one of these
+ * records for the authenticated user (product, amount, currency, unexpired).
+ * Returns the record id so the caller can attach the Dodo session id afterwards.
+ */
+export async function createCheckoutRecord(
   userId: string,
-  { dodoCustomerId, dodoPaymentId }: { dodoCustomerId: string | null; dodoPaymentId: string },
-): Promise<{ alreadyProcessed: boolean }> {
-  const { data: profile, error } = await supabase
-    .from('danotch_user_profiles')
-    .select('id, dodo_payment_id')
-    .eq('id', userId)
-    .single();
-
-  if (error || !profile) {
-    throw new EntitlementError('profile_not_found', `Cannot mark user ${userId} as paid: profile not found.`);
-  }
-
-  if (profile.dodo_payment_id === dodoPaymentId) {
-    return { alreadyProcessed: true };
-  }
-
-  // Atomic idempotency guard: only write if the stored payment id is still different.
-  // If another concurrent webhook updated the row between our read and write, the
-  // .neq filter will match no rows and we return alreadyProcessed: true.
-  const { data: updated, error: updateError } = await supabase
-    .from('danotch_user_profiles')
-    .update({
-      billing_status: 'paid',
-      lifetime_purchased_at: new Date().toISOString(),
-      dodo_customer_id: dodoCustomerId,
-      dodo_payment_id: dodoPaymentId,
+  {
+    productId,
+    expectedAmount,
+    expectedCurrency,
+    expectedQuantity,
+    environment,
+  }: {
+    productId: string;
+    expectedAmount: number;
+    expectedCurrency: string;
+    expectedQuantity: number;
+    environment: string;
+  },
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('danotch_checkout_records')
+    .insert({
+      user_id: userId,
+      product_id: productId,
+      expected_amount: expectedAmount,
+      expected_currency: expectedCurrency.toUpperCase(),
+      expected_quantity: expectedQuantity,
+      environment,
     })
-    .eq('id', userId)
-    .neq('dodo_payment_id', dodoPaymentId)
     .select('id')
     .single();
 
-  if (updateError) {
-    throw new Error(`Failed to mark user ${userId} as paid (payment ${dodoPaymentId}): ${updateError.message}`);
+  if (error || !data) {
+    throw new Error(`Failed to create checkout record: ${error?.message ?? 'unknown error'}`);
+  }
+  return data.id;
+}
+
+export async function attachCheckoutSession(recordId: string, dodoSessionId: string): Promise<void> {
+  await supabase
+    .from('danotch_checkout_records')
+    .update({ dodo_session_id: dodoSessionId })
+    .eq('id', recordId);
+}
+
+/**
+ * Record a verified payment and grant the entitlement atomically via RPC.
+ * The RPC consumes a matching checkout record, dedupes on delivery/payment id,
+ * and grants paid status on first eligible payment only. It never throws for a
+ * business outcome; a thrown error here means an operational/database failure
+ * that the caller should treat as retryable (non-2xx to Dodo).
+ */
+export async function recordPayment(params: {
+  deliveryId: string | null;
+  paymentId: string;
+  claimedUserId: string;
+  dodoCustomerId: string | null;
+  eventType: string;
+  amount: number | null;
+  currency: string | null;
+  productId: string | null;
+}): Promise<PaymentOutcome> {
+  const { data, error } = await supabase.rpc('danotch_record_payment', {
+    p_delivery_id: params.deliveryId,
+    p_payment_id: params.paymentId,
+    p_claimed_user_id: params.claimedUserId,
+    p_customer_id: params.dodoCustomerId,
+    p_event_type: params.eventType,
+    p_amount: params.amount,
+    p_currency: params.currency ? params.currency.toUpperCase() : null,
+    p_product_id: params.productId,
+  });
+
+  if (error) {
+    throw new Error(`recordPayment RPC failed for payment ${params.paymentId}: ${error.message}`);
   }
 
-  if (!updated) {
-    return { alreadyProcessed: true };
-  }
-
-  return { alreadyProcessed: false };
+  return (data as PaymentOutcome) ?? 'rejected';
 }
 
 export async function resolveProviderForUser(

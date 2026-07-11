@@ -173,15 +173,20 @@ struct AgentChatView: View {
             ToolBubble(msg: msg)
 
         case "connection_request":
-            let reqStatus = ConnectionRequestStatus(rawValue: msg.toolOutput ?? "pending") ?? .pending
-            if reqStatus != .denied && reqStatus != .approved {
-                connectionRequestBubble(msg)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-            }
+            // Render for every state — the bubble's own switch handles pending,
+            // connecting, approved, and denied. Suppressing approved/denied here
+            // hid the terminal outcome entirely.
+            connectionRequestBubble(msg)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
 
         case "draft":
             if let draft = msg.draftCard {
-                DraftCardView(draft: draft)
+                DraftCardView(
+                    draft: draft,
+                    status: msg.toolOutput ?? "pending",
+                    onApprove: { viewModel.approveDraftAction(msg.id) },
+                    onReject: { viewModel.rejectDraftAction(msg.id) }
+                )
             }
 
         default:
@@ -667,6 +672,9 @@ struct StreamingTextView: View {
 
 struct DraftCardView: View {
     let draft: DraftCard
+    var status: String = "pending"
+    var onApprove: () -> Void = {}
+    var onReject: () -> Void = {}
 
     private var icon: String {
         switch draft.type {
@@ -715,9 +723,19 @@ struct DraftCardView: View {
                 .lineLimit(4)
                 .fixedSize(horizontal: false, vertical: true)
 
+            draftActions
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentCard(cornerRadius: 14)
+    }
+
+    @ViewBuilder
+    private var draftActions: some View {
+        switch status {
+        case "pending":
             HStack(spacing: 8) {
                 Spacer()
-
                 Text("Reject")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.white)
@@ -725,6 +743,7 @@ struct DraftCardView: View {
                     .frame(height: 24)
                     .glassEffect(.regular, in: .capsule)
                     .contentShape(.capsule)
+                    .onTapGesture { onReject() }
 
                 Text("Approve")
                     .font(.system(size: 11, weight: .semibold))
@@ -733,10 +752,26 @@ struct DraftCardView: View {
                     .frame(height: 24)
                     .glassEffect(Glass.regular.tint(DN.activeAccent), in: .capsule)
                     .contentShape(.capsule)
+                    .onTapGesture { onApprove() }
             }
+        case "executing":
+            HStack(spacing: 6) {
+                ProgressView().scaleEffect(0.55).frame(width: 14, height: 14)
+                Text("Running…").font(.system(size: 10)).foregroundColor(DN.warning)
+            }
+        case "completed":
+            statusLine(icon: "checkmark.circle.fill", color: DN.success, text: "Done")
+        case "rejected":
+            statusLine(icon: "xmark.circle.fill", color: DN.textDisabled, text: "Rejected")
+        default:
+            statusLine(icon: "exclamationmark.triangle.fill", color: DN.accent, text: "Failed — try again")
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentCard(cornerRadius: 14)
+    }
+
+    private func statusLine(icon: String, color: Color, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.system(size: 11)).foregroundColor(color)
+            Text(text).font(.system(size: 10)).foregroundColor(color)
+        }
     }
 }

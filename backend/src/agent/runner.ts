@@ -10,6 +10,8 @@ import { scheduledTaskTools, executeScheduledTool } from '../tools/scheduled.js'
 import { localTools, executeLocalTool } from '../tools/local.js';
 import { loadComposioTools, executeComposioTool, loadToolsForApp, COMPOSIO_APPS } from '../composio/tools.js';
 import { syncConnectionToDb } from '../composio/connection.js';
+import { requiresApproval, summarizeAction } from '../actions/allowlist.js';
+import { createPendingAction } from '../actions/pending.js';
 
 // Tool: request_app_connection — lets the agent ask the user to connect an app
 const requestAppConnectionTool: CanonicalTool = {
@@ -155,6 +157,15 @@ export async function runChat(
   const userId = options?.userId;
   const threadId = options?.conversationId ?? id;
 
+  // Resolve the LLM provider BEFORE creating a task or emitting status. An
+  // entitlement failure (trial expired, provider key required, operational)
+  // must propagate to the route as a deterministic error, not be swallowed
+  // into a "failed" task. Authenticated users can use the server key only
+  // during trial; after that they need an active BYOK provider.
+  const provider = userId
+    ? (await resolveProviderForUser(userId, options?.modelId)).provider
+    : getFallbackProvider(options?.modelId);
+
   const task = createOrUpdateTask(id, message);
 
   notch.sendStatus(id, {
@@ -168,11 +179,6 @@ export async function runChat(
   const toolsUsed: { name: string; input?: string; timestamp: string }[] = [];
 
   try {
-    // Resolve the LLM provider. Authenticated users can use the server key only
-    // during trial; after that they need an active BYOK provider.
-    const provider = userId
-      ? (await resolveProviderForUser(userId, options?.modelId)).provider
-      : getFallbackProvider(options?.modelId);
 
     // Conversation history is owned by the app and sent with each request.
     const canonicalMessages: CanonicalMessage[] = [
@@ -282,6 +288,11 @@ export async function runChat(
             const approved = await notch.requestConnection(requestId, id, appType, displayName, reason);
 
             if (approved) {
+              // Persist the connection to the DB so it survives into later
+              // chats (tool loading reads only active DB rows), then load tools
+              // for this in-flight conversation.
+              const toolkitSlug = app?.toolkitSlug ?? appType;
+              await syncConnectionToDb(userId, appType, toolkitSlug);
               const newTools = await loadToolsForApp(userId, appType);
               if (newTools.tools.length > 0) {
                 tools.push(...(newTools.tools as unknown as CanonicalTool[]));
@@ -292,6 +303,23 @@ export async function runChat(
             } else {
               result = `User denied the ${displayName} connection. Do not request this app again in this conversation. Answer their question another way or explain what you would need.`;
               console.log(`[chat] ${displayName} connection denied by user`);
+            }
+          } else if (isComposioTool && userId && requiresApproval(toolBlock.name)) {
+            // Mutating external action: do NOT execute. Create a durable pending
+            // action holding the immutable payload and ask the user to approve.
+            const summary = summarizeAction(toolBlock.name, toolInput);
+            const created = await createPendingAction({
+              userId,
+              sessionId: id,
+              actionType: toolBlock.name,
+              summary,
+              payload: toolInput,
+            });
+            if ('error' in created) {
+              result = `Could not prepare this action for approval: ${created.error}`;
+            } else {
+              notch.sendPendingAction(created.id, id, toolBlock.name, summary);
+              result = `This action needs the user's approval before it runs. A draft (${summary}) is now awaiting their decision in the app. Do not retry it; wait for the user to approve or reject.`;
             }
           } else if (isComposioTool && userId) {
             result = await executeComposioTool(userId, {

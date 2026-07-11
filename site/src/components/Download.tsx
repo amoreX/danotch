@@ -1,4 +1,5 @@
 import Button from './Button';
+import { SITE } from './site-config';
 
 function AppleIcon() {
   return (
@@ -51,7 +52,7 @@ export default function Download() {
           </h2>
 
           <div className="flex items-center gap-3">
-            <Button href="#" size="xl">
+            <Button href={SITE.downloadUrl} size="xl" external>
               <span className="[&_svg]:size-4">
                 <AppleIcon />
               </span>
@@ -59,7 +60,7 @@ export default function Download() {
             </Button>
 
             <a
-              href="https://github.com/amoreX/perch"
+              href={SITE.githubUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 no-underline rounded-full text-white/55 hover:text-white hover:bg-white/10"

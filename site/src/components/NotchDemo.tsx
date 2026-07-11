@@ -191,15 +191,26 @@ function MiniCalendarWidget({ today, calDays, compact = false }: { today: number
 
 const ALBUM_ART = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#D71921"/><stop offset="50%" stop-color="#8B0000"/><stop offset="100%" stop-color="#1a0000"/></linearGradient></defs><rect width="60" height="60" fill="url(#g)"/><text x="30" y="34" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="sans-serif" font-size="8" font-weight="bold">AFTER</text><text x="30" y="44" text-anchor="middle" fill="rgba(255,255,255,0.4)" font-family="sans-serif" font-size="6">HOURS</text></svg>`);
 
+const TRACKS = [
+  { title: 'Blinding Lights', artist: 'The Weeknd' },
+  { title: 'Midnight City', artist: 'M83' },
+  { title: 'Redbone', artist: 'Childish Gambino' },
+];
+
 function MiniMusicWidget({ isPlaying, setIsPlaying, big = false }: { isPlaying: boolean; setIsPlaying: (v: boolean) => void; big?: boolean }) {
+  const [trackIdx, setTrackIdx] = useState(0);
+  const track = TRACKS[trackIdx];
+  const prev = () => setTrackIdx((i) => (i - 1 + TRACKS.length) % TRACKS.length);
+  const next = () => setTrackIdx((i) => (i + 1) % TRACKS.length);
+
   if (big) {
     return (
       <div className="group">
         <div className="flex items-start gap-2.5">
           <img src={ALBUM_ART} className="rounded shrink-0" style={{ width: 48, height: 48 }} alt="" />
           <div className="flex-1 min-w-0 pt-0.5">
-            <div className="truncate" style={{ fontSize: 12, color: DN.textPrimary, fontWeight: 600 }}>Blinding Lights</div>
-            <div className="truncate" style={{ fontSize: 9, fontFamily: 'monospace', color: DN.textDisabled }}>The Weeknd</div>
+            <div className="truncate" style={{ fontSize: 12, color: DN.textPrimary, fontWeight: 600 }}>{track.title}</div>
+            <div className="truncate" style={{ fontSize: 9, fontFamily: 'monospace', color: DN.textDisabled }}>{track.artist}</div>
             {/* Progress bar */}
             <div className="mt-1.5 flex items-center gap-1.5">
               <span style={{ fontSize: 7, fontFamily: 'monospace', color: DN.textDisabled }}>1:52</span>
@@ -211,9 +222,9 @@ function MiniMusicWidget({ isPlaying, setIsPlaying, big = false }: { isPlaying: 
           </div>
         </div>
         <div className="flex items-center justify-center gap-3 mt-1.5 opacity-60 group-hover:opacity-100 transition-opacity">
-          <button className="p-0.5" style={{ color: DN.textSecondary }}><SkipBack size={10} /></button>
+          <button className="p-0.5" style={{ color: DN.textSecondary }} onClick={prev}><SkipBack size={10} /></button>
           <button className="p-0.5" style={{ color: DN.textPrimary }} onClick={() => setIsPlaying(!isPlaying)}>{isPlaying ? <Pause size={12} /> : <Play size={12} />}</button>
-          <button className="p-0.5" style={{ color: DN.textSecondary }}><SkipForward size={10} /></button>
+          <button className="p-0.5" style={{ color: DN.textSecondary }} onClick={next}><SkipForward size={10} /></button>
         </div>
       </div>
     );
@@ -222,13 +233,13 @@ function MiniMusicWidget({ isPlaying, setIsPlaying, big = false }: { isPlaying: 
     <div className="flex items-center gap-2 group">
       <img src={ALBUM_ART} className="rounded shrink-0" style={{ width: 30, height: 30 }} alt="" />
       <div className="flex-1 min-w-0">
-        <div className="truncate" style={{ fontSize: 10, color: DN.textPrimary, fontWeight: 500 }}>Blinding Lights</div>
-        <div className="truncate" style={{ fontSize: 8, fontFamily: 'monospace', color: DN.textDisabled }}>The Weeknd</div>
+        <div className="truncate" style={{ fontSize: 10, color: DN.textPrimary, fontWeight: 500 }}>{track.title}</div>
+        <div className="truncate" style={{ fontSize: 8, fontFamily: 'monospace', color: DN.textDisabled }}>{track.artist}</div>
       </div>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button className="p-0.5" style={{ color: DN.textSecondary }}><SkipBack size={8} /></button>
+        <button className="p-0.5" style={{ color: DN.textSecondary }} onClick={prev}><SkipBack size={8} /></button>
         <button className="p-0.5" style={{ color: DN.textSecondary }} onClick={() => setIsPlaying(!isPlaying)}>{isPlaying ? <Pause size={9} /> : <Play size={9} />}</button>
-        <button className="p-0.5" style={{ color: DN.textSecondary }}><SkipForward size={8} /></button>
+        <button className="p-0.5" style={{ color: DN.textSecondary }} onClick={next}><SkipForward size={8} /></button>
       </div>
     </div>
   );
@@ -733,7 +744,23 @@ function TabButton({ active, onClick, icon, children }: { active: boolean; onCli
 }
 
 // ─── OVERVIEW VIEW ───
-function OverviewView({ h12, minutes, ampm, dateStr, today, calDays, isPlaying, setIsPlaying, isSectionExpanded, toggleSection, handleUserInteraction, pinnedWidgets, sparkData }: any) {
+interface OverviewViewProps {
+  h12: number;
+  minutes: string;
+  ampm: string;
+  dateStr: string;
+  today: number;
+  calDays: Array<number | null>;
+  isPlaying: boolean;
+  setIsPlaying: (v: boolean) => void;
+  isSectionExpanded: (id: string) => boolean;
+  toggleSection: (id: string) => void;
+  handleUserInteraction: (view?: ViewState) => void;
+  pinnedWidgets: PinnedWidget[];
+  sparkData: { cpu: number[]; ram: number[]; netDown: number[]; netUp: number[] };
+}
+
+function OverviewView({ h12, minutes, ampm, dateStr, today, calDays, isPlaying, setIsPlaying, isSectionExpanded, toggleSection, handleUserInteraction, pinnedWidgets, sparkData }: OverviewViewProps) {
   return (
     <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }} className="flex h-full">
       {/* Left column */}
@@ -799,7 +826,13 @@ function OverviewView({ h12, minutes, ampm, dateStr, today, calDays, isPlaying, 
 }
 
 // ─── AGENTS VIEW ───
-function AgentsView({ isSectionExpanded, toggleSection, handleUserInteraction }: any) {
+interface AgentsViewProps {
+  isSectionExpanded: (id: string) => boolean;
+  toggleSection: (id: string) => void;
+  handleUserInteraction: (view?: ViewState) => void;
+}
+
+function AgentsView({ isSectionExpanded, toggleSection, handleUserInteraction }: AgentsViewProps) {
   return (
     <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 10 }} transition={{ duration: 0.2 }}
       className="flex flex-col h-full px-3 py-2 overflow-y-auto gap-1.5" style={{ scrollbarWidth: 'none' }}>
@@ -950,21 +983,50 @@ function StatsView({ sparkData, liveStats }: { sparkData: { cpu: number[]; ram: 
 
 // ─── NOTIFICATIONS VIEW ───
 function NotificationsView({ forceExpanded }: { forceExpanded?: number | null }) {
-  const [expanded, setExpanded] = useState<number | null>(null);
-  useEffect(() => { if (forceExpanded !== undefined) setExpanded(forceExpanded); }, [forceExpanded]);
+  // Controlled by the scripted showcase when forceExpanded is provided (a number
+  // or null); otherwise interactive. Deriving avoids a setState-in-effect.
+  const [localExpanded, setLocalExpanded] = useState<number | null>(null);
+  const expanded = forceExpanded !== undefined ? forceExpanded : localExpanded;
+
+  const [readIds, setReadIds] = useState<Set<number>>(
+    () => new Set(DEMO_NOTIFICATIONS.filter((n) => !n.unread).map((n) => n.id)),
+  );
+  const [removedIds, setRemovedIds] = useState<Set<number>>(new Set());
+  const [pausedIds, setPausedIds] = useState<Set<number>>(new Set());
+
+  const markRead = (id: number) => setReadIds((prev) => new Set(prev).add(id));
+  const markAllRead = () => setReadIds(new Set(DEMO_NOTIFICATIONS.map((n) => n.id)));
+  const removeNotif = (id: number) => setRemovedIds((prev) => new Set(prev).add(id));
+  const togglePause = (id: number) =>
+    setPausedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const toggleExpand = (i: number, id: number) => {
+    markRead(id);
+    setLocalExpanded(expanded === i ? null : i);
+  };
+
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} transition={{ duration: 0.2 }} className="flex flex-col h-full px-3 py-2">
       <div className="flex items-center justify-between mb-2">
         <span style={{ fontSize: 10, fontFamily: 'monospace', letterSpacing: 1.5, color: DN.textSecondary }}>NOTIFICATIONS</span>
-        <button className="px-2 py-0.5 rounded" style={{ fontSize: 7, fontFamily: 'monospace', letterSpacing: 0.8, color: DN.textDisabled, border: `1px solid ${DN.border}` }}>MARK ALL READ</button>
+        <button onClick={markAllRead} className="px-2 py-0.5 rounded" style={{ fontSize: 7, fontFamily: 'monospace', letterSpacing: 0.8, color: DN.textDisabled, border: `1px solid ${DN.border}` }}>MARK ALL READ</button>
       </div>
       <div className="flex-1 overflow-y-auto space-y-1" style={{ scrollbarWidth: 'none' }}>
-        {DEMO_NOTIFICATIONS.map((n, i) => (
+        {DEMO_NOTIFICATIONS.map((n, i) => {
+          if (removedIds.has(n.id)) return null;
+          const unread = !readIds.has(n.id);
+          const paused = pausedIds.has(n.id);
+          return (
           <div key={n.id}>
-            <button onClick={() => setExpanded(expanded === i ? null : i)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors"
-              style={{ backgroundColor: expanded === i ? `${DN.surface}80` : n.unread ? `${DN.surface}4D` : 'transparent' }}>
-              <div className="w-[5px] h-[5px] rounded-full shrink-0" style={{ backgroundColor: n.unread ? DN.accent : 'transparent' }} />
-              <span className="flex-1 text-left truncate" style={{ fontSize: 11, color: n.unread ? DN.textPrimary : DN.textSecondary, fontWeight: n.unread ? 500 : 400 }}>{n.title}</span>
+            <button onClick={() => toggleExpand(i, n.id)} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors"
+              style={{ backgroundColor: expanded === i ? `${DN.surface}80` : unread ? `${DN.surface}4D` : 'transparent' }}>
+              <div className="w-[5px] h-[5px] rounded-full shrink-0" style={{ backgroundColor: unread ? DN.accent : 'transparent' }} />
+              <span className="flex-1 text-left truncate" style={{ fontSize: 11, color: unread ? DN.textPrimary : DN.textSecondary, fontWeight: unread ? 500 : 400 }}>{n.title}{paused ? ' (paused)' : ''}</span>
               <span style={{ fontSize: 8, fontFamily: 'monospace', color: DN.textDisabled }}>{n.time}</span>
               {expanded === i ? <ChevronDown size={8} style={{ color: DN.textDisabled }} /> : <ChevronRight size={8} style={{ color: DN.textDisabled }} />}
             </button>
@@ -974,15 +1036,16 @@ function NotificationsView({ forceExpanded }: { forceExpanded?: number | null })
                   <div className="px-4 py-1.5 ml-3" style={{ borderLeft: `1px solid ${DN.border}` }}>
                     <span style={{ fontSize: 11, color: DN.textSecondary, lineHeight: 1.5 }}>{n.body}</span>
                     <div className="flex items-center gap-2 mt-1">
-                      <button className="p-0.5" style={{ color: DN.warning }}><Pause size={10} /></button>
-                      <button className="p-0.5" style={{ color: DN.accent }}><Trash2 size={9} /></button>
+                      <button onClick={() => togglePause(n.id)} className="p-0.5" style={{ color: paused ? DN.textDisabled : DN.warning }}><Pause size={10} /></button>
+                      <button onClick={() => removeNotif(n.id)} className="p-0.5" style={{ color: DN.accent }}><Trash2 size={9} /></button>
                     </div>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
-        ))}
+          );
+        })}
       </div>
     </motion.div>
   );

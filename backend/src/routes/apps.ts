@@ -34,19 +34,28 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
     }
 
     const status = await getConnectionStatus(userId, toolkitSlug);
-    // Fall back to DB if Composio doesn't report connected yet
-    if (!status.connected) {
-      const { data } = await supabase
-        .from('danotch_connected_apps')
-        .select('active')
-        .eq('user_id', userId)
-        .eq('app_type', appType)
-        .single();
-      if (data?.active) {
-        console.log(`${tag} → connected=true (from DB, composio lagging)`);
-        res.json({ connected: true });
-        return;
-      }
+    if (status.connected) {
+      // Trusted, authenticated sync point: an ACTIVE Composio account is the
+      // source of truth. Persist it so later chats (which load tools from the
+      // DB) can use it. This is where redirect-OAuth completions become durable.
+      await syncConnectionToDb(userId, appType, toolkitSlug);
+      console.log(`${tag} → connected=true (synced to DB)`);
+      res.json({ connected: true });
+      return;
+    }
+
+    // Composio not reporting connected yet — fall back to a previously-synced
+    // DB row so a brief post-OAuth lag doesn't flip the UI back to disconnected.
+    const { data } = await supabase
+      .from('danotch_connected_apps')
+      .select('active')
+      .eq('user_id', userId)
+      .eq('app_type', appType)
+      .single();
+    if (data?.active) {
+      console.log(`${tag} → connected=true (from DB, composio lagging)`);
+      res.json({ connected: true });
+      return;
     }
     console.log(`${tag} → connected=${status.connected}`);
     res.json(status);
@@ -94,10 +103,11 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
 
     try {
       const c = getComposio();
-      // Delete ALL connected accounts for this user (no toolkit filter — nuke everything under this auth config)
-      const all = await c.connectedAccounts.list({ userIds: [userId] });
+      // App-scoped: only delete accounts for THIS app's toolkit. Resetting Gmail
+      // must never remove the user's GitHub connection.
+      const scoped = await c.connectedAccounts.list({ userIds: [userId], toolkitSlugs: [toolkitSlug] });
       let deleted = 0;
-      for (const account of all.items ?? []) {
+      for (const account of scoped.items ?? []) {
         if (account?.id) {
           try {
             await c.connectedAccounts.delete(account.id);
@@ -108,7 +118,7 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
           }
         }
       }
-      console.log(`${tag} Reset: deleted ${deleted} composio accounts`);
+      console.log(`${tag} Reset: deleted ${deleted} composio accounts for ${toolkitSlug}`);
     } catch (e: any) {
       console.warn(`${tag} Reset composio cleanup error:`, e.message);
     }

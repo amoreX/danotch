@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { rateLimit } from 'express-rate-limit';
 import { runChat, getTask, getAllTasks, getThreads, getThreadMessages, deleteThread } from '../agent/runner.js';
 import type { NotchBridge } from '../events/notch.js';
-import { requireAuth, extractUserId } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/auth.js';
+import { EntitlementError } from '../billing/entitlements.js';
 
 export function createTaskRoutes(notch: NotchBridge): Router {
   const router = Router();
@@ -27,9 +28,9 @@ export function createTaskRoutes(notch: NotchBridge): Router {
     res.json({ task });
   });
 
-  // ── Chat (auth optional — works with or without token) ──
-  // Local tools (shell, file fetch) are gated to authenticated users, but rate
-  // limiting still applies to prevent LLM quota exhaustion and abuse.
+  // ── Chat (requires auth) ──
+  // Authentication is mandatory: unauthenticated callers must not create tasks,
+  // resolve providers, expose tools, or consume the server trial key.
 
   const chatLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minute
@@ -39,7 +40,7 @@ export function createTaskRoutes(notch: NotchBridge): Router {
     message: { error: 'Too many chat requests, please slow down.' },
   });
 
-  router.post('/chat', chatLimiter, async (req, res) => {
+  router.post('/chat', chatLimiter, requireAuth, async (req, res) => {
     const { message, session_id, conversation_id, model_id } = req.body;
     if (!message || typeof message !== 'string') {
       res.status(400).json({ error: 'message is required' });
@@ -56,8 +57,8 @@ export function createTaskRoutes(notch: NotchBridge): Router {
           .slice(-24)
       : [];
 
-    const userId = await extractUserId(req.headers.authorization);
-    console.log(`[chat] message="${message.slice(0, 50)}" userId=${userId ?? 'none'} conversationId=${conversation_id ?? 'new'} history=${history.length} sessionId=${session_id ?? 'new'}`);
+    const userId = req.user!.sub;
+    console.log(`[chat] message="${message.slice(0, 50)}" userId=${userId} conversationId=${conversation_id ?? 'new'} history=${history.length} sessionId=${session_id ?? 'new'}`);
 
     try {
       const task = await runChat(message, notch, {
@@ -74,6 +75,13 @@ export function createTaskRoutes(notch: NotchBridge): Router {
         conversation_id: task.threadId,
       });
     } catch (err) {
+      // Entitlement failures (trial expired, provider key required) are a
+      // deterministic 402 the client can act on, not a generic 500.
+      if (err instanceof EntitlementError) {
+        const httpStatus = err.code === 'operational' ? 503 : 402;
+        res.status(httpStatus).json({ error: err.message, code: err.code });
+        return;
+      }
       console.error(`[chat] Error:`, err);
       res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
     }

@@ -7,6 +7,7 @@ interface ButtonProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
   variant?: 'primary' | 'ghost';
   className?: string;
+  external?: boolean;
 }
 
 const GRADIENT_IDLE   = 'linear-gradient(180deg, #9d8ff8 0%, #7b6af0 100%)';
@@ -72,11 +73,14 @@ export default function Button({
   size = 'md',
   variant = 'primary',
   className = '',
+  external = false,
 }: ButtonProps) {
+  const externalAttrs = external ? { target: '_blank', rel: 'noopener noreferrer' } : {};
+
   if (variant === 'ghost') {
     const cls = `${baseClass} ${sizeMap[size]} text-zinc-500 hover:text-zinc-900 hover:bg-zinc-100 ${className}`;
     return href ? (
-      <a href={href} className={cls}>{children}</a>
+      <a href={href} className={cls} {...externalAttrs}>{children}</a>
     ) : (
       <button onClick={onClick} className={cls}>{children}</button>
     );
@@ -93,7 +97,7 @@ export default function Button({
 
   if (href) {
     return (
-      <a href={href} className={cls} style={sharedStyle} onClick={onClick} {...handlers}>
+      <a href={href} className={cls} style={sharedStyle} onClick={onClick} {...externalAttrs} {...handlers}>
         {children}
       </a>
     );
