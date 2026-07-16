@@ -25,13 +25,13 @@ export default function Download() {
     >
       <div
         aria-hidden="true"
-        className="absolute -left-[600px] right-0 -top-[200px] bottom-0 translate-x-[600px] bg-cover bg-center grayscale"
-        style={{ backgroundImage: 'url(/hero-image.jpg)', filter: 'saturate(0) brightness(0.8) contrast(1.2) blur(100px)' }}
+        className="absolute inset-0 bg-cover bg-center"
+        style={{ backgroundImage: 'url(/hero-image.jpg)' }}
       />
       <div
         aria-hidden="true"
         className="absolute inset-0"
-        style={{ background: 'rgba(107, 88, 228, 0)', mixBlendMode: 'overlay' , }}
+        style={{ background: 'rgba(0, 0, 0, 0.24)' }}
       />
      
 
@@ -40,7 +40,7 @@ export default function Download() {
           <h2
             className="m-0 leading-tight"
             style={{
-              fontFamily: "'Steps Mono', monospace",
+              fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
               fontWeight: 400,
               fontSize: 'clamp(42px, 5vw, 72px)',
               color: '#ffffff',
@@ -65,7 +65,7 @@ export default function Download() {
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 no-underline rounded-full text-white/55 hover:text-white hover:bg-white/10"
               style={{
-                fontFamily: "'Geist Mono', monospace",
+                fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
                 fontSize: 16,
                 fontWeight: 500,
                 letterSpacing: '-0.02em',

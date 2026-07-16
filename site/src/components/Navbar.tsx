@@ -260,7 +260,7 @@ export default function Navbar() {
           style={{
             background: '#ffffff',
             color: 'transparent',
-            fontFamily: '"SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
             fontSize: 25,
             fontWeight: 800,
             fontStyle: 'italic',
@@ -340,7 +340,7 @@ export default function Navbar() {
                 }`}
                 style={{
                   letterSpacing: '-0.02em',
-                  fontFamily: "'Geist Mono', monospace",
+                  fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
                 }}
               >
                 {section.label}
@@ -371,7 +371,7 @@ export default function Navbar() {
           aria-label="Contact"
           className="h-10 w-10 inline-flex items-center justify-center rounded-full bg-white/10 text-white no-underline transition-colors hover:bg-white/15"
           style={{
-            fontFamily: "'Geist Mono', monospace",
+            fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
             fontSize: 15,
             fontWeight: 600,
             lineHeight: 1,

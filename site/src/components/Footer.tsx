@@ -101,7 +101,7 @@ export default function Footer() {
           <p
             className="m-0 text-white leading-none select-none"
             style={{
-              fontFamily: "'Steps Mono', monospace",
+              fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
               fontWeight: 400,
               fontSize: 'clamp(64px, 13vw, 190px)',
               letterSpacing: '0.01em',
@@ -121,7 +121,7 @@ export default function Footer() {
         >
           <p
             className="m-0 max-w-md text-white/35"
-            style={{ fontFamily: "'Geist Mono', monospace", fontSize: 13, lineHeight: 1.7, letterSpacing: '-0.02em' }}
+            style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, lineHeight: 1.7, letterSpacing: '-0.02em' }}
           >
             Questions or bugs? Open an issue.
           </p>
@@ -134,7 +134,7 @@ export default function Footer() {
                 target={link.href.startsWith('http') ? '_blank' : undefined}
                 rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
                 className="text-white/45 no-underline transition-colors hover:text-white"
-                style={{ fontFamily: "'Geist Mono', monospace", fontSize: 13, letterSpacing: '-0.02em' }}
+                style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, letterSpacing: '-0.02em' }}
               >
                 {link.label}
               </a>
