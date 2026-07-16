@@ -721,6 +721,9 @@ const PreviewPanel = forwardRef<HTMLDivElement, {
   const peekBody = preview === 'home'
     ? 'Your focus block begins at 1:00 PM · Music and Do Not Disturb are ready'
     : 'Design review at 2:00 PM · Brief ready in Docs · 3 unread emails';
+  const panelBackground = preview === 'home'
+    ? 'radial-gradient(circle at 16% 86%, rgba(80,125,166,.30), transparent 42%), radial-gradient(circle at 88% 28%, rgba(108,83,136,.20), transparent 38%), linear-gradient(180deg, #000 0px, #000 30px, rgba(0,0,0,.94) 58px, rgba(5,10,17,.74) 145px, rgba(15,25,35,.38) 74%, rgba(20,31,42,.12) 100%)'
+    : 'linear-gradient(180deg, #000 0px, #000 30px, rgba(0,0,0,.92) 58px, rgba(2,5,9,.82) 145px, rgba(5,8,13,.72) 100%)';
 
   return (
     <motion.div
@@ -774,8 +777,7 @@ const PreviewPanel = forwardRef<HTMLDivElement, {
       <div
         className="pointer-events-none absolute inset-0"
         style={{
-          background:
-            'radial-gradient(circle at 16% 86%, rgba(80,125,166,.30), transparent 42%), radial-gradient(circle at 88% 28%, rgba(108,83,136,.20), transparent 38%), linear-gradient(180deg, #000 0px, #000 30px, rgba(0,0,0,.94) 58px, rgba(5,10,17,.74) 145px, rgba(15,25,35,.38) 74%, rgba(20,31,42,.12) 100%)',
+          background: panelBackground,
         }}
       />
       <AnimatePresence mode="wait">
@@ -978,21 +980,10 @@ export default function Features() {
 
           <div className="lg:sticky lg:top-24">
             <div
-              className="relative min-h-[430px] overflow-hidden rounded-[24px] bg-[#78bdf0] px-4 sm:px-8"
-              style={{
-                background:
-                  'radial-gradient(circle at 77% 15%, rgba(255,255,255,.72), transparent 13%), linear-gradient(180deg, #73bdf2 0%, #9dd2f2 100%)',
-              }}
+              className="relative mx-auto h-[330px] w-full max-w-[680px] overflow-hidden rounded-[24px] bg-cover bg-center sm:h-[400px] xl:h-[470px]"
+              style={{ backgroundImage: "url('/macos-mojave.jpg')" }}
             >
-              <div
-                className="absolute inset-x-0 bottom-0 top-[62px] bg-cover bg-center"
-                style={{ backgroundImage: "url('/macos-mojave.jpg')" }}
-              />
-
-              <div className="absolute inset-x-0 top-[58px] z-20 h-[2px] bg-[#777]" />
-              <div className="absolute inset-x-0 top-[60px] z-20 h-[2px] bg-black" />
-
-              <div className="relative z-10 flex min-h-[430px] items-start justify-center pt-[62px]">
+              <div className="flex h-full items-start justify-center">
                 <div className="origin-top scale-[0.65] sm:scale-[0.82] xl:scale-100">
                   <CurrentAppPreview preview={activeFeature.preview} />
                 </div>
