@@ -35,14 +35,14 @@ export default function Download() {
       />
      
 
-      <div className="relative max-w-[1280px] mx-auto px-8 py-28 md:py-40">
+      <div className="relative mx-auto max-w-[1280px] px-5 py-20 sm:px-8 md:py-40">
         <div className="flex flex-col items-start gap-8">
           <h2
             className="m-0 leading-tight"
             style={{
               fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
               fontWeight: 400,
-              fontSize: 'clamp(42px, 5vw, 72px)',
+              fontSize: 'clamp(34px, 8vw, 72px)',
               color: '#ffffff',
               letterSpacing: '0.01em',
               textWrap: 'balance',
@@ -51,8 +51,8 @@ export default function Download() {
             Make your notch useful.
           </h2>
 
-          <div className="flex items-center gap-3">
-            <Button href={SITE.downloadUrl} size="xl" external>
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
+            <Button href={SITE.downloadUrl} size="xl" external className="w-full sm:w-auto">
               <span className="[&_svg]:size-4">
                 <AppleIcon />
               </span>
@@ -63,7 +63,7 @@ export default function Download() {
               href={SITE.githubUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 no-underline rounded-full text-white/55 hover:text-white hover:bg-white/10"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full text-white/55 no-underline hover:bg-white/10 hover:text-white sm:w-auto"
               style={{
                 fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
                 fontSize: 16,

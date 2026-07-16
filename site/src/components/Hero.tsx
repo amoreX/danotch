@@ -3,6 +3,7 @@ import {
   motion,
   useMotionTemplate,
   useMotionValueEvent,
+  useReducedMotion,
   useScroll,
   useSpring,
   useTransform,
@@ -32,12 +33,13 @@ function MacOSLaptopPreview({
   return (
     <motion.div
       ref={previewRef}
-      className="macos-ui relative mt-12 w-full overflow-hidden rounded-[20px] bg-[#080808] p-[7px] sm:mt-14 sm:rounded-[28px] sm:p-[10px]"
+      className="macos-ui relative mt-8 w-full overflow-hidden rounded-[16px] bg-[#080808] p-[6px] sm:mt-14 sm:rounded-[28px] sm:p-[10px]"
       style={{
         y,
         rotateX,
         transformPerspective: 2600,
         transformOrigin: 'center bottom',
+        willChange: 'transform',
       }}
     >
       <div className="relative aspect-[16/9] overflow-hidden rounded-[13px] bg-[#151515] sm:rounded-[20px]">
@@ -62,7 +64,7 @@ function MacOSLaptopPreview({
         </div>
 
         <div className="absolute left-1/2 top-0 z-20 -translate-x-1/2">
-          <div className="origin-top scale-[0.28] sm:scale-[0.45] lg:scale-[0.68] xl:scale-[0.82]">
+          <div className="origin-top scale-[0.42] sm:scale-[0.55] lg:scale-[0.68] xl:scale-[0.82]">
             <CurrentAppPreview
               preview="home"
               withShadow={false}
@@ -76,7 +78,8 @@ function MacOSLaptopPreview({
   );
 }
 
-export default function Hero() {
+export default function Hero({ ready = true }: { ready?: boolean }) {
+  const reduceMotion = useReducedMotion();
   const sectionRef = useRef<HTMLElement>(null);
   const laptopRef = useRef<HTMLDivElement>(null);
   const [laptopTravel, setLaptopTravel] = useState(0);
@@ -94,8 +97,8 @@ export default function Hero() {
   const mediaFilter = useMotionTemplate`blur(${rawMediaBlur}px)`;
   const rawLaptopY = useTransform(mediaScrollProgress, [0, 0.5], [0, Math.max(160, laptopTravel)]);
   const rawLaptopTilt = useTransform(mediaScrollProgress, [0, 0.5], [0, -14]);
-  const laptopY = useSpring(rawLaptopY, { stiffness: 115, damping: 24, mass: 0.82 });
-  const laptopTilt = useSpring(rawLaptopTilt, { stiffness: 95, damping: 22, mass: 0.9 });
+  const laptopY = useSpring(rawLaptopY, { stiffness: 320, damping: 42, mass: 0.48 });
+  const laptopTilt = useSpring(rawLaptopTilt, { stiffness: 240, damping: 36, mass: 0.55 });
 
   useMotionValueEvent(mediaScrollProgress, 'change', (progress) => {
     setNotchOpen((currentlyOpen) => {
@@ -138,11 +141,14 @@ export default function Hero() {
     <section
       ref={sectionRef}
       id="home"
-      className="relative h-[calc(100dvh+200px)] w-full overflow-hidden bg-[#111111]"
+      className="relative h-[680px] w-full overflow-hidden bg-[#111111] sm:h-[calc(100dvh+200px)] sm:min-h-[760px]"
     >
       <motion.div
         aria-hidden="true"
         className="absolute inset-0"
+      initial={false}
+      animate={{ opacity: ready ? 1 : 0.65 }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.7, ease: 'easeOut' }}
         style={{ y: rawMediaY, filter: mediaFilter, height: 'calc(100% + 300px)' }}
       >
         <img
@@ -177,26 +183,14 @@ export default function Hero() {
       </motion.div>
 
       {/* Tagline — same container as navbar and all sections */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          alignItems: 'flex-start',
-          paddingTop: 'clamp(96px, 12vh, 150px)',
-        }}
-      >
-        <div
-          style={{
-            width: '100%',
-            maxWidth: 1280,
-            margin: '0 auto',
-            padding: '0 32px',
-          }}
-        >
-          <h1
+      <div className="absolute inset-0 flex items-start pt-24 sm:pt-[clamp(96px,12vh,150px)]">
+        <div className="mx-auto w-full max-w-[1280px] px-5 sm:px-8">
+          <motion.h1
+            initial={false}
+            animate={{ opacity: ready ? 1 : 0, y: ready ? 0 : 24 }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.6, delay: 0.24, ease: [0.16, 1, 0.3, 1] }}
             style={{
-              fontSize: 'clamp(44px, 6vw, 82px)',
+              fontSize: 'clamp(36px, 8.5vw, 82px)',
               fontWeight: 400,
               color: '#ffffff',
               lineHeight: 1.05,
@@ -207,30 +201,41 @@ export default function Hero() {
             Perch lives
             <br />
             in your notch.
-          </h1>
+          </motion.h1>
 
           {/* Download CTA */}
-          <div style={{ marginTop: 64 }}>
+          <motion.div
+            className="mt-8 sm:mt-16"
+            initial={false}
+            animate={{ opacity: ready ? 1 : 0, y: ready ? 0 : 18 }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.55, delay: 0.36, ease: [0.16, 1, 0.3, 1] }}
+          >
             <Button href="#download" size="xl">
               <span className="[&_svg]:size-4">
                 <AppleIcon />
               </span>
               Get Perch For Mac
             </Button>
-          </div>
+          </motion.div>
 
-          <MacOSLaptopPreview
-            previewRef={laptopRef}
-            y={laptopY}
-            rotateX={laptopTilt}
-            notchOpen={notchOpen}
-          />
+          <motion.div
+            initial={false}
+            animate={{ opacity: ready ? 1 : 0, y: ready ? 0 : 28 }}
+            transition={reduceMotion ? { duration: 0 } : { duration: 0.7, delay: 0.5, ease: [0.16, 1, 0.3, 1] }}
+          >
+            <MacOSLaptopPreview
+              previewRef={laptopRef}
+              y={laptopY}
+              rotateX={laptopTilt}
+              notchOpen={notchOpen}
+            />
+          </motion.div>
         </div>
       </div>
 
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-[100dvh] z-40 h-[200px]"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-40 h-[120px] sm:bottom-auto sm:top-[100dvh] sm:h-[200px]"
         style={{
           background:
             'linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,0.16) 24%, rgba(255,255,255,0.78) 72%, #ffffff 100%)',

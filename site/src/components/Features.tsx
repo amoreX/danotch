@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useState } from 'react';
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowDown,
@@ -939,13 +939,92 @@ export function CurrentAppPreview({
   );
 }
 
+function FeatureDesktopCard({ preview }: { preview: PreviewKind }) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [previewScale, setPreviewScale] = useState(0.65);
+
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) return;
+
+    const measure = () => {
+      const inset = Math.min(32, card.clientWidth * 0.08);
+      setPreviewScale(Math.min(1, Math.max(0.42, (card.clientWidth - inset) / 540)));
+    };
+    const firstFrame = requestAnimationFrame(measure);
+    const observer = new ResizeObserver(measure);
+    observer.observe(card);
+
+    return () => {
+      cancelAnimationFrame(firstFrame);
+      observer.disconnect();
+    };
+  }, []);
+
+  return (
+    <div
+      ref={cardRef}
+      className="relative mx-auto aspect-[680/470] w-full max-w-[680px] overflow-hidden rounded-[18px] bg-cover bg-center sm:rounded-[24px]"
+      style={{ backgroundImage: "url('/macos-mojave.jpg')" }}
+    >
+      <div className="absolute inset-x-0 top-0 flex justify-center">
+        <div
+          className="h-[366px] w-[540px] shrink-0 origin-top"
+          style={{ transform: `scale(${previewScale})` }}
+        >
+          <CurrentAppPreview preview={preview} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Features() {
   const [activeIndex, setActiveIndex] = useState(0);
+  const featureRowRefs = useRef<Array<HTMLDivElement | null>>([]);
   const activeFeature = FEATURES[activeIndex];
+
+  useEffect(() => {
+    const mobileQuery = window.matchMedia('(max-width: 1023px)');
+    let observer: IntersectionObserver | null = null;
+
+    const observeMobileRows = () => {
+      observer?.disconnect();
+      observer = null;
+      if (!mobileQuery.matches) return;
+
+      observer = new IntersectionObserver(
+        (entries) => {
+          const focused = entries
+            .filter((entry) => entry.isIntersecting)
+            .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (!focused) return;
+
+          const index = Number((focused.target as HTMLElement).dataset.featureIndex);
+          if (Number.isFinite(index)) setActiveIndex(index);
+        },
+        {
+          rootMargin: '-34% 0px -44% 0px',
+          threshold: [0, 0.25, 0.5, 0.75],
+        },
+      );
+
+      featureRowRefs.current.forEach((row) => {
+        if (row) observer?.observe(row);
+      });
+    };
+
+    observeMobileRows();
+    mobileQuery.addEventListener('change', observeMobileRows);
+    return () => {
+      observer?.disconnect();
+      mobileQuery.removeEventListener('change', observeMobileRows);
+    };
+  }, []);
 
   return (
     <section id="features" className="bg-white">
-      <div className="max-w-[1280px] mx-auto px-8 py-24 md:py-32">
+      <div className="mx-auto max-w-[1280px] px-5 py-20 sm:px-8 md:py-32">
         <div className="mb-10 max-w-2xl">
           <h2
             className="text-3xl md:text-[2.6rem] m-0 leading-[1.1]"
@@ -966,29 +1045,28 @@ export default function Features() {
           </p>
         </div>
 
-        <div className="grid items-start gap-12 lg:grid-cols-[minmax(300px,0.78fr)_minmax(540px,1.22fr)] lg:gap-16">
+        <div className="grid items-start gap-10 lg:grid-cols-[minmax(300px,0.78fr)_minmax(540px,1.22fr)] lg:gap-16">
           <div>
             {FEATURES.map((feature, index) => (
-              <FeatureRow
+              <div
                 key={feature.title}
-                feature={feature}
-                active={index === activeIndex}
-                onSelect={() => setActiveIndex(index)}
-              />
+                ref={(element) => {
+                  featureRowRefs.current[index] = element;
+                }}
+                data-feature-index={index}
+                className="flex min-h-[clamp(180px,22vh,230px)] items-center lg:min-h-0"
+              >
+                <FeatureRow
+                  feature={feature}
+                  active={index === activeIndex}
+                  onSelect={() => setActiveIndex(index)}
+                />
+              </div>
             ))}
           </div>
 
-          <div className="lg:sticky lg:top-24">
-            <div
-              className="relative mx-auto h-[330px] w-full max-w-[680px] overflow-hidden rounded-[24px] bg-cover bg-center sm:h-[400px] xl:h-[470px]"
-              style={{ backgroundImage: "url('/macos-mojave.jpg')" }}
-            >
-              <div className="flex h-full items-start justify-center">
-                <div className="origin-top scale-[0.65] sm:scale-[0.82] xl:scale-100">
-                  <CurrentAppPreview preview={activeFeature.preview} />
-                </div>
-              </div>
-            </div>
+          <div className="sticky top-[68px] z-10 order-first lg:order-none lg:top-24">
+            <FeatureDesktopCard preview={activeFeature.preview} />
           </div>
         </div>
       </div>
