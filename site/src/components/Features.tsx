@@ -102,7 +102,7 @@ function FeatureRow({
 }
 
 const glass =
-  'border border-white/[0.12] bg-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.09),0_12px_36px_rgba(0,0,0,0.12)] backdrop-blur-xl';
+  'preview-glass border border-white/[0.12] bg-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.09),0_12px_36px_rgba(0,0,0,0.12)] backdrop-blur-xl';
 
 function TopBar({ active }: { active: PreviewKind }) {
   const todayActive = active === 'home';
@@ -728,8 +728,10 @@ const PreviewPanel = forwardRef<HTMLDivElement, {
   return (
     <motion.div
       ref={ref}
-      className={`absolute left-1/2 top-0 overflow-hidden backdrop-blur-2xl ${
-        withShadow ? 'shadow-[0_28px_70px_rgba(0,0,0,0.38)]' : ''
+      className={`absolute left-1/2 top-0 overflow-hidden ${
+        withShadow
+          ? 'backdrop-blur-2xl shadow-[0_28px_70px_rgba(0,0,0,0.38)]'
+          : 'preview-performance-mode'
       }`}
       style={{ x: '-50%', zIndex: 10 }}
       initial="closed"
@@ -922,7 +924,7 @@ export function CurrentAppPreview({
   const { step, visible } = usePreviewLoop(preview, open, autoPlay, closeBetweenLoops);
 
   return (
-    <div className="relative h-[366px] w-[540px]">
+    <div className="relative h-[366px] w-[540px] select-none">
       <AnimatePresence mode="wait" initial={false}>
         {visible && (
           <PreviewPanel
@@ -972,7 +974,7 @@ function FeatureDesktopCard({ preview }: { preview: PreviewKind }) {
           className="h-[366px] w-[540px] shrink-0 origin-top"
           style={{ transform: `scale(${previewScale})` }}
         >
-          <CurrentAppPreview preview={preview} />
+          <CurrentAppPreview preview={preview} withShadow={false} />
         </div>
       </div>
     </div>

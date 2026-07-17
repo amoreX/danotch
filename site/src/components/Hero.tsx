@@ -1,7 +1,6 @@
 import { type RefObject, useEffect, useRef, useState } from 'react';
 import {
   motion,
-  useMotionTemplate,
   useMotionValueEvent,
   useReducedMotion,
   useScroll,
@@ -84,27 +83,22 @@ export default function Hero({ ready = true }: { ready?: boolean }) {
   const laptopRef = useRef<HTMLDivElement>(null);
   const [laptopTravel, setLaptopTravel] = useState(0);
   const [notchOpen, setNotchOpen] = useState(true);
+  const notchOpenRef = useRef(true);
   const { scrollYProgress: mediaScrollProgress } = useScroll({
     target: sectionRef,
     offset: ['start start', 'end start'],
   });
-  const { scrollYProgress: mediaBlurProgress } = useScroll({
-    target: sectionRef,
-    offset: ['end 400px', 'end start'],
-  });
   const rawMediaY = useTransform(mediaScrollProgress, [0, 1], [0, 300]);
-  const rawMediaBlur = useTransform(mediaBlurProgress, [0, 1], [0, 40]);
-  const mediaFilter = useMotionTemplate`blur(${rawMediaBlur}px)`;
   const rawLaptopY = useTransform(mediaScrollProgress, [0, 0.5], [0, Math.max(160, laptopTravel)]);
   const rawLaptopTilt = useTransform(mediaScrollProgress, [0, 0.5], [0, -14]);
   const laptopY = useSpring(rawLaptopY, { stiffness: 320, damping: 42, mass: 0.48 });
   const laptopTilt = useSpring(rawLaptopTilt, { stiffness: 240, damping: 36, mass: 0.55 });
 
   useMotionValueEvent(mediaScrollProgress, 'change', (progress) => {
-    setNotchOpen((currentlyOpen) => {
-      const shouldBeOpen = progress < 0.25;
-      return currentlyOpen === shouldBeOpen ? currentlyOpen : shouldBeOpen;
-    });
+    const shouldBeOpen = progress < 0.25;
+    if (shouldBeOpen === notchOpenRef.current) return;
+    notchOpenRef.current = shouldBeOpen;
+    setNotchOpen(shouldBeOpen);
   });
 
   useEffect(() => {
@@ -149,7 +143,7 @@ export default function Hero({ ready = true }: { ready?: boolean }) {
       initial={false}
       animate={{ opacity: ready ? 1 : 0.65 }}
       transition={reduceMotion ? { duration: 0 } : { duration: 0.7, ease: 'easeOut' }}
-        style={{ y: rawMediaY, filter: mediaFilter, height: 'calc(100% + 300px)' }}
+        style={{ y: rawMediaY, height: 'calc(100% + 300px)', willChange: 'transform' }}
       >
         <img
           src="/hero-image.jpg"

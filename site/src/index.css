@@ -41,6 +41,11 @@ select {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", sans-serif !important;
 }
 
+.preview-performance-mode .preview-glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 ::-webkit-scrollbar {
   width: 0;
   height: 0;

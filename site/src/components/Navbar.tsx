@@ -185,53 +185,33 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
   }, []);
 
   useEffect(() => {
-    const updateActiveSection = () => {
-      if (scrollLockRef.current) return;
+    const visibility = new Map<string, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          visibility.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
+        });
+        if (scrollLockRef.current) return;
 
-      let nextSection = NAV_SECTIONS[0].id;
-      let maxVisibleHeight = 0;
+        const nextSection = NAV_SECTIONS.reduce((best, section) => {
+          return (visibility.get(section.id) ?? 0) > (visibility.get(best.id) ?? 0) ? section : best;
+        }, NAV_SECTIONS[0]);
+        setActiveSection((current) => current === nextSection.id ? current : nextSection.id);
+      },
+      {
+        rootMargin: '-12% 0px -12% 0px',
+        threshold: [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9],
+      },
+    );
 
-      for (const section of NAV_SECTIONS) {
-        const element = document.getElementById(section.id);
-        if (!element) continue;
-
-        const rect = element.getBoundingClientRect();
-        const visibleTop = Math.max(rect.top, 0);
-        const visibleBottom = Math.min(rect.bottom, window.innerHeight);
-        const visibleHeight = Math.max(visibleBottom - visibleTop, 0);
-
-        if (visibleHeight > maxVisibleHeight) {
-          maxVisibleHeight = visibleHeight;
-          nextSection = section.id;
-        }
-      }
-
-      setActiveSection(nextSection);
-    };
-
-    const handleScroll = () => {
-      if (scrollLockRef.current) {
-        if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
-
-        scrollSettleTimerRef.current = window.setTimeout(() => {
-          scrollLockRef.current = null;
-          updateActiveSection();
-        }, 160);
-
-        return;
-      }
-
-      updateActiveSection();
-    };
-
-    updateActiveSection();
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', updateActiveSection);
+    NAV_SECTIONS.forEach((section) => {
+      const element = document.getElementById(section.id);
+      if (element) observer.observe(element);
+    });
 
     return () => {
       if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', updateActiveSection);
+      observer.disconnect();
     };
   }, []);
 
@@ -240,8 +220,6 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
     if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
     setActiveSection(sectionId);
 
-    if (sectionId === 'contact') return;
-
     const section = document.getElementById(sectionId);
     if (!section) return;
 
@@ -249,6 +227,9 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
     const sectionTop = section.getBoundingClientRect().top + window.scrollY;
     const targetY = sectionTop - (window.innerHeight - section.offsetHeight) / 2;
     window.scrollTo({ top: Math.max(targetY, 0), behavior: 'smooth' });
+    scrollSettleTimerRef.current = window.setTimeout(() => {
+      scrollLockRef.current = null;
+    }, 750);
   };
 
   return (
