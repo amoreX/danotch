@@ -72,8 +72,28 @@ function FooterRailShoulder({ side }: { side: 'left' | 'right' }) {
 
 export default function Footer() {
   return (
-    <footer id="contact" className="bg-white pt-20">
-      <div className="relative h-[clamp(300px,34vw,440px)] overflow-visible">
+    <footer id="contact" className="bg-white pt-12 md:pt-20">
+      <div className="mx-1 rounded-t-[28px] bg-[#111111] px-5 pb-8 pt-10 md:hidden">
+        <p className="m-0 text-[clamp(52px,18vw,84px)] leading-none text-white">Perch</p>
+        <div className="mt-12 flex flex-col gap-6 border-t border-white/10 pt-6">
+          <p className="m-0 text-xs leading-relaxed text-white/40">Questions or bugs? Open an issue.</p>
+          <nav className="flex flex-wrap items-center gap-5" aria-label="Footer navigation">
+            {FOOTER_LINKS.map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                target={link.href.startsWith('http') ? '_blank' : undefined}
+                rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
+                className="text-xs text-white/55 no-underline"
+              >
+                {link.label}
+              </a>
+            ))}
+          </nav>
+        </div>
+      </div>
+
+      <div className="relative hidden h-[clamp(300px,34vw,440px)] overflow-visible md:block">
         <div
           className="absolute inset-x-0 bottom-0"
           style={{ height: FOOTER_BAR_HEIGHT, background: FOOTER_SURFACE }}
@@ -101,7 +121,7 @@ export default function Footer() {
           <p
             className="m-0 text-white leading-none select-none"
             style={{
-              fontFamily: "'Steps Mono', monospace",
+              fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
               fontWeight: 400,
               fontSize: 'clamp(64px, 13vw, 190px)',
               letterSpacing: '0.01em',
@@ -121,7 +141,7 @@ export default function Footer() {
         >
           <p
             className="m-0 max-w-md text-white/35"
-            style={{ fontFamily: "'Geist Mono', monospace", fontSize: 13, lineHeight: 1.7, letterSpacing: '-0.02em' }}
+            style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, lineHeight: 1.7, letterSpacing: '-0.02em' }}
           >
             Questions or bugs? Open an issue.
           </p>
@@ -134,7 +154,7 @@ export default function Footer() {
                 target={link.href.startsWith('http') ? '_blank' : undefined}
                 rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
                 className="text-white/45 no-underline transition-colors hover:text-white"
-                style={{ fontFamily: "'Geist Mono', monospace", fontSize: 13, letterSpacing: '-0.02em' }}
+                style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, letterSpacing: '-0.02em' }}
               >
                 {link.label}
               </a>

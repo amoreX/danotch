@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, useReducedMotion } from 'framer-motion';
 import Button from './Button';
 
 const NAV_SECTIONS = [
@@ -13,6 +13,21 @@ function AppleIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98l-.09.06c-.22.15-2.19 1.3-2.17 3.88.03 3.08 2.71 4.12 2.75 4.13-.05.13-.42 1.45-1.33 2.56M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
+    </svg>
+  );
+}
+
+export function PerchLogo({ className = 'h-7 w-7' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 48 46"
+      aria-hidden="true"
+      className={`${className} text-[#211B58]`}
+    >
+      <path
+        d="M25.946 44.938c-.664.845-2.021.375-2.021-.698V33.937a2.26 2.26 0 0 0-2.262-2.262H10.287c-.92 0-1.456-1.04-.92-1.788l7.48-10.471c1.07-1.497 0-3.578-1.842-3.578H1.237c-.92 0-1.456-1.04-.92-1.788L10.013.474c.214-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.471c-1.07 1.498 0 3.579 1.842 3.579h11.377c.943 0 1.473 1.088.89 1.83L25.947 44.94z"
+        fill="currentColor"
+      />
     </svg>
   );
 }
@@ -125,7 +140,8 @@ function NotchRailShoulder({ side }: { side: 'left' | 'right' }) {
   );
 }
 
-export default function Navbar() {
+export default function Navbar({ ready = true }: { ready?: boolean }) {
+  const reduceMotion = useReducedMotion();
   const [activeSection, setActiveSection] = useState(NAV_SECTIONS[0].id);
   const sectionRefs = useRef<Array<HTMLAnchorElement | null>>([]);
   const scrollLockRef = useRef<string | null>(null);
@@ -169,53 +185,33 @@ export default function Navbar() {
   }, []);
 
   useEffect(() => {
-    const updateActiveSection = () => {
-      if (scrollLockRef.current) return;
+    const visibility = new Map<string, number>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          visibility.set(entry.target.id, entry.isIntersecting ? entry.intersectionRatio : 0);
+        });
+        if (scrollLockRef.current) return;
 
-      let nextSection = NAV_SECTIONS[0].id;
-      let maxVisibleHeight = 0;
+        const nextSection = NAV_SECTIONS.reduce((best, section) => {
+          return (visibility.get(section.id) ?? 0) > (visibility.get(best.id) ?? 0) ? section : best;
+        }, NAV_SECTIONS[0]);
+        setActiveSection((current) => current === nextSection.id ? current : nextSection.id);
+      },
+      {
+        rootMargin: '-12% 0px -12% 0px',
+        threshold: [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9],
+      },
+    );
 
-      for (const section of NAV_SECTIONS) {
-        const element = document.getElementById(section.id);
-        if (!element) continue;
-
-        const rect = element.getBoundingClientRect();
-        const visibleTop = Math.max(rect.top, 0);
-        const visibleBottom = Math.min(rect.bottom, window.innerHeight);
-        const visibleHeight = Math.max(visibleBottom - visibleTop, 0);
-
-        if (visibleHeight > maxVisibleHeight) {
-          maxVisibleHeight = visibleHeight;
-          nextSection = section.id;
-        }
-      }
-
-      setActiveSection(nextSection);
-    };
-
-    const handleScroll = () => {
-      if (scrollLockRef.current) {
-        if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
-
-        scrollSettleTimerRef.current = window.setTimeout(() => {
-          scrollLockRef.current = null;
-          updateActiveSection();
-        }, 160);
-
-        return;
-      }
-
-      updateActiveSection();
-    };
-
-    updateActiveSection();
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    window.addEventListener('resize', updateActiveSection);
+    NAV_SECTIONS.forEach((section) => {
+      const element = document.getElementById(section.id);
+      if (element) observer.observe(element);
+    });
 
     return () => {
       if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', updateActiveSection);
+      observer.disconnect();
     };
   }, []);
 
@@ -224,8 +220,6 @@ export default function Navbar() {
     if (scrollSettleTimerRef.current) window.clearTimeout(scrollSettleTimerRef.current);
     setActiveSection(sectionId);
 
-    if (sectionId === 'contact') return;
-
     const section = document.getElementById(sectionId);
     if (!section) return;
 
@@ -233,10 +227,44 @@ export default function Navbar() {
     const sectionTop = section.getBoundingClientRect().top + window.scrollY;
     const targetY = sectionTop - (window.innerHeight - section.offsetHeight) / 2;
     window.scrollTo({ top: Math.max(targetY, 0), behavior: 'smooth' });
+    scrollSettleTimerRef.current = window.setTimeout(() => {
+      scrollLockRef.current = null;
+    }, 750);
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 pointer-events-none">
+    <motion.header
+      className="fixed top-0 left-0 right-0 z-50 pointer-events-none"
+      initial={false}
+      animate={{ opacity: ready ? 1 : 0, y: ready ? 0 : -18 }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.5, delay: 0.12, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <div className="pointer-events-auto mx-3 flex h-14 items-center gap-2 rounded-b-[20px] bg-[#111111] px-2.5 md:hidden">
+        <a
+          href="#home"
+          aria-label="Perch home"
+          className="flex h-9 w-11 shrink-0 items-center justify-center rounded-full bg-white text-lg font-bold italic no-underline"
+        >
+          <PerchLogo />
+        </a>
+        <nav className="flex min-w-0 flex-1 items-center justify-center gap-1" aria-label="Mobile navigation">
+          <a href="#features" className="rounded-full px-3 py-2 text-xs text-white/65 no-underline">
+            Features
+          </a>
+          <a href="#download" className="rounded-full px-3 py-2 text-xs text-white/65 no-underline">
+            Download
+          </a>
+        </nav>
+        <a
+          href="#download"
+          aria-label="Download Perch"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#7b6af0] text-white no-underline"
+        >
+          <AppleIcon />
+        </a>
+      </div>
+
+      <div className="hidden md:block">
       {/* Full-width connecting bar */}
       <div className="absolute top-0 left-0 right-0 h-[10px] bg-[#111111] pointer-events-auto" />
       <NavbarFrameShoulder side="left" />
@@ -259,27 +287,9 @@ export default function Navbar() {
           className="h-10 w-[88px] inline-flex items-center justify-center rounded-full bg-white no-underline"
           style={{
             background: '#ffffff',
-            color: 'transparent',
-            fontFamily: '"SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            fontSize: 25,
-            fontWeight: 800,
-            fontStyle: 'italic',
-            letterSpacing: 0,
-            lineHeight: 'normal',
           }}
         >
-          <span
-            style={{
-              background: 'linear-gradient(193deg, #BC95FF 20.53%, #5F14F5 32.29%, #03A38B 105.56%)',
-              backgroundClip: 'text',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              display: 'inline-block',
-              paddingRight: 4,
-            }}
-          >
-            P
-          </span>
+          <PerchLogo />
         </a>
       </div>
 
@@ -340,7 +350,7 @@ export default function Navbar() {
                 }`}
                 style={{
                   letterSpacing: '-0.02em',
-                  fontFamily: "'Geist Mono', monospace",
+                  fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
                 }}
               >
                 {section.label}
@@ -371,7 +381,7 @@ export default function Navbar() {
           aria-label="Contact"
           className="h-10 w-10 inline-flex items-center justify-center rounded-full bg-white/10 text-white no-underline transition-colors hover:bg-white/15"
           style={{
-            fontFamily: "'Geist Mono', monospace",
+            fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
             fontSize: 15,
             fontWeight: 600,
             lineHeight: 1,
@@ -380,6 +390,7 @@ export default function Navbar() {
           ?
         </a>
       </div>
-    </header>
+      </div>
+    </motion.header>
   );
 }
