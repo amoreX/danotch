@@ -1,10 +1,10 @@
 import { type RefObject, useEffect, useRef, useState } from 'react';
+import type { MotionValue } from 'framer-motion';
 import {
   motion,
   useMotionValueEvent,
   useReducedMotion,
   useScroll,
-  useSpring,
   useTransform,
 } from 'framer-motion';
 import Button from './Button';
@@ -21,12 +21,10 @@ function AppleIcon() {
 function MacOSLaptopPreview({
   previewRef,
   y,
-  rotateX,
   notchOpen,
 }: {
   previewRef: RefObject<HTMLDivElement | null>;
-  y: ReturnType<typeof useSpring>;
-  rotateX: ReturnType<typeof useSpring>;
+  y: MotionValue<number>;
   notchOpen: boolean;
 }) {
   return (
@@ -35,9 +33,6 @@ function MacOSLaptopPreview({
       className="macos-ui relative mt-8 w-full overflow-hidden rounded-[16px] bg-[#080808] p-[6px] sm:mt-14 sm:rounded-[28px] sm:p-[10px]"
       style={{
         y,
-        rotateX,
-        transformPerspective: 2600,
-        transformOrigin: 'center bottom',
         willChange: 'transform',
       }}
     >
@@ -89,10 +84,11 @@ export default function Hero({ ready = true }: { ready?: boolean }) {
     offset: ['start start', 'end start'],
   });
   const rawMediaY = useTransform(mediaScrollProgress, [0, 1], [0, 300]);
-  const rawLaptopY = useTransform(mediaScrollProgress, [0, 0.5], [0, Math.max(160, laptopTravel)]);
-  const rawLaptopTilt = useTransform(mediaScrollProgress, [0, 0.5], [0, -14]);
-  const laptopY = useSpring(rawLaptopY, { stiffness: 320, damping: 42, mass: 0.48 });
-  const laptopTilt = useSpring(rawLaptopTilt, { stiffness: 240, damping: 36, mass: 0.55 });
+  const laptopY = useTransform(
+    mediaScrollProgress,
+    [0, 0.5],
+    [0, Math.max(160, laptopTravel)],
+  );
 
   useMotionValueEvent(mediaScrollProgress, 'change', (progress) => {
     const shouldBeOpen = progress < 0.25;
@@ -220,7 +216,6 @@ export default function Hero({ ready = true }: { ready?: boolean }) {
             <MacOSLaptopPreview
               previewRef={laptopRef}
               y={laptopY}
-              rotateX={laptopTilt}
               notchOpen={notchOpen}
             />
           </motion.div>
