@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase.js';
+import { getAdminDb } from '../lib/admin-db.js';
 import { config } from '../config.js';
 import { decrypt } from './crypto.js';
 import { AnthropicProvider } from './anthropic.js';
@@ -6,6 +6,13 @@ import { OpenAIProvider } from './openai.js';
 import type { LLMProvider, ProviderType } from './types.js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+const supabase = new Proxy({} as ReturnType<typeof getAdminDb>, {
+  get(_target, property) {
+    const client = getAdminDb('provider') as unknown as Record<PropertyKey, unknown>;
+    const value = client[property];
+    return typeof value === 'function' ? value.bind(client) : value;
+  },
+});
 
 /**
  * Get the LLM provider for a specific user.

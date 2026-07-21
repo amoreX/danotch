@@ -1,12 +1,4 @@
 import type { CanonicalTool } from '../providers/types.js';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import path from 'path';
-
-const execAsync = promisify(exec);
-
-const BASH_TIMEOUT_MS = 30_000;
-const BASH_MAX_BUFFER = 1024 * 1024; // 1MB
 const MAX_RESULT_CHARS = 5000;
 const MAX_SEARCH_CHARS = 2000;
 const MAX_ERROR_CHARS = 2000;
@@ -48,26 +40,7 @@ function toErrorMessage(err: unknown): string {
 
 // ── Tool Definitions ──
 
-export const localTools: CanonicalTool[] = [
-  {
-    name: 'bash_execute',
-    description:
-      'Execute a shell command on the user\'s local machine and return the output. Use for: checking files, running scripts, getting system info, installing packages, etc. Commands run in a bash shell. Be careful with destructive commands.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        command: {
-          type: 'string',
-          description: 'The bash command to execute. Keep it concise. Avoid interactive commands.',
-        },
-        cwd: {
-          type: 'string',
-          description: 'Optional working directory. Defaults to home directory.',
-        },
-      },
-      required: ['command'],
-    },
-  },
+export const hostedTools: CanonicalTool[] = [
   {
     name: 'web_search',
     description:
@@ -102,66 +75,17 @@ export const localTools: CanonicalTool[] = [
 
 // ── Tool Handlers ──
 
-export async function executeLocalTool(
+export async function executeHostedTool(
   toolName: string,
   input: Record<string, unknown>
 ): Promise<string> {
   switch (toolName) {
-    case 'bash_execute':
-      return bashExecute(input);
     case 'web_search':
       return webSearch(input);
     case 'web_fetch':
       return webFetch(input);
     default:
-      return JSON.stringify({ error: `Unknown tool: ${toolName}` });
-  }
-}
-
-function validateCwd(cwd: string): string | null {
-  if (!cwd || typeof cwd !== 'string') return 'cwd must be a non-empty string';
-  const home = process.env.HOME;
-  if (!home) return 'HOME environment variable is not set';
-  const resolved = path.resolve(cwd);
-  const homeResolved = path.resolve(home);
-  const homePrefix = homeResolved.endsWith(path.sep) ? homeResolved : homeResolved + path.sep;
-  if (resolved !== homeResolved && !resolved.startsWith(homePrefix)) {
-    return 'cwd must be inside the home directory';
-  }
-  return null;
-}
-
-async function bashExecute(input: Record<string, unknown>): Promise<string> {
-  const command = input.command as string;
-  const rawCwd = (input.cwd as string) || process.env.HOME || '/';
-
-  const cwdError = validateCwd(rawCwd);
-  if (cwdError) {
-    return `Error: ${cwdError}`;
-  }
-  const cwd = rawCwd;
-
-  console.log(`[tool:bash] $ ${command}`);
-
-  try {
-    const { stdout, stderr } = await execAsync(command, {
-      cwd,
-      timeout: BASH_TIMEOUT_MS,
-      maxBuffer: BASH_MAX_BUFFER,
-      shell: '/bin/bash',
-    });
-
-    const output = stdout.trim();
-    const errors = stderr.trim();
-
-    let result = '';
-    if (output) result += output;
-    if (errors) result += (result ? '\n\nSTDERR:\n' : '') + errors;
-
-    return result.slice(0, MAX_RESULT_CHARS) || '(no output)';
-  } catch (err: any) {
-    const msg = err.stderr?.trim() || err.stdout?.trim() || err.message;
-    return `Error (exit ${err.code ?? '?'}): ${msg}`.slice(0, MAX_ERROR_CHARS);
+      throw new Error(`Tool ${toolName} is not registered for hosted execution`);
   }
 }
 

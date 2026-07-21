@@ -8,17 +8,17 @@ import { EntitlementError } from '../billing/entitlements.js';
 export function createTaskRoutes(notch: NotchBridge): Router {
   const router = Router();
 
-  // ── In-memory tasks (real-time state) ──
+  // ── Durable owner-scoped runs ──
 
-  router.get('/tasks', requireAuth, (_req, res) => {
-    const tasks = getAllTasks();
+  router.get('/tasks', requireAuth, async (req, res) => {
+    const tasks = await getAllTasks(req.user!.sub);
     console.log(`[tasks] GET /tasks → ${tasks.length} tasks`);
     res.json({ tasks });
   });
 
-  router.get('/tasks/:id', requireAuth, (req, res) => {
+  router.get('/tasks/:id', requireAuth, async (req, res) => {
     const taskId = req.params.id as string;
-    const task = getTask(taskId);
+    const task = await getTask(req.user!.sub, taskId);
     if (!task) {
       console.log(`[tasks] GET /tasks/${taskId} → not found`);
       res.status(404).json({ error: 'Task not found' });
@@ -41,9 +41,26 @@ export function createTaskRoutes(notch: NotchBridge): Router {
   });
 
   router.post('/chat', chatLimiter, requireAuth, async (req, res) => {
-    const { message, session_id, conversation_id, model_id } = req.body;
+    const { message, session_id, conversation_id, model_id, device_id } = req.body;
     if (!message || typeof message !== 'string') {
       res.status(400).json({ error: 'message is required' });
+      return;
+    }
+    if (
+      device_id !== undefined
+      && (typeof device_id !== 'string'
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(device_id))
+    ) {
+      res.status(400).json({ error: 'device_id must be a UUID' });
+      return;
+    }
+    if (
+      session_id !== undefined
+      && (typeof session_id !== 'string'
+        || session_id.length > 128
+        || !/^[A-Za-z0-9_-]+$/.test(session_id))
+    ) {
+      res.status(400).json({ error: 'session_id must be a safe opaque identifier' });
       return;
     }
 
@@ -66,6 +83,8 @@ export function createTaskRoutes(notch: NotchBridge): Router {
         userId,
         conversationId: conversation_id,
         modelId: typeof model_id === 'string' ? model_id : undefined,
+        deviceId: typeof device_id === 'string' ? device_id : undefined,
+        idempotencyKey: typeof session_id === 'string' ? session_id : undefined,
         history,
       });
       console.log(`[chat] Done → taskId=${task.id} conversationId=${task.threadId} status=${task.status}`);

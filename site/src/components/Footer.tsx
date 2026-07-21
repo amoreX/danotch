@@ -1,9 +1,10 @@
 import { SITE } from './site-config';
 
 const FOOTER_LINKS = [
-  { label: 'GitHub', href: SITE.githubUrl },
-  { label: 'Issues', href: SITE.issuesUrl },
   { label: 'Download', href: '#download' },
+  { label: 'Changelog', href: SITE.changelogUrl },
+  { label: 'Security', href: SITE.securityArchitectureUrl },
+  { label: 'Contact', href: `mailto:${SITE.supportEmail}` },
 ];
 
 const FOOTER_SURFACE = '#111111';
@@ -76,7 +77,12 @@ export default function Footer() {
       <div className="mx-1 rounded-t-[28px] bg-[#111111] px-5 pb-8 pt-10 md:hidden">
         <p className="m-0 text-[clamp(52px,18vw,84px)] leading-none text-white">Perch</p>
         <div className="mt-12 flex flex-col gap-6 border-t border-white/10 pt-6">
-          <p className="m-0 text-xs leading-relaxed text-white/40">Questions or bugs? Open an issue.</p>
+          <p className="m-0 text-xs leading-relaxed text-white/40">
+            Questions?{' '}
+            <a href={`mailto:${SITE.supportEmail}`} className="text-white/55 no-underline hover:text-white">
+              {SITE.supportEmail}
+            </a>
+          </p>
           <nav className="flex flex-wrap items-center gap-5" aria-label="Footer navigation">
             {FOOTER_LINKS.map((link) => (
               <a
@@ -143,7 +149,10 @@ export default function Footer() {
             className="m-0 max-w-md text-white/35"
             style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, lineHeight: 1.7, letterSpacing: '-0.02em' }}
           >
-            Questions or bugs? Open an issue.
+            Questions?{' '}
+            <a href={`mailto:${SITE.supportEmail}`} className="text-white/50 no-underline hover:text-white/80">
+              {SITE.supportEmail}
+            </a>
           </p>
 
           <nav className="flex flex-wrap items-center gap-x-5 gap-y-2" aria-label="Footer navigation">

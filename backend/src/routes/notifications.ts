@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
-import { supabase } from '../lib/supabase.js';
+import { userDb as supabase } from '../lib/user-db.js';
 
 export function createNotificationRoutes(): Router {
   const router = Router();

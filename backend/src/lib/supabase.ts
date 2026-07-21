@@ -1,13 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url = process.env.SUPABASE_URL!;
-const serviceKey = process.env.SUPABASE_SERVICE_KEY!;
+export const supabaseUrl = process.env.SUPABASE_URL!;
+export const supabasePublishableKey =
+  process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY!;
 
-if (!url || !serviceKey) {
-  throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_KEY');
+if (!supabaseUrl || !supabasePublishableKey) {
+  throw new Error('Missing SUPABASE_URL or SUPABASE_PUBLISHABLE_KEY');
 }
 
-// Service-role client — bypasses RLS, used server-side only
-export const supabase = createClient(url, serviceKey, {
+// Public auth client only. Database request paths must use createUserDb() so the
+// caller JWT reaches PostgREST and RLS remains authoritative.
+export const supabaseAuth = createClient(supabaseUrl, supabasePublishableKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });

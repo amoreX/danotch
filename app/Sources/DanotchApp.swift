@@ -18,17 +18,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var onboardingWindow: NSWindow?
     let viewModel = NotchViewModel()
     let auth = AuthManager.shared
-    var wsServer: WebSocketServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         applyAppIcon()
-        viewModel.interruptInProgressConversations()
-
-        wsServer = WebSocketServer(viewModel: viewModel)
-        wsServer?.start()
-
         viewModel.authManager = auth
+        auth.onSessionWillChange = { [weak viewModel] _, _ in
+            viewModel?.switchAccount(to: nil)
+        }
+        auth.onSessionDidChange = { [weak viewModel] session in
+            viewModel?.switchAccount(to: session)
+        }
+        viewModel.switchAccount(to: auth.session)
+        viewModel.interruptInProgressConversations()
 
         if auth.isAuthenticated && OnboardingCompletionStore.isComplete {
             // Already logged in and fully onboarded — go straight to notch
@@ -146,6 +148,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         viewModel.interruptInProgressConversations()
-        wsServer?.stop()
+        viewModel.cancelDeviceConnection()
     }
 }

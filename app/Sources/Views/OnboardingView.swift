@@ -326,16 +326,57 @@ struct OnboardingView: View {
             pageHeader("Create your account", "Sync setup, save chat history, and unlock scheduled tasks.")
 
             HStack(spacing: OB.itemSpacing) {
-                modeTab("Sign up", selected: authMode == .signup) { authMode = .signup; auth.error = nil }
-                modeTab("Sign in", selected: authMode == .login) { authMode = .login; auth.error = nil }
+                modeTab("Sign up", selected: authMode == .signup) {
+                    authMode = .signup; auth.error = nil; auth.lifecycleState = .credentials
+                }
+                modeTab("Sign in", selected: authMode == .login) {
+                    authMode = .login; auth.error = nil; auth.lifecycleState = .credentials
+                }
             }
 
-            VStack(spacing: OB.itemSpacing) {
-                if authMode == .signup {
-                    inputField("Full Name", text: $fullName, icon: "person")
+            if case .checkEmail(let pendingEmail) = auth.lifecycleState {
+                verificationPanel(email: pendingEmail.isEmpty ? email : pendingEmail)
+            } else if case .verificationExpired(let pendingEmail) = auth.lifecycleState {
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Verification link expired", systemImage: "clock.badge.exclamationmark")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text("Reopen secure signup to resend verification, or use a different email address.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        pillButton("Resend in browser", icon: "safari", style: .accent) {
+                            auth.reopenBrowserSignup(email: pendingEmail)
+                        }
+                        pillButton("Change email", style: .glass) {
+                            email = ""
+                            auth.lifecycleState = .credentials
+                        }
+                    }
                 }
-                inputField("Email", text: $email, icon: "envelope")
-                inputField("Password", text: $password, icon: "lock", isSecure: true)
+                .padding(14)
+                .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
+            } else if auth.lifecycleState == .repairProvisioning {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Your email is verified, but account setup needs another attempt.", systemImage: "arrow.clockwise.circle")
+                    Text("Sign in again to repair the profile, app bootstrap, and trial idempotently.")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.system(size: 12))
+                .padding(14)
+                .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
+            } else {
+                VStack(spacing: OB.itemSpacing) {
+                    if authMode == .signup {
+                        inputField("Email", text: $email, icon: "envelope")
+                        Text("Signup opens in your browser so the CAPTCHA and verification flow stay on the trusted HTTPS origin.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        inputField("Email", text: $email, icon: "envelope")
+                        inputField("Password", text: $password, icon: "lock", isSecure: true)
+                    }
+                }
             }
 
             if let error = auth.error {
@@ -345,6 +386,32 @@ struct OnboardingView: View {
                     .lineLimit(2)
             }
         }
+    }
+
+    private func verificationPanel(email: String) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Check your email", systemImage: "envelope.badge")
+                .font(.system(size: 15, weight: .semibold))
+            Text("Open the verification link on this Mac or another device. Then return here and sign in.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            HStack {
+                pillButton("Reopen signup", icon: "safari", style: .glass) {
+                    auth.reopenBrowserSignup(email: email)
+                }
+                pillButton("I've verified", icon: "checkmark.circle", style: .accent) {
+                    self.email = email
+                    authMode = .login
+                    auth.returnToSignIn(email: email)
+                }
+                pillButton("Change email", style: .glass) {
+                    self.email = ""
+                    auth.lifecycleState = .credentials
+                }
+            }
+        }
+        .padding(14)
+        .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
     }
 
     // MARK: - Model
@@ -420,7 +487,7 @@ struct OnboardingView: View {
             }
         }
         .padding(OB.cardRadius)
-        .glassEffect(.regular, in: .rect(cornerRadius: OB.cardRadius))
+        .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
     }
 
     private var configuredProviderNotice: some View {
@@ -429,7 +496,7 @@ struct OnboardingView: View {
             .foregroundStyle(OB.accent)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .glassEffect(.regular, in: .rect(cornerRadius: OB.cardRadius))
+            .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
     }
 
     // MARK: - Apps
@@ -469,7 +536,7 @@ struct OnboardingView: View {
                     }
                 }
                 .frame(width: 30, height: 30)
-                .glassEffect(.regular, in: .circle)
+                .perchGlass(in: Circle())
                 Spacer()
                 if connected {
                     Image(systemName: "checkmark.circle.fill")
@@ -512,7 +579,10 @@ struct OnboardingView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 30)
                 .contentShape(RoundedRectangle(cornerRadius: OB.cardInnerRadius, style: .continuous))
-                .glassEffect(connected ? .regular : Glass.regular.tint(OB.accentSubtle), in: .rect(cornerRadius: OB.cardInnerRadius))
+                .perchGlass(
+                    tint: connected ? nil : OB.accentSubtle,
+                    in: RoundedRectangle(cornerRadius: OB.cardInnerRadius)
+                )
             }
             .buttonStyle(.plain)
             .focusable(false)
@@ -520,7 +590,7 @@ struct OnboardingView: View {
         }
         .padding(12)
         .frame(minHeight: 150)
-        .glassEffect(.regular, in: .rect(cornerRadius: OB.cardRadius))
+        .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
         .onChange(of: viewModel.appLoading[app.appType]) { _, isLoading in
             if isLoading == false || isLoading == nil {
                 appActionInProgress.remove(app.appType)
@@ -548,7 +618,7 @@ struct OnboardingView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
                 .frame(width: 28, height: 28)
-                .glassEffect(.regular, in: .circle)
+                .perchGlass(in: Circle())
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -572,7 +642,7 @@ struct OnboardingView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: OB.cardRadius))
+        .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
     }
 
     // MARK: - Preferences
@@ -594,7 +664,7 @@ struct OnboardingView: View {
                 }
             }
             .padding(12)
-            .glassEffect(.regular, in: .rect(cornerRadius: OB.cardRadius))
+            .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
 
             VStack(spacing: OB.itemSpacing) {
                 prefToggle("Open chat after sending", $openChatOnSend)
@@ -625,7 +695,10 @@ struct OnboardingView: View {
             .padding(.horizontal, 10)
             .frame(height: 30)
             .contentShape(RoundedRectangle(cornerRadius: OB.cardInnerRadius, style: .continuous))
-            .glassEffect(selected ? Glass.regular.tint(OB.accentSubtle) : .regular, in: .rect(cornerRadius: OB.cardInnerRadius))
+            .perchGlass(
+                tint: selected ? OB.accentSubtle : nil,
+                in: RoundedRectangle(cornerRadius: OB.cardInnerRadius)
+            )
             .opacity(atMax ? 0.35 : 1)
         }
         .buttonStyle(.plain)
@@ -649,7 +722,7 @@ struct OnboardingView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: .rect(cornerRadius: OB.cardRadius))
+        .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardRadius))
     }
 
     // MARK: - Success
@@ -660,7 +733,7 @@ struct OnboardingView: View {
                 .font(.system(size: 28, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 58, height: 58)
-                .glassEffect(Glass.regular.tint(OB.accent.opacity(0.6)), in: .circle)
+                .perchGlass(tint: OB.accent.opacity(0.6), in: Circle())
 
             Text("You're ready")
                 .font(.system(size: 42, weight: .light, design: .rounded))
@@ -729,7 +802,10 @@ struct OnboardingView: View {
                         )
                 }
             }
-            .glassEffect(style == .glass ? .regular : Glass.regular.tint(.clear), in: .rect(cornerRadius: OB.buttonRadius))
+            .perchGlass(
+                tint: style == .glass ? nil : .clear,
+                in: RoundedRectangle(cornerRadius: OB.buttonRadius)
+            )
         }
         .buttonStyle(PlainButtonStyle())
         .focusable(false)
@@ -743,7 +819,10 @@ struct OnboardingView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: OB.buttonHeight)
                 .contentShape(RoundedRectangle(cornerRadius: OB.buttonRadius, style: .continuous))
-                .glassEffect(selected ? Glass.regular.tint(OB.accentSubtle) : .regular, in: .rect(cornerRadius: OB.buttonRadius))
+                .perchGlass(
+                    tint: selected ? OB.accentSubtle : nil,
+                    in: RoundedRectangle(cornerRadius: OB.buttonRadius)
+                )
         }
         .buttonStyle(PlainButtonStyle())
         .focusable(false)
@@ -756,7 +835,7 @@ struct OnboardingView: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 32, height: 32)
-                    .glassEffect(.regular, in: .circle)
+                    .perchGlass(in: Circle())
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
@@ -776,7 +855,10 @@ struct OnboardingView: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(RoundedRectangle(cornerRadius: OB.cardRadius, style: .continuous))
-            .glassEffect(selected ? Glass.regular.tint(OB.accentSubtle) : .regular, in: .rect(cornerRadius: OB.cardRadius))
+            .perchGlass(
+                tint: selected ? OB.accentSubtle : nil,
+                in: RoundedRectangle(cornerRadius: OB.cardRadius)
+            )
         }
         .buttonStyle(PlainButtonStyle())
         .focusable(false)
@@ -804,7 +886,7 @@ struct OnboardingView: View {
         .frame(height: OB.inputHeight)
         .frame(maxWidth: .infinity)
         .padding(.trailing, 12)
-        .glassEffect(.regular, in: .rect(cornerRadius: OB.cardInnerRadius))
+        .perchGlass(in: RoundedRectangle(cornerRadius: OB.cardInnerRadius))
     }
 
     // MARK: - Flow
@@ -820,12 +902,16 @@ struct OnboardingView: View {
     }
 
     private var canSubmitAuth: Bool {
-        !email.isEmpty && !password.isEmpty && (authMode != .signup || !fullName.isEmpty)
+        if authMode == .signup { return !email.isEmpty }
+        return !email.isEmpty && !password.isEmpty
     }
 
     private var canContinue: Bool {
         switch step {
-        case .account: return canSubmitAuth && !auth.isLoading
+        case .account:
+            if case .checkEmail = auth.lifecycleState { return false }
+            if case .verificationExpired = auth.lifecycleState { return false }
+            return canSubmitAuth && !auth.isLoading
         case .model: return useDefaultModel || isProviderVerified || activeProvider != nil
         case .permissions: return true
         default: return true

@@ -1,0 +1,6 @@
+Contact: mailto:security@perch.app
+Preferred-Languages: en
+Policy: https://perch.app/security
+Expires: 2027-07-22T00:00:00.000Z
+Encryption: mailto:security@perch.app
+Acknowledgments: https://perch.app/security#acknowledgments

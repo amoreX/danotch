@@ -13,7 +13,7 @@ site/      — the landing page, React + Vite + Tailwind
 AGENTS.md  — repo guidance for AI coding agents
 ```
 
-Three separate things. The app talks to the backend over HTTP, the backend talks back over a WebSocket. The site is just marketing.
+Three separate things. In development the app connects to a local backend; in production the app authenticates and connects outbound over WSS to the hosted control plane. The site is just marketing.
 
 ## running it
 
@@ -38,20 +38,38 @@ It runs as an accessory — no dock icon, no menu bar clutter. Just the notch.
 
 ### the backend
 
+Requires **Node 24 LTS** (`node --version` should print `v24.x.x`).
+
 ```bash
 cd backend
 npm install
 npm run dev       # :3001
 ```
 
-Needs a `.env` with Supabase credentials and at least one LLM key (`ANTHROPIC_API_KEY` for the trial fallback). `COMPOSIO_API_KEY` if you want app integrations, `PROVIDER_KEY_SECRET` to encrypt stored BYOK keys. For schema changes, add `SUPABASE_DB_URL` (or `DATABASE_URL`) with the Supabase Postgres connection string and run:
+Copy `backend/.env.example` to `backend/.env` and fill in values. Minimum required: Supabase credentials, `ANTHROPIC_API_KEY` (trial fallback), `PROVIDER_KEY_SECRET` (AES key for BYOK encryption — must be at least 32 characters). `COMPOSIO_API_KEY` if you want app integrations.
+
+For schema migrations, add `SUPABASE_DB_URL` with the Postgres connection string and run:
 
 ```bash
 cd backend
-npm run db:billing
+npm run db:migrate
 ```
 
-All of it is env-overridable in `config.ts`.
+To verify the migration ledger matches the shipped SQL without making changes:
+
+```bash
+npm run db:verify
+```
+
+All config is env-overridable via `config.ts`. Production startup rejects HTTP origins, localhost endpoints, weak secrets, and missing required vars.
+
+#### tests
+
+```bash
+npm test                      # unit + contract tests (no DB required)
+npm run test:runtime-policy   # Node permission model verification
+npm run test:db               # integration tests (requires SUPABASE_DB_URL)
+```
 
 ### the site
 
@@ -61,7 +79,7 @@ npm install
 npm run dev
 ```
 
-No tests in any of the three. This is a project, not a product team.
+The app and backend have unit and contract tests. The site does not.
 
 ## what it actually does
 
@@ -92,7 +110,9 @@ No tests in any of the three. This is a project, not a product team.
 
 ## how the app and backend talk
 
-The app runs a WebSocket server on `ws://localhost:7778/ws` (plus a `/health` endpoint). The backend connects to it as a client and pushes events as things happen.
+**Production:** the app authenticates, enrolls a device key, and connects outbound to the hosted control plane over `wss://`. The backend issues HTTPS tickets; the app upgrades to WSS and the backend pushes durable run events.
+
+**Development only:** the backend connects to a legacy `ws://localhost:7778/ws` bridge on the app. This path is never used in production builds.
 
 ```json
 { "type": "subagent_event", "session_id": "abc-123", "event_type": "status|progress|done", "data": { } }
@@ -105,6 +125,16 @@ The app runs a WebSocket server on `ws://localhost:7778/ws` (plus a `/health` en
 | `done`     | task finished | `status`, `result`, `error` |
 
 There's also `connection_request` (the backend asking for OAuth approval to an app), `notification`, and `peek_notification` (the soft expand). The app answers connection requests with `connection_response` back over the same socket.
+
+## health endpoints
+
+```
+GET /health/live   — process-only liveness (always 200 while running)
+GET /health/ready  — readiness (200 = all checks pass; 503 = a check failed)
+GET /health        — legacy alias (kept for existing monitoring integrations)
+```
+
+The readiness check verifies: migration ledger count, database connectivity, device gateway attachment, and critical LLM provider configuration.
 
 ## under the hood
 

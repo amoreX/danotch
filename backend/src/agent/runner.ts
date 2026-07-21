@@ -4,14 +4,26 @@ import type { Task, ChatMessage } from '../types.js';
 import type { CanonicalTool, CanonicalMessage, CanonicalContentBlock, CanonicalToolResultBlock } from '../providers/types.js';
 import { getProviderForUser, getFallbackProvider } from '../providers/factory.js';
 import { config } from '../config.js';
-import { supabase } from '../lib/supabase.js';
+import { userDb as supabase } from '../lib/user-db.js';
 import { resolveProviderForUser } from '../billing/entitlements.js';
 import { scheduledTaskTools, executeScheduledTool } from '../tools/scheduled.js';
-import { localTools, executeLocalTool } from '../tools/local.js';
+import { hostedTools, executeHostedTool } from '../tools/local.js';
 import { loadComposioTools, executeComposioTool, loadToolsForApp, COMPOSIO_APPS } from '../composio/tools.js';
 import { syncConnectionToDb } from '../composio/connection.js';
-import { requiresApproval, summarizeAction } from '../actions/allowlist.js';
+import { summarizeAction } from '../actions/allowlist.js';
+import { ACTION_REGISTRY_VERSION, classifyAction } from '../actions/registry.js';
 import { createPendingAction } from '../actions/pending.js';
+import { InMemoryTaskStore } from './task-store.js';
+import {
+  DurableRunStore,
+  getOwnerRun,
+  listOwnerRuns,
+  type DurableRunRecord,
+} from '../protocol/durable-run-store.js';
+import { getAdminDb } from '../lib/admin-db.js';
+import { SupabaseQuotaStore, requestQuotaSubject } from '../security/quota-store.js';
+
+const providerSpendQuota = new SupabaseQuotaStore(getAdminDb('runner'));
 
 // Tool: request_app_connection — lets the agent ask the user to connect an app
 const requestAppConnectionTool: CanonicalTool = {
@@ -34,17 +46,17 @@ const requestAppConnectionTool: CanonicalTool = {
   },
 };
 
-// In-memory task store (for real-time streaming state)
-const tasks = new Map<string, Task>();
+// Compatibility-only delivery cache for the legacy notch stream. Durable runs
+// are authoritative; no authorization or outcome is derived from this cache.
+const tasks = new InMemoryTaskStore();
 
-export function getTask(id: string): Task | undefined {
-  return tasks.get(id);
+export async function getTask(ownerId: string, id: string): Promise<Task | undefined> {
+  const run = await getOwnerRun(ownerId, id);
+  return run ? taskFromDurableRun(run) : undefined;
 }
 
-export function getAllTasks(): Task[] {
-  return Array.from(tasks.values()).sort(
-    (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
-  );
+export async function getAllTasks(ownerId: string): Promise<Task[]> {
+  return (await listOwnerRuns(ownerId)).map(taskFromDurableRun);
 }
 
 // ── DB helpers (fire-and-forget — never block streaming) ──
@@ -150,23 +162,59 @@ export async function runChat(
     userId?: string;
     conversationId?: string;
     modelId?: string;
+    deviceId?: string;
+    idempotencyKey?: string;
     history?: { role: 'user' | 'assistant'; content: string }[];
+    durableStore?: DurableRunStore;
   }
 ): Promise<Task & { threadId: string }> {
-  const id = options?.sessionId ?? uuid();
   const userId = options?.userId;
-  const threadId = options?.conversationId ?? id;
+  if (!userId) {
+    throw new Error('Authenticated owner is required');
+  }
+  const requestedSessionId = options?.sessionId;
+  let id = uuid();
+  let threadId = options?.conversationId ?? id;
+  await providerSpendQuota.consume({
+    capability: 'provider',
+    subject: requestQuotaSubject({ userId, deviceId: options?.deviceId }),
+    idempotencyKey: options?.idempotencyKey ?? requestedSessionId ?? id,
+  });
 
   // Resolve the LLM provider BEFORE creating a task or emitting status. An
   // entitlement failure (trial expired, provider key required, operational)
   // must propagate to the route as a deterministic error, not be swallowed
   // into a "failed" task. Authenticated users can use the server key only
   // during trial; after that they need an active BYOK provider.
-  const provider = userId
-    ? (await resolveProviderForUser(userId, options?.modelId)).provider
-    : getFallbackProvider(options?.modelId);
+  const provider = (await resolveProviderForUser(userId, options?.modelId)).provider;
 
-  const task = createOrUpdateTask(id, message);
+  const durableStore = options?.durableStore ?? new DurableRunStore();
+  let durableRun = await durableStore.create({
+    runId: id,
+    ownerId: userId,
+    deviceId: options?.deviceId ?? null,
+    idempotencyKey: options?.idempotencyKey ?? requestedSessionId ?? id,
+    input: {
+      kind: 'chat',
+      message,
+      conversationId: options?.conversationId ?? null,
+      modelId: options?.modelId ?? null,
+    },
+  });
+  if (durableRun.id !== id || durableRun.state !== 'queued') {
+    const existing = taskFromDurableRun(durableRun);
+    return { ...existing, threadId: options?.conversationId ?? durableRun.id };
+  }
+  id = durableRun.id;
+  threadId = options?.conversationId ?? id;
+
+  const task = createOrUpdateTask(userId, id, message);
+
+  durableRun = await durableStore.transition(durableRun, {
+    transitionId: uuid(),
+    targetState: 'provider_streaming',
+    eventType: 'provider_stream_started',
+  });
 
   notch.sendStatus(id, {
     task: task.task,
@@ -190,18 +238,17 @@ export async function runChat(
         content: m.content,
       }));
 
-    // Local tools (bash, web, fetch) are only available to authenticated users.
-    // Unauthenticated chat requests should not be able to execute shell commands,
-    // fetch arbitrary URLs, or read the local filesystem.
     const tools: CanonicalTool[] = [
-      ...(userId ? localTools : []),
-      ...(userId ? scheduledTaskTools : []),
+      ...hostedTools,
+      ...scheduledTaskTools.filter(
+        (tool) => config.containment.costlyIntegrationsEnabled || tool.name !== 'create_scheduled_task',
+      ),
     ];
 
     // Load Composio tools for all connected apps
     let composioToolNames = new Set<string>();
     let connectedAppNames: string[] = [];
-    if (userId) {
+    {
       const composio = await loadComposioTools(userId);
       if (composio.tools.length > 0) {
         // Composio tools are compatible shape — cast to canonical
@@ -209,7 +256,9 @@ export async function runChat(
         composioToolNames = composio.toolNames;
         connectedAppNames = composio.activeAppNames;
       }
-      tools.push(requestAppConnectionTool);
+      if (config.containment.costlyIntegrationsEnabled) {
+        tools.push(requestAppConnectionTool);
+      }
     }
 
     // Build system prompt with connected app context
@@ -221,17 +270,33 @@ export async function runChat(
     // Tool-use loop: stream → handle tool calls → stream again
     let maxLoops = 5;
     while (maxLoops-- > 0) {
-      const streamResult = await provider.stream({
-        messages: canonicalMessages,
-        tools: tools.length > 0 ? tools : undefined,
-        systemPrompt,
-        maxTokens: config.api.maxTokens,
-        onText: (text) => {
-          fullText += text;
-          task.streamingText = fullText;
-          notch.sendProgress(id, { type: 'token', text });
-        },
-      });
+      let streamResult;
+      try {
+        streamResult = await provider.stream({
+          messages: canonicalMessages,
+          tools: tools.length > 0 ? tools : undefined,
+          systemPrompt,
+          maxTokens: config.api.maxTokens,
+          onText: (text) => {
+            fullText += text;
+            task.streamingText = fullText;
+            notch.sendProgress(id, { type: 'token', text });
+          },
+        });
+      } catch (streamError) {
+        const message = streamError instanceof Error ? streamError.message : 'provider stream interrupted';
+        durableRun = await durableStore.transition(durableRun, {
+          transitionId: uuid(),
+          targetState: 'failed_recoverable',
+          eventType: 'provider_stream_interrupted',
+          payload: {
+            code: 'provider_stream_interrupted',
+            detail: message.slice(0, 500),
+            retryCreatesNewRun: true,
+          },
+        });
+        throw new RecoverableProviderStreamError(message);
+      }
 
       // Check for tool use blocks
       const toolUseBlocks = streamResult.content.filter(
@@ -239,6 +304,17 @@ export async function runChat(
       );
 
       if (toolUseBlocks.length > 0) {
+        durableRun = await durableStore.transition(durableRun, {
+          transitionId: uuid(),
+          targetState: 'checkpointed',
+          eventType: 'provider_checkpointed',
+          checkpoint: {
+            boundary: 'provider_response_complete',
+            completedToolLoops: 5 - maxLoops,
+            toolUseIds: toolUseBlocks.map((block) => block.id),
+          },
+        });
+
         // Flush any streamed text before tool calls as a separate chat message
         const preToolText = streamResult.content
           .filter((b): b is Extract<CanonicalContentBlock, { type: 'text' }> => b.type === 'text')
@@ -273,10 +349,15 @@ export async function runChat(
 
           // Route to correct handler
           let result: string;
-          const isScheduledTool = scheduledTaskTools.some(t => t.name === toolBlock.name);
+          const isScheduledTool = tools.some(
+            (tool) => tool.name === toolBlock.name,
+          ) && scheduledTaskTools.some((tool) => tool.name === toolBlock.name);
           const isComposioTool = composioToolNames.has(toolBlock.name);
 
-          if (toolBlock.name === 'request_app_connection' && userId) {
+          if (
+            toolBlock.name === 'request_app_connection'
+            && config.containment.costlyIntegrationsEnabled
+          ) {
             const appType = toolInput.app_type as string;
             const reason = toolInput.reason as string;
             const app = COMPOSIO_APPS.find(a => a.appType === appType);
@@ -304,33 +385,57 @@ export async function runChat(
               result = `User denied the ${displayName} connection. Do not request this app again in this conversation. Answer their question another way or explain what you would need.`;
               console.log(`[chat] ${displayName} connection denied by user`);
             }
-          } else if (isComposioTool && userId && requiresApproval(toolBlock.name)) {
+          } else if (isComposioTool) {
+            const policy = classifyAction(toolBlock.name, {
+              registryVersion: ACTION_REGISTRY_VERSION,
+              metadataValidated: composioToolNames.has(toolBlock.name),
+            });
+            if (policy.kind === 'deny') {
+              result = `External action denied: ${policy.reason}`;
+            } else if (policy.kind === 'approval') {
             // Mutating external action: do NOT execute. Create a durable pending
             // action holding the immutable payload and ask the user to approve.
             const summary = summarizeAction(toolBlock.name, toolInput);
+            const appType = toolBlock.name.startsWith('GMAIL_') ? 'gmail'
+              : toolBlock.name.startsWith('GOOGLECALENDAR_') ? 'googlecalendar'
+                : toolBlock.name.startsWith('GOOGLEDOCS_') ? 'googledocs'
+                  : toolBlock.name.startsWith('GITHUB_') ? 'github' : '';
+            const { data: connectedAccount } = appType
+              ? await supabase.from('danotch_connected_apps')
+                .select('composio_conn_id')
+                .eq('user_id', userId)
+                .eq('app_type', appType)
+                .eq('active', true)
+                .single()
+              : { data: null };
             const created = await createPendingAction({
               userId,
               sessionId: id,
               actionType: toolBlock.name,
               summary,
               payload: toolInput,
+              accountId: connectedAccount?.composio_conn_id ?? '',
+              deviceId: options?.deviceId ?? '',
             });
-            if ('error' in created) {
-              result = `Could not prepare this action for approval: ${created.error}`;
+              if ('error' in created) {
+                result = `Could not prepare this action for approval: ${created.error}`;
+              } else {
+                notch.sendPendingAction(created.id, id, toolBlock.name, summary);
+                result = `This action needs the user's approval before it runs. A draft (${summary}) is now awaiting their decision in the app. Do not retry it; wait for the user to approve or reject.`;
+              }
             } else {
-              notch.sendPendingAction(created.id, id, toolBlock.name, summary);
-              result = `This action needs the user's approval before it runs. A draft (${summary}) is now awaiting their decision in the app. Do not retry it; wait for the user to approve or reject.`;
+              result = await executeComposioTool(userId, {
+                id: toolBlock.id,
+                name: toolBlock.name,
+                input: toolInput,
+              });
             }
-          } else if (isComposioTool && userId) {
-            result = await executeComposioTool(userId, {
-              id: toolBlock.id,
-              name: toolBlock.name,
-              input: toolInput,
-            });
-          } else if (isScheduledTool && userId) {
+          } else if (isScheduledTool) {
             result = await executeScheduledTool(toolBlock.name, toolInput, userId);
+          } else if (hostedTools.some((tool) => tool.name === toolBlock.name)) {
+            result = await executeHostedTool(toolBlock.name, toolInput);
           } else {
-            result = await executeLocalTool(toolBlock.name, toolInput);
+            result = `Tool denied: ${toolBlock.name} is not registered for hosted execution`;
           }
 
           const resultSummary = result.slice(0, 300);
@@ -365,6 +470,12 @@ export async function runChat(
         // Add tool results to conversation and loop for next response
         canonicalMessages.push({ role: 'user', content: toolResults });
         task.currentToolName = undefined;
+        durableRun = await durableStore.transition(durableRun, {
+          transitionId: uuid(),
+          targetState: 'provider_streaming',
+          eventType: 'provider_stream_started',
+          payload: { resumedFromCheckpoint: durableRun.revision },
+        });
         continue;
       }
 
@@ -383,6 +494,13 @@ export async function runChat(
       task.streamingText = '';
       task.currentToolName = undefined;
 
+      durableRun = await durableStore.transition(durableRun, {
+        transitionId: uuid(),
+        targetState: 'completed',
+        eventType: 'run_completed',
+        payload: { result: finalResponseText, toolsUsed },
+      });
+
       if ((options?.history?.length ?? 0) === 0) {
         dbSave(async () => {
           await generateThreadTitle(threadId, id, message, finalResponseText, notch, userId, options?.modelId);
@@ -398,6 +516,12 @@ export async function runChat(
     task.status = 'completed';
     task.result = fallback;
     task.completedAt = new Date();
+    durableRun = await durableStore.transition(durableRun, {
+      transitionId: uuid(),
+      targetState: 'completed',
+      eventType: 'run_completed',
+      payload: { result: fallback, code: 'max_tool_loops_reached', toolsUsed },
+    });
     notch.sendDone(id, { status: 'completed', result: fallback });
     return { ...task, threadId };
   } catch (err) {
@@ -406,7 +530,26 @@ export async function runChat(
     task.error = errorMsg;
     task.completedAt = new Date();
 
-    notch.sendDone(id, { status: 'failed', error: errorMsg });
+    if (!(err instanceof RecoverableProviderStreamError) && !isTerminalRun(durableRun)) {
+      try {
+        durableRun = await durableStore.transition(durableRun, {
+          transitionId: uuid(),
+          targetState: 'failed',
+          eventType: 'run_failed',
+          payload: { code: 'run_failed', detail: errorMsg.slice(0, 500) },
+        });
+      } catch (persistError) {
+        console.error('[runner] Failed to persist terminal run state:', persistError);
+        throw persistError;
+      }
+    }
+
+    notch.sendDone(id, {
+      status: 'failed',
+      error: err instanceof RecoverableProviderStreamError
+        ? `Provider stream interrupted. Retry creates a new run: ${errorMsg}`
+        : errorMsg,
+    });
     return { ...task, threadId };
   }
 }
@@ -458,7 +601,6 @@ export async function deleteThread(userId: string, threadId: string) {
 
 function summarizeToolInput(toolName: string, input: Record<string, unknown>): string {
   switch (toolName) {
-    case 'bash_execute': return (input.command as string)?.slice(0, 80) ?? '';
     case 'web_search': return (input.query as string) ?? '';
     case 'web_fetch': return (input.url as string) ?? '';
     case 'create_scheduled_task': return (input.name as string) ?? '';
@@ -469,24 +611,44 @@ function summarizeToolInput(toolName: string, input: Record<string, unknown>): s
   }
 }
 
-function createOrUpdateTask(id: string, message: string): Task {
-  let task = tasks.get(id);
-  if (!task) {
-    task = {
-      id,
-      task: message,
-      description: message.slice(0, 60),
-      status: 'running',
-      toolCallsCount: 0,
-      streamingText: '',
-      createdAt: new Date(),
-      chatHistory: [],
-    };
-    tasks.set(id, task);
-  } else {
-    task.status = 'running';
-    task.streamingText = '';
-  }
+function createOrUpdateTask(ownerId: string, id: string, message: string): Task {
+  const task = tasks.createOrUpdate(ownerId, id, message);
   task.chatHistory.push({ id: uuid(), role: 'user', content: message, timestamp: new Date() });
   return task;
+}
+
+class RecoverableProviderStreamError extends Error {}
+
+function isTerminalRun(run: DurableRunRecord): boolean {
+  return ['completed', 'failed', 'failed_recoverable', 'cancelled', 'expired'].includes(run.state);
+}
+
+function taskFromDurableRun(run: DurableRunRecord): Task {
+  const message = typeof run.input.message === 'string' ? run.input.message : 'Run';
+  const status: Task['status'] = run.state === 'completed'
+    ? 'completed'
+    : isTerminalRun(run)
+      ? 'failed'
+      : 'running';
+  const result = typeof run.terminalResult?.result === 'string'
+    ? run.terminalResult.result
+    : undefined;
+  return {
+    id: run.id,
+    ownerId: run.userId,
+    task: message,
+    description: message.slice(0, 60),
+    status,
+    toolCallsCount: 0,
+    streamingText: '',
+    result,
+    error: run.state === 'failed_recoverable'
+      ? 'Provider stream interrupted; retry creates a new run'
+      : typeof run.terminalResult?.detail === 'string'
+        ? run.terminalResult.detail
+        : run.terminalCode ?? undefined,
+    createdAt: new Date(run.createdAt),
+    completedAt: run.terminalAt ? new Date(run.terminalAt) : undefined,
+    chatHistory: [],
+  };
 }

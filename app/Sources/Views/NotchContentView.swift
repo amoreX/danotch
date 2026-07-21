@@ -362,7 +362,7 @@ private struct TodayPage: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: .capsule)
+        .perchGlass(in: Capsule())
         .contentShape(Rectangle())
         // `simultaneousGesture` (not `.onTapGesture`) so this still fires even
         // though the TextField above already claims its own tap — otherwise
@@ -377,7 +377,7 @@ private struct TodayPage: View {
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
             .frame(width: 24, height: 24)
-            .glassEffect(enabled ? Glass.regular.tint(DN.activeAccent) : Glass.regular, in: .circle)
+            .perchGlass(tint: enabled ? DN.activeAccent : nil, in: Circle())
             .opacity(enabled ? 1 : 0.55)
             .contentShape(.circle)
             .onTapGesture { if enabled { submit() } }
@@ -787,7 +787,7 @@ struct IconActionButton: View {
             Image(systemName: icon)
                 .symbolRenderingMode(.hierarchical)
         }
-        .buttonStyle(.glass)
+        .buttonStyle(.bordered)
         .controlSize(.small)
         .tint(.clear)
         .help(label)

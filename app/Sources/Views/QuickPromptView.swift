@@ -21,7 +21,7 @@ struct QuickPromptView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .glassEffect(.regular, in: .capsule)
+        .perchGlass(in: Capsule())
         .contentShape(.capsule)
         .onTapGesture { isFocused = true }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -47,10 +47,7 @@ struct QuickPromptView: View {
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
             .frame(width: 24, height: 24)
-            .glassEffect(
-                enabled ? Glass.regular.tint(DN.activeAccent) : Glass.regular,
-                in: .circle
-            )
+            .perchGlass(tint: enabled ? DN.activeAccent : nil, in: Circle())
             .opacity(enabled ? 1 : 0.55)
             .contentShape(.circle)
             .onTapGesture { if enabled { submit() } }
@@ -85,7 +82,7 @@ struct QuickPromptHintBar: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6)
                 .frame(height: 16)
-                .glassEffect(.regular, in: .capsule)
+                .perchGlass(in: Capsule())
             Text(caption)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)

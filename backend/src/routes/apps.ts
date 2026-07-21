@@ -7,10 +7,22 @@ import {
   disconnect,
   syncConnectionToDb,
   invalidateActiveAppsCache,
+  retireSupersededAccount,
 } from '../composio/connection.js';
-import { getComposio } from '../composio/client.js';
-import { supabase } from '../lib/supabase.js';
+import { userDb as supabase } from '../lib/user-db.js';
+import { getAdminDb } from '../lib/admin-db.js';
 import { COMPOSIO_APPS } from '../composio/tools.js';
+import { config } from '../config.js';
+import {
+  beginOAuthLinkAttempt,
+  confirmOAuthReplacement,
+  consumeOAuthCallback,
+  failOAuthLinkAttempt,
+  getOAuthAttempt,
+} from '../composio/oauth-state.js';
+import { SupabaseQuotaStore, requestQuotaSubject } from '../security/quota-store.js';
+
+const oauthQuota = new SupabaseQuotaStore(getAdminDb('reconciliation'));
 
 /**
  * Create routes for a single Composio app integration.
@@ -34,11 +46,85 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
     }
 
     const status = await getConnectionStatus(userId, toolkitSlug);
+    let confirmedAccountId: string | undefined;
+    let supersededAccountId: string | undefined;
+    if (!status.available) {
+      const { data } = await supabase
+        .from('danotch_connected_apps')
+        .select('active')
+        .eq('user_id', userId)
+        .eq('app_type', appType)
+        .single();
+      res.status(503).json({
+        connected: Boolean(data?.active),
+        stale: true,
+        reason: 'provider_status_unavailable',
+      });
+      return;
+    }
+    const attemptId = typeof req.query.attempt_id === 'string' ? req.query.attempt_id : '';
+    const deviceId = typeof req.query.device_id === 'string' ? req.query.device_id : '';
+    if (attemptId && deviceId) {
+      const attempt = await getOAuthAttempt({ attemptId, userId, deviceId, appType });
+      if (!attempt || !attempt.callbackReceived) {
+        res.json({ connected: status.connected, linking: true });
+        return;
+      }
+      const candidateAccountIds = (status.accountIds ?? [])
+        .filter((id) => id !== attempt.priorAccountId);
+      if (candidateAccountIds.length > 1) {
+        res.status(409).json({
+          connected: Boolean(attempt.priorAccountId),
+          reason: 'ambiguous_replacement_requires_reconciliation',
+        });
+        return;
+      }
+      const candidateAccountId = candidateAccountIds[0];
+      if (!status.connected || !candidateAccountId) {
+        res.json({ connected: Boolean(attempt.priorAccountId), linking: true });
+        return;
+      }
+      const confirmed = await confirmOAuthReplacement({
+        attemptId,
+        userId,
+        deviceId,
+        appType,
+        candidateAccountId,
+      });
+      if (!confirmed) {
+        res.status(409).json({ connected: Boolean(attempt.priorAccountId), reason: 'stale_link_attempt' });
+        return;
+      }
+      confirmedAccountId = candidateAccountId;
+      supersededAccountId = attempt.priorAccountId;
+    }
     if (status.connected) {
       // Trusted, authenticated sync point: an ACTIVE Composio account is the
       // source of truth. Persist it so later chats (which load tools from the
       // DB) can use it. This is where redirect-OAuth completions become durable.
-      await syncConnectionToDb(userId, appType, toolkitSlug);
+      const persisted = await syncConnectionToDb(
+        userId,
+        appType,
+        toolkitSlug,
+        confirmedAccountId,
+      );
+      if (!persisted) {
+        res.status(503).json({
+          connected: Boolean(supersededAccountId),
+          stale: true,
+          reason: 'connection_persistence_unavailable',
+        });
+        return;
+      }
+      if (confirmedAccountId && supersededAccountId && confirmedAccountId !== supersededAccountId) {
+        try {
+          await retireSupersededAccount(userId, toolkitSlug, supersededAccountId);
+        } catch {
+          // The new account is already durable. Cleanup is reconciliation work;
+          // never roll the user back to disconnected because provider cleanup
+          // was temporarily unavailable.
+        }
+      }
       console.log(`${tag} → connected=true (synced to DB)`);
       res.json({ connected: true });
       return;
@@ -70,23 +156,73 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
       return;
     }
 
+    const deviceId = typeof req.body?.device_id === 'string' ? req.body.device_id : '';
+    if (!deviceId) {
+      res.status(400).json({ error: 'device_id is required for OAuth linking' });
+      return;
+    }
     const existing = await getConnectionStatus(userId, toolkitSlug);
-    if (existing.connected) {
+    if (!existing.available) {
+      res.status(503).json({ error: 'Connection status is temporarily unavailable.' });
+      return;
+    }
+    if (existing.connected && req.body?.replace !== true) {
       // Sync to DB in case it was out of sync
-      await syncConnectionToDb(userId, appType, toolkitSlug);
+      if (!await syncConnectionToDb(userId, appType, toolkitSlug)) {
+        res.status(503).json({ error: 'Connection status could not be persisted.' });
+        return;
+      }
       res.json({ already_connected: true });
       return;
     }
+    if (!config.containment.costlyIntegrationsEnabled) {
+      res.status(503).json({
+        error: 'New integration connections are temporarily unavailable.',
+        code: 'costly_integrations_frozen',
+      });
+      return;
+    }
 
-    const result = await initiateConnection(userId, toolkitSlug, appType);
+    try {
+      await oauthQuota.consume({
+        capability: 'oauth',
+        subject: requestQuotaSubject({ userId }),
+      });
+    } catch {
+      res.status(503).json({ error: 'Integration linking is temporarily unavailable.' });
+      return;
+    }
+    let attempt;
+    try {
+      attempt = await beginOAuthLinkAttempt({
+        userId,
+        deviceId,
+        appType,
+        toolkitSlug,
+        callbackBaseUrl: config.publicBaseUrl,
+        priorAccountId: existing.accountId,
+        ttlMs: config.oauth.stateTtlMs,
+      });
+    } catch {
+      res.status(503).json({ error: 'Integration linking is temporarily unavailable.' });
+      return;
+    }
+    const result = await initiateConnection(userId, toolkitSlug, appType, attempt.callbackUrl);
     if (result.error) {
+      await failOAuthLinkAttempt(attempt.id, userId);
       console.log(`${tag} ✗ ${result.error}`);
-      res.status(400).json({ error: result.error });
+      res.status(503).json({ error: 'Integration linking could not be started. Try again.' });
       return;
     }
 
     console.log(`${tag} → redirectUrl=${result.redirectUrl ? 'yes' : 'auto-connected'}`);
-    res.json({ redirectUrl: result.redirectUrl, connected: !result.redirectUrl });
+    res.json({
+      redirectUrl: result.redirectUrl,
+      connected: !result.redirectUrl,
+      attempt_id: attempt.id,
+      expires_at: attempt.expiresAt,
+      pkce: 'provider_managed',
+    });
   });
 
   router.post('/disconnect', requireAuth, async (req, res) => {
@@ -97,51 +233,22 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
     res.json({ ok: success });
   });
 
-  router.post('/reset', requireAuth, async (req, res) => {
-    const userId = req.user!.sub;
-    console.log(`${tag} POST /reset userId=${userId}`);
-
-    try {
-      const c = getComposio();
-      // App-scoped: only delete accounts for THIS app's toolkit. Resetting Gmail
-      // must never remove the user's GitHub connection.
-      const scoped = await c.connectedAccounts.list({ userIds: [userId], toolkitSlugs: [toolkitSlug] });
-      let deleted = 0;
-      for (const account of scoped.items ?? []) {
-        if (account?.id) {
-          try {
-            await c.connectedAccounts.delete(account.id);
-            deleted++;
-            console.log(`${tag} Deleted composio account ${account.id}`);
-          } catch (e: any) {
-            console.warn(`${tag} Failed to delete account ${account.id}:`, e.message);
-          }
-        }
-      }
-      console.log(`${tag} Reset: deleted ${deleted} composio accounts for ${toolkitSlug}`);
-    } catch (e: any) {
-      console.warn(`${tag} Reset composio cleanup error:`, e.message);
-    }
-
-    // Clear DB state for this app
-    await supabase
-      .from('danotch_connected_apps')
-      .update({ active: false, composio_conn_id: null, disconnected_at: new Date().toISOString() })
-      .eq('user_id', userId)
-      .eq('app_type', appType);
-
-    invalidateActiveAppsCache(userId);
-    res.json({ ok: true });
-  });
-
   // OAuth callback — Composio redirects here after user authorizes.
   // This endpoint intentionally does NOT write to the database. Query parameters
   // are client-controlled and can be forged (e.g., an attacker could craft a
   // callback URL with another user's user_id). The macOS app polls
   // /api/apps/:appType/status, which queries Composio directly as the source of
   // truth, so the DB state is updated from a trusted source instead.
-  router.get('/callback', async (_req, res) => {
-    console.log(`${tag} OAuth callback received — rendering success page only`);
+  router.get('/callback', async (req, res) => {
+    const result = await consumeOAuthCallback({
+      state: typeof req.query.state === 'string' ? req.query.state : '',
+      appType,
+    });
+    if (!result.ok) {
+      res.status(400).send('<html><body>Invalid or expired connection link. Return to Perch and start again.</body></html>');
+      return;
+    }
+    console.log(`${tag} OAuth callback accepted for attempt=${result.attemptId}`);
 
     res.send(`
       <html>

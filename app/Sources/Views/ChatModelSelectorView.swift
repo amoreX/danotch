@@ -81,7 +81,7 @@ struct ChatModelSelectorView: View {
             .padding(.leading, 6)
             .padding(.trailing, 8)
             .frame(width: maxWidth, height: 26)
-            .glassEffect(.regular, in: .capsule)
+            .perchGlass(in: Capsule())
             .contentShape(.capsule)
         }
         .menuStyle(.borderlessButton)

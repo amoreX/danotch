@@ -3,6 +3,8 @@ app/.build/
 app/.swiftpm/
 app/Danotch.app/
 *.xcodeproj
+!app/Perch.xcodeproj/
+!app/Perch.xcodeproj/**
 xcuserdata/
 DerivedData/
 
