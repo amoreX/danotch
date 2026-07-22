@@ -831,7 +831,7 @@ begin
     terminal_at = now()
   where id = p_action_id and user_id = p_user_id;
   return p_status;
-end
+end;
 $$;
 
 revoke all on function public.danotch_create_run(uuid, uuid, uuid, text, jsonb, integer) from public;

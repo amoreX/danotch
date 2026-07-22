@@ -77,9 +77,9 @@ export default function Footer() {
       <div className="mx-1 rounded-t-[28px] bg-[#111111] px-5 pb-8 pt-10 md:hidden">
         <p className="m-0 text-[clamp(52px,18vw,84px)] leading-none text-white">Perch</p>
         <div className="mt-12 flex flex-col gap-6 border-t border-white/10 pt-6">
-          <p className="m-0 text-xs leading-relaxed text-white/40">
+          <p className="m-0 text-xs leading-relaxed text-white/65">
             Questions?{' '}
-            <a href={`mailto:${SITE.supportEmail}`} className="text-white/55 no-underline hover:text-white">
+            <a href={`mailto:${SITE.supportEmail}`} className="text-white/80 no-underline hover:text-white">
               {SITE.supportEmail}
             </a>
           </p>
@@ -90,7 +90,7 @@ export default function Footer() {
                 href={link.href}
                 target={link.href.startsWith('http') ? '_blank' : undefined}
                 rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-                className="text-xs text-white/55 no-underline"
+                className="text-xs text-white/70 no-underline"
               >
                 {link.label}
               </a>
@@ -146,11 +146,11 @@ export default function Footer() {
           }}
         >
           <p
-            className="m-0 max-w-md text-white/35"
+            className="m-0 max-w-md text-white/65"
             style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, lineHeight: 1.7, letterSpacing: '-0.02em' }}
           >
             Questions?{' '}
-            <a href={`mailto:${SITE.supportEmail}`} className="text-white/50 no-underline hover:text-white/80">
+            <a href={`mailto:${SITE.supportEmail}`} className="text-white/80 no-underline hover:text-white">
               {SITE.supportEmail}
             </a>
           </p>
@@ -162,7 +162,7 @@ export default function Footer() {
                 href={link.href}
                 target={link.href.startsWith('http') ? '_blank' : undefined}
                 rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-                className="text-white/45 no-underline transition-colors hover:text-white"
+                className="text-white/70 no-underline transition-colors hover:text-white"
                 style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, letterSpacing: '-0.02em' }}
               >
                 {link.label}

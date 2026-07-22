@@ -29,6 +29,7 @@ on:
 permissions:
   contents: read
   id-token: write   # required for gh attestation / OIDC provenance
+  attestations: write
 
 jobs:
   release:
@@ -220,16 +221,10 @@ jobs:
       - name: Credential scan on release archive
         shell: bash
         run: |
-          which trufflehog 2>/dev/null || pip3 install --quiet trufflehog 2>/dev/null || true
+          brew install trufflehog
+          command -v trufflehog >/dev/null
           # Scan the app bundle directory (not the zip, to avoid binary false-positives in compressed data)
-          if command -v trufflehog &>/dev/null; then
-            trufflehog filesystem "$BUILT_APP" --only-verified --fail || {
-              echo "ERROR: Verified secrets found in app bundle. Refusing to publish."
-              exit 1
-            }
-          else
-            echo "WARNING: trufflehog not available — skipping credential scan. Install via pip3."
-          fi
+          trufflehog filesystem "$BUILT_APP" --only-verified --fail
 
       # Repackage the stapled .app into the final distribution archive.
       - name: Repackage stapled archive
@@ -282,14 +277,9 @@ jobs:
       # GitHub artifact attestation — links the artifact digest to this workflow
       # run for supply-chain provenance. Requires id-token: write permission.
       - name: Attest artifact provenance
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh attestation create \
-            --owner "${{ github.repository_owner }}" \
-            "$FINAL_ARCHIVE" \
-            || echo "WARNING: gh attestation not available in this environment — skipping."
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: ${{ env.FINAL_ARCHIVE }}
 
       # Upload release assets to the workflow run for auditors.
       - name: Upload release artifacts
