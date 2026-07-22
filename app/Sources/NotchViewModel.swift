@@ -63,6 +63,7 @@ enum PinnedWidget: String, CaseIterable, Codable {
 class NotchSettings: ObservableObject {
     private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
     private static let configFile = configDir.appendingPathComponent("settings.json")
+    private static let onboardingConfigFile = configDir.appendingPathComponent("onboarding.json")
 
     // Chat behavior
     @Published var openChatOnSend: Bool        { didSet { save() } }
@@ -77,6 +78,11 @@ class NotchSettings: ObservableObject {
     // Agents
     @Published var showAgentLiveState: Bool    { didSet { save() } }
     @Published var compactAgentRows: Bool      { didSet { save() } }
+
+    // Privacy / local access
+    @Published var agentMonitoringEnabled: Bool { didSet { save() } }
+    @Published var musicControlsEnabled: Bool   { didSet { save() } }
+    @Published var systemNotificationsEnabled: Bool { didSet { save() } }
 
     // Widget sizing: rawValue → "half" | "full"
     @Published var widgetSizes: [String: String] = [:] { didSet { save() } }
@@ -136,6 +142,9 @@ class NotchSettings: ObservableObject {
         showBattery = true
         showAgentLiveState = true
         compactAgentRows = false
+        agentMonitoringEnabled = false
+        musicControlsEnabled = false
+        systemNotificationsEnabled = false
         collapsedGroups = []
         widgetSizes = [:]
 
@@ -153,6 +162,9 @@ class NotchSettings: ObservableObject {
             "showBattery": showBattery,
             "showAgentLiveState": showAgentLiveState,
             "compactAgentRows": compactAgentRows,
+            "agentMonitoringEnabled": agentMonitoringEnabled,
+            "musicControlsEnabled": musicControlsEnabled,
+            "systemNotificationsEnabled": systemNotificationsEnabled,
             "collapsedGroups": Array(collapsedGroups),
             "widgetSizes": widgetSizes,
         ]
@@ -189,8 +201,35 @@ class NotchSettings: ObservableObject {
         if let v = json["showBattery"] as? Bool { showBattery = v }
         if let v = json["showAgentLiveState"] as? Bool { showAgentLiveState = v }
         if let v = json["compactAgentRows"] as? Bool { compactAgentRows = v }
+        if let v = json["agentMonitoringEnabled"] as? Bool { agentMonitoringEnabled = v }
+        if let v = json["musicControlsEnabled"] as? Bool { musicControlsEnabled = v }
+        if let v = json["systemNotificationsEnabled"] as? Bool { systemNotificationsEnabled = v }
+        migrateOnboardingPrivacySettingsIfNeeded(currentSettings: json)
         if let v = json["collapsedGroups"] as? [String] { collapsedGroups = Set(v) }
         if let v = json["widgetSizes"] as? [String: String] { widgetSizes = v }
+    }
+
+    private func migrateOnboardingPrivacySettingsIfNeeded(currentSettings: [String: Any]) {
+        guard currentSettings["agentMonitoringEnabled"] == nil
+                || currentSettings["musicControlsEnabled"] == nil
+                || currentSettings["systemNotificationsEnabled"] == nil,
+              let data = try? Data(contentsOf: Self.onboardingConfigFile),
+              let onboarding = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+
+        if currentSettings["agentMonitoringEnabled"] == nil,
+           let value = onboarding["agent_monitoring"] as? Bool {
+            agentMonitoringEnabled = value
+        }
+        if currentSettings["musicControlsEnabled"] == nil,
+           let value = onboarding["music_controls"] as? Bool {
+            musicControlsEnabled = value
+        }
+        if currentSettings["systemNotificationsEnabled"] == nil,
+           let value = onboarding["system_notifications"] as? Bool {
+            systemNotificationsEnabled = value
+        }
     }
 }
 
@@ -279,9 +318,9 @@ class NotchViewModel: ObservableObject {
     // Pending connection requests from agent (requestId → metadata)
     @Published var pendingConnectionRequests: [String: PendingConnectionRequest] = [:]
 
-    @Published var settings = NotchSettings()
-    @Published var agentMonitor = AgentMonitor()
-    @Published var nowPlaying = NowPlayingMonitor()
+    @Published var settings: NotchSettings
+    @Published var agentMonitor: AgentMonitor
+    @Published var nowPlaying: NowPlayingMonitor
     let statsMonitor = SystemStatsMonitor()
     private let localConversationStore: LocalConversationStore
     private var clockTimer: Timer?
@@ -301,6 +340,10 @@ class NotchViewModel: ObservableObject {
         localConversationStore: LocalConversationStore = LocalConversationStore(),
         deviceConnection: DeviceConnection = DeviceConnection()
     ) {
+        let settings = NotchSettings()
+        self.settings = settings
+        self.agentMonitor = AgentMonitor(enabled: settings.agentMonitoringEnabled)
+        self.nowPlaying = NowPlayingMonitor(enabled: settings.musicControlsEnabled)
         self.localConversationStore = localConversationStore
         self.deviceConnection = deviceConnection
         startClock()
@@ -315,6 +358,18 @@ class NotchViewModel: ObservableObject {
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
+        settings.$agentMonitoringEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                self?.agentMonitor.setEnabled(enabled)
+            }
+            .store(in: &cancellables)
+        settings.$musicControlsEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                self?.nowPlaying.setEnabled(enabled)
+            }
+            .store(in: &cancellables)
         deviceConnection.$state.sink { [weak self] state in
             self?.connectionState = state
         }.store(in: &cancellables)

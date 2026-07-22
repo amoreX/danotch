@@ -107,7 +107,6 @@ struct OnboardingView: View {
     @State private var apiKey = ""
     @State private var selectedModel = ProviderConfig.defaultModels["anthropic"] ?? ""
 
-    @State private var localToolConsent = true
     @State private var agentMonitoring = true
     @State private var musicControls = true
     @State private var systemNotifications = true
@@ -129,6 +128,13 @@ struct OnboardingView: View {
         self.onWindowSizeChange = onWindowSizeChange
         self.onComplete = onComplete
         _step = State(initialValue: auth.isAuthenticated ? .model : .welcome)
+        _agentMonitoring = State(initialValue: viewModel.settings.agentMonitoringEnabled)
+        _musicControls = State(initialValue: viewModel.settings.musicControlsEnabled)
+        _systemNotifications = State(initialValue: viewModel.settings.systemNotificationsEnabled)
+        _selectedWidgets = State(initialValue: Set(viewModel.settings.pinnedWidgets))
+        _openChatOnSend = State(initialValue: viewModel.settings.openChatOnSend)
+        _keepOpenInChat = State(initialValue: viewModel.settings.keepOpenInChat)
+        _restoreLastView = State(initialValue: viewModel.settings.restoreLastView)
     }
 
     private var isSetupStep: Bool {
@@ -956,6 +962,7 @@ struct OnboardingView: View {
             go(.apps)
         case .apps: go(.permissions)
         case .permissions:
+            applyPermissions()
             if systemNotifications { requestNotificationPermission() }
             if musicControls { requestMusicAutomation() }
             go(.preferences)
@@ -996,16 +1003,21 @@ struct OnboardingView: View {
         viewModel.settings.pinnedWidgets = orderedSelectedWidgets.prefix(3).map { $0 }
     }
 
+    private func applyPermissions() {
+        viewModel.settings.agentMonitoringEnabled = agentMonitoring
+        viewModel.settings.musicControlsEnabled = musicControls
+        viewModel.settings.systemNotificationsEnabled = systemNotifications
+    }
+
     private var orderedSelectedWidgets: [PinnedWidget] {
         PinnedWidget.allCases.filter { selectedWidgets.contains($0) }
     }
 
     private var completionPayload: [String: Any] {
         [
-            "local_tool_consent": localToolConsent,
-            "agent_monitoring": agentMonitoring,
-            "music_controls": musicControls,
-            "system_notifications": systemNotifications,
+            "agent_monitoring": viewModel.settings.agentMonitoringEnabled,
+            "music_controls": viewModel.settings.musicControlsEnabled,
+            "system_notifications": viewModel.settings.systemNotificationsEnabled,
             "use_default_model": useDefaultModel,
             "selected_provider": selectedProvider,
             "connected_apps": appIntegrations.filter { viewModel.appConnected[$0.appType] == true }.map { $0.appType },
@@ -1018,7 +1030,12 @@ struct OnboardingView: View {
 
     private func requestNotificationPermission() {
         guard Bundle.main.bundleIdentifier != nil else { return }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            guard !granted else { return }
+            DispatchQueue.main.async {
+                viewModel.settings.systemNotificationsEnabled = false
+            }
+        }
     }
 
     private func requestMusicAutomation() {

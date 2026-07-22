@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UserNotifications
 
 struct NotchShellView: View {
     @ObservedObject var viewModel: NotchViewModel
@@ -909,6 +910,12 @@ struct SettingsPanel: View {
                     }
                 }
 
+                section(title: "Privacy & Access") {
+                    settingsToggle("Agent monitoring", $viewModel.settings.agentMonitoringEnabled)
+                    settingsToggle("Music controls", $viewModel.settings.musicControlsEnabled)
+                    settingsToggle("System notifications", systemNotificationsBinding)
+                }
+
                 section(title: "Agents") {
                     settingsToggle("Live activity", $viewModel.settings.showAgentLiveState)
                     settingsToggle("Compact rows", $viewModel.settings.compactAgentRows)
@@ -929,6 +936,23 @@ struct SettingsPanel: View {
                 viewModel.checkAppStatus(app)
             }
         }
+    }
+
+    private var systemNotificationsBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.settings.systemNotificationsEnabled },
+            set: { enabled in
+                viewModel.settings.systemNotificationsEnabled = enabled
+                guard enabled, Bundle.main.bundleIdentifier != nil else { return }
+                UNUserNotificationCenter.current()
+                    .requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                        guard !granted else { return }
+                        DispatchQueue.main.async {
+                            viewModel.settings.systemNotificationsEnabled = false
+                        }
+                    }
+            }
+        )
     }
 
     // MARK: - Integrations grid
