@@ -77,8 +77,14 @@ test('owners cannot forge server-authoritative action or notification transition
     );
     await client.query(
       `insert into public.danotch_pending_actions
-        (id, user_id, action_type, summary, payload, idempotency_key)
-       values ($1, $2, 'GMAIL_SEND_EMAIL', 'draft', '{}'::jsonb, 'key-a')
+        (id, user_id, action_type, summary, payload, idempotency_key,
+         normalized_parameters, parameters_hash, delivery_semantics,
+         retry_semantics, reconciliation_semantics)
+       values (
+         $1, $2, 'GMAIL_SEND_EMAIL', 'draft', '{}'::jsonb, 'key-a',
+         '{}'::jsonb, encode(digest(convert_to('{}', 'utf8'), 'sha256'), 'hex'),
+         'none', 'never_after_ambiguous', 'provider_lookup_or_manual'
+       )
        on conflict (id) do nothing`,
       [ACTION_A, USER_A],
     );

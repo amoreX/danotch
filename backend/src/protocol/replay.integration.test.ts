@@ -38,7 +38,7 @@ async function offeredRun(client: Client, suffix: string) {
   await client.query(
     `select public.danotch_transition_run(
       $1, $2, gen_random_uuid(), 0, 'waiting_for_device',
-      'local_action_offered', jsonb_build_object('actionId', $3), null
+      'local_action_offered', jsonb_build_object('actionId', $3::uuid), null
     )`,
     [runId, OWNER, actionId],
   );

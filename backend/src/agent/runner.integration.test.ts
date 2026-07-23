@@ -194,7 +194,7 @@ test('local action decisions are immutable and execution grants are one-use', {
     await client.query(
       `select public.danotch_transition_run(
         $1, $2, gen_random_uuid(), 2, 'waiting_for_device',
-        'local_action_offered', jsonb_build_object('actionId', $3), null
+        'local_action_offered', jsonb_build_object('actionId', $3::uuid), null
       )`,
       [RUN_ACTION, OWNER_A, ACTION],
     );
