@@ -70,24 +70,11 @@ export function createProviderRoutes(): Router {
       .single();
 
     if (error || !data) {
-      const serverKey = process.env.ANTHROPIC_API_KEY ?? '';
-      try {
-        const models = serverKey ? await fetchAnthropicModels(serverKey) : [];
-        res.json({
-          provider: 'anthropic',
-          active_model: config.api.model,
-          models: models.length > 0 ? models : fallbackModels('anthropic'),
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to fetch Anthropic models';
-        console.warn(`[provider] Server Anthropic model list failed: ${msg}`);
-        res.json({
-          provider: 'anthropic',
-          active_model: config.api.model,
-          models: fallbackModels('anthropic'),
-          warning: msg,
-        });
-      }
+      res.json({
+        provider: 'anthropic',
+        active_model: config.trial.defaultModel,
+        models: config.containment.trialsEnabled ? config.trial.allowedModels : [],
+      });
       return;
     }
 
@@ -103,7 +90,10 @@ export function createProviderRoutes(): Router {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to fetch models';
       console.warn(`[provider] Model list failed: ${msg}`);
-      res.status(502).json({ error: msg, models: fallbackModels(data.provider as ProviderType) });
+      res.status(502).json({
+        error: 'Provider models are temporarily unavailable.',
+        models: fallbackModels(data.provider as ProviderType),
+      });
     }
   });
 
@@ -217,7 +207,7 @@ export function createProviderRoutes(): Router {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Verification failed';
       console.log(`[provider] Verification failed for ${provider}: ${msg}`);
-      res.status(400).json({ verified: false, error: msg });
+      res.status(400).json({ verified: false, error: 'Provider verification failed.' });
     }
   });
 

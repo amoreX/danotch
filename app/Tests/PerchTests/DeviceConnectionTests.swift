@@ -140,6 +140,8 @@ final class DeviceConnectionTests: XCTestCase {
         )
         second.start(session: session("user-b"))
         try await waitUntil { second.state == .unsupportedProtocol }
+        XCTAssertTrue(second.state.requiresUpdate)
+        XCTAssertFalse(second.state.canRetry)
     }
 
     func testSecureEnclaveUnavailableShowsReenrollmentWithoutNetworkEnrollment() async throws {

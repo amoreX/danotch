@@ -29,6 +29,13 @@ NOTARIZE="${NOTARIZE:-0}"
 APPLE_ID="${APPLE_ID:-}"
 APPLE_ID_PASSWORD="${APPLE_ID_PASSWORD:-}"
 APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
+TMPDIR="${TMPDIR:-/tmp}"
+PERCH_SPARKLE_FEED_URL="${PERCH_SPARKLE_FEED_URL:-}"
+PERCH_SPARKLE_PUBLIC_KEY="${PERCH_SPARKLE_PUBLIC_KEY:-}"
+EXECUTOR_ARTIFACT_SIGNING_KEY_PEM="${EXECUTOR_ARTIFACT_SIGNING_KEY_PEM:-}"
+RELEASE_TAG="$(git describe --tags --exact-match 2>/dev/null || true)"
+MARKETING_VERSION="${RELEASE_TAG#v}"
+BUILD_NUMBER="$(git rev-list --count HEAD)"
 
 # If a real Developer ID cert is configured, require notarization to be
 # explicitly opted in. An unnotarized Developer-ID-signed artifact is
@@ -47,6 +54,31 @@ if [[ -n "$DEVELOPER_ID_CERT" && "$NOTARIZE" != "1" ]]; then
   exit 1
 fi
 
+if [[ -n "$DEVELOPER_ID_CERT" ]]; then
+  [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "ERROR: Developer ID releases must be built from an exact vX.Y.Z tag."
+    exit 1
+  }
+  [[ "$PERCH_SPARKLE_FEED_URL" =~ ^https:// ]] || {
+    echo "ERROR: PERCH_SPARKLE_FEED_URL must be configured with HTTPS."
+    exit 1
+  }
+  [[ -n "$PERCH_SPARKLE_PUBLIC_KEY" ]] || {
+    echo "ERROR: PERCH_SPARKLE_PUBLIC_KEY is required."
+    exit 1
+  }
+  [[ -f "$EXECUTOR_ARTIFACT_SIGNING_KEY_PEM" ]] || {
+    echo "ERROR: EXECUTOR_ARTIFACT_SIGNING_KEY_PEM must name the protected P-256 PEM file."
+    exit 1
+  }
+  cp Resources/ExecutorArtifacts.json "$TMPDIR/Perch-ExecutorArtifacts.source.json"
+  trap 'cp "$TMPDIR/Perch-ExecutorArtifacts.source.json" Resources/ExecutorArtifacts.json; rm -f "$TMPDIR/Perch-ExecutorArtifacts.source.json"' EXIT
+  python3 scripts/executor_manifest.py Resources/ExecutorArtifacts.json \
+    --sign-key "$EXECUTOR_ARTIFACT_SIGNING_KEY_PEM" \
+    --output "$TMPDIR/Perch-ExecutorArtifacts.signed.json"
+  cp "$TMPDIR/Perch-ExecutorArtifacts.signed.json" Resources/ExecutorArtifacts.json
+fi
+
 echo "Building Perch..."
 xcodegen generate
 DERIVED_DATA="$SCRIPT_DIR/.build/xcode-release"
@@ -55,6 +87,10 @@ xcodebuild \
     -scheme Perch \
     -configuration Release \
     -derivedDataPath "$DERIVED_DATA" \
+    PERCH_SPARKLE_FEED_URL="$PERCH_SPARKLE_FEED_URL" \
+    PERCH_SPARKLE_PUBLIC_KEY="$PERCH_SPARKLE_PUBLIC_KEY" \
+    PERCH_MARKETING_VERSION="${MARKETING_VERSION:-0.0.0}" \
+    PERCH_BUILD_NUMBER="$BUILD_NUMBER" \
     CODE_SIGNING_ALLOWED=NO \
     build
 
@@ -68,6 +104,7 @@ cp -R "$BUILT_APP" "$SCRIPT_DIR/Perch.app"
 BUNDLE_DIR="$SCRIPT_DIR/Perch.app/Contents"
 
 if [[ -n "$DEVELOPER_ID_CERT" ]]; then
+  python3 scripts/executor_manifest.py "$BUNDLE_DIR/Resources/ExecutorArtifacts.json"
   # --- Developer ID signing (inside-out, Hardened Runtime) ---
   echo "Signing with Developer ID: $DEVELOPER_ID_CERT"
 

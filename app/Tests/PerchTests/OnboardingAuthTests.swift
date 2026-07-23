@@ -16,6 +16,28 @@ final class OnboardingAuthTests: XCTestCase {
         )
     }
 
+    func testRefreshOnlyLogsOutForDefinitiveInvalidRefreshResponse() {
+        XCTAssertEqual(
+            RefreshFailureDisposition.classify(
+                statusCode: 401,
+                code: "invalid_refresh_token"
+            ),
+            .logout
+        )
+        XCTAssertEqual(
+            RefreshFailureDisposition.classify(statusCode: 503, code: "refresh_unavailable"),
+            .preserveSession
+        )
+        XCTAssertEqual(
+            RefreshFailureDisposition.classify(statusCode: 429, code: "rate_limited"),
+            .preserveSession
+        )
+        XCTAssertEqual(
+            RefreshFailureDisposition.classify(statusCode: 200, code: nil),
+            .preserveSession
+        )
+    }
+
     func testOnboardingUsesHostedBrowserSignupAndDoesNotExpectSignupTokens() throws {
         let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let sourcesDirectory = testsDirectory

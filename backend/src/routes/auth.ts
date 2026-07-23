@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { supabaseAuth } from '../lib/supabase.js';
 import { createUserDb, userDb } from '../lib/user-db.js';
 import { getAdminDb } from '../lib/admin-db.js';
@@ -31,6 +32,20 @@ export function createAuthRoutes(dependencies: {
   const quota = dependencies.quota ?? new SupabaseQuotaStore(getAdminDb('bootstrap'));
   const captcha = new CaptchaVerifier(config.captcha);
   const verifyCaptcha = dependencies.verifyCaptcha ?? ((token, ip) => captcha.verify(token, ip));
+  const loginLimiter = rateLimit({
+    windowMs: config.authRateLimit.windowMs,
+    limit: config.authRateLimit.login,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: GENERIC_LOGIN_ERROR, code: 'rate_limited' },
+  });
+  const refreshLimiter = rateLimit({
+    windowMs: config.authRateLimit.windowMs,
+    limit: config.authRateLimit.refresh,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Session refresh is temporarily unavailable.', code: 'rate_limited' },
+  });
 
   router.get('/signup/browser', (req, res) => {
     const email = typeof req.query.email === 'string' ? req.query.email : '';
@@ -124,7 +139,7 @@ export function createAuthRoutes(dependencies: {
   });
 
   // Log in with email + password
-  router.post('/login', async (req, res) => {
+  router.post('/login', loginLimiter, async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
       res.status(401).json({ error: GENERIC_LOGIN_ERROR, code: 'invalid_credentials' });
@@ -269,7 +284,7 @@ export function createAuthRoutes(dependencies: {
   });
 
   // Refresh token
-  router.post('/refresh', async (req, res) => {
+  router.post('/refresh', refreshLimiter, async (req, res) => {
     const { refresh_token } = req.body;
 
     if (!refresh_token) {
@@ -282,7 +297,18 @@ export function createAuthRoutes(dependencies: {
     });
 
     if (error || !data.session) {
-      res.status(401).json({ error: 'Session refresh failed.' });
+      const upstreamStatus = Number((error as { status?: unknown } | null)?.status ?? 0);
+      if (upstreamStatus >= 500) {
+        res.status(503).json({
+          error: 'Session refresh is temporarily unavailable.',
+          code: 'refresh_unavailable',
+        });
+        return;
+      }
+      res.status(401).json({
+        error: 'Session refresh failed.',
+        code: 'invalid_refresh_token',
+      });
       return;
     }
     if (!data.user || !isEmailVerified(data.user)) {

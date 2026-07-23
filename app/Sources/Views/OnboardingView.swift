@@ -215,6 +215,12 @@ struct OnboardingView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 8)
 
+            Text("Includes a 14-day server-funded trial. Perch is a $5 lifetime unlock; after the trial, your own Anthropic, OpenAI, or OpenRouter API key is required.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 14)
+
             Spacer()
 
             HStack {
@@ -329,7 +335,7 @@ struct OnboardingView: View {
 
     private var accountStep: some View {
         VStack(alignment: .leading, spacing: OB.sectionSpacing) {
-            pageHeader("Create your account", "Sync setup, save chat history, and unlock scheduled tasks.")
+            pageHeader("Create your account", "Your trial and $5 lifetime purchase belong to this account, so signing in restores access on another Mac.")
 
             HStack(spacing: OB.itemSpacing) {
                 modeTab("Sign up", selected: authMode == .signup) {
@@ -424,12 +430,12 @@ struct OnboardingView: View {
 
     private var modelStep: some View {
         VStack(alignment: .leading, spacing: OB.sectionSpacing) {
-            pageHeader("Choose your model", "Use Perch's default or bring your own provider key.")
+            pageHeader("Choose your model", "The server funds 14 trial days. A $5 lifetime unlock and your own provider key are required afterward.")
 
             VStack(spacing: OB.itemSpacing) {
                 optionCard(
-                    title: "Use Perch default",
-                    subtitle: "Start immediately with the server-configured model.",
+                    title: "Use trial model",
+                    subtitle: "Server-funded for 14 days only.",
                     icon: "server.rack",
                     selected: useDefaultModel
                 ) { useDefaultModel = true }
@@ -448,8 +454,27 @@ struct OnboardingView: View {
             } else if activeProvider != nil {
                 configuredProviderNotice
             }
+
+            if let status = viewModel.billingStatus, status.canPurchase {
+                HStack(spacing: 10) {
+                    Text("Buy now or anytime during the trial. The purchase is restored by signing into this account.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    pillButton(
+                        viewModel.checkoutState.isBusy ? "Waiting…" : "Buy $5",
+                        style: .accent
+                    ) {
+                        viewModel.startCheckout()
+                    }
+                    .disabled(viewModel.checkoutState.isBusy)
+                }
+            }
         }
-        .onAppear { viewModel.loadProviderConfigs() }
+        .onAppear {
+            viewModel.loadProviderConfigs()
+            viewModel.loadBillingStatus()
+        }
     }
 
     private var providerSetup: some View {
@@ -918,7 +943,10 @@ struct OnboardingView: View {
             if case .checkEmail = auth.lifecycleState { return false }
             if case .verificationExpired = auth.lifecycleState { return false }
             return canSubmitAuth && !auth.isLoading
-        case .model: return useDefaultModel || isProviderVerified || activeProvider != nil
+        case .model:
+            return (useDefaultModel && viewModel.billingStatus?.canUseServerKey != false)
+                || isProviderVerified
+                || activeProvider != nil
         case .permissions: return true
         default: return true
         }
@@ -993,6 +1021,7 @@ struct OnboardingView: View {
 
     private func loadSetupState() {
         viewModel.loadProviderConfigs()
+        viewModel.loadBillingStatus()
         for app in appIntegrations { viewModel.checkAppStatus(app.appType) }
     }
 

@@ -204,3 +204,34 @@ test('identity, OAuth, action, and scheduler hardening remains operation scoped'
     /grant execute on function public\.danotch_(?:consume_capability_quota|provision_verified_user|claim_due_schedules|finish_schedule_attempt)[^;]*to authenticated/is,
   );
 });
+
+test('result finalization elevates only the validated reducer and provisioning qualifies pgcrypto', async () => {
+  const sql = await readFile(
+    new URL('../../sql/015_provisioning_result_privileges.sql', import.meta.url),
+    'utf8',
+  );
+
+  assert.match(
+    sql,
+    /alter function public\.danotch_record_action_result\([\s\S]*?\)\s+security definer;/i,
+  );
+  assert.doesNotMatch(
+    sql,
+    /alter function public\.danotch_transition_run\([\s\S]*?\)\s+security definer;/i,
+  );
+  assert.match(
+    sql,
+    /revoke execute on function public\.danotch_transition_run\([\s\S]*?\)\s+from danotch_fencing;/i,
+  );
+  assert.doesNotMatch(
+    sql,
+    /grant execute on function public\.danotch_transition_run\([\s\S]*?\)\s+to danotch_fencing;/i,
+  );
+
+  assert.match(
+    sql,
+    /create or replace function public\.danotch_provision_verified_user[\s\S]*security definer set search_path = ''/i,
+  );
+  assert.equal(sql.match(/public\.digest\(/g)?.length, 2);
+  assert.doesNotMatch(sql.replaceAll('public.digest(', ''), /\bdigest\(/);
+});

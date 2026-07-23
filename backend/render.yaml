@@ -4,7 +4,7 @@ services:
     runtime: docker
     dockerContext: ./backend
     dockerfilePath: ./backend/Dockerfile
-    healthCheckPath: /health
+    healthCheckPath: /health/ready
     autoDeploy: false
     envVars:
       - key: NODE_ENV
@@ -13,6 +13,30 @@ services:
         value: "false"
       - key: COSTLY_INTEGRATIONS_ENABLED
         value: "false"
+      - key: TRIALS_ENABLED
+        value: "false"
+      - key: MAX_TOKENS
+        value: "4096"
+      - key: TRIAL_MAX_CONCURRENCY
+        value: "2"
+      - key: TRIAL_DAILY_TOKEN_LIMIT
+        value: "50000"
+      - key: TRIAL_DAILY_SPEND_MICRO_USD
+        value: "250000"
+      - key: SCHEDULER_MAX_TASKS_PER_USER
+        value: "5"
+      - key: SCHEDULER_MIN_INTERVAL_MS
+        value: "900000"
+      - key: SCHEDULER_MAX_TOKENS
+        value: "1024"
+      - key: SCHEDULER_CLAIM_LIMIT
+        value: "10"
+      - key: AUTH_RATE_WINDOW_MS
+        value: "900000"
+      - key: AUTH_LOGIN_RATE_LIMIT
+        value: "10"
+      - key: AUTH_REFRESH_RATE_LIMIT
+        value: "30"
       - key: PUBLIC_BASE_URL
         sync: false
       - key: DEVICE_GATEWAY_URL
@@ -51,3 +75,69 @@ services:
         value: "60000"
       - key: DEVICE_HANDSHAKE_TIMEOUT_MS
         value: "5000"
+      - key: DEVICE_REPLAY_PAGE_SIZE
+        value: "100"
+      - key: DEVICE_WAITING_EXPIRY_SWEEP_MS
+        value: "30000"
+      - key: OAUTH_STATE_TTL_MS
+        value: "600000"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_BOOTSTRAP_SECRET_KEY
+        sync: false
+      - key: SUPABASE_WEBHOOK_SECRET_KEY
+        sync: false
+      - key: SUPABASE_SCHEDULER_SECRET_KEY
+        sync: false
+      - key: SUPABASE_FENCING_SECRET_KEY
+        sync: false
+      - key: SUPABASE_RECONCILIATION_SECRET_KEY
+        sync: false
+      - key: SUPABASE_PROVIDER_SECRET_KEY
+        sync: false
+      - key: SUPABASE_RUNNER_SECRET_KEY
+        sync: false
+      - key: PROVIDER_KEY_SECRET
+        sync: false
+      - key: CAPTCHA_PROVIDER
+        value: turnstile
+      - key: CAPTCHA_SITE_KEY
+        sync: false
+      - key: CAPTCHA_SECRET
+        sync: false
+      - key: CAPTCHA_EXPECTED_HOSTNAME
+        sync: false
+      - key: TRIAL_ANTHROPIC_API_KEY
+        sync: false
+      - key: TRIAL_ANTHROPIC_MODELS
+        value: claude-sonnet-4-6
+      - key: TRIAL_ANTHROPIC_MODEL
+        value: claude-sonnet-4-6
+      - key: COMPOSIO_API_KEY
+        sync: false
+      - key: COMPOSIO_AUTH_CONFIG_GMAIL
+        sync: false
+      - key: COMPOSIO_AUTH_CONFIG_GOOGLECALENDAR
+        sync: false
+      - key: COMPOSIO_AUTH_CONFIG_GOOGLEDOCS
+        sync: false
+      - key: COMPOSIO_AUTH_CONFIG_GITHUB
+        sync: false
+      - key: DODO_PAYMENTS_API_KEY
+        sync: false
+      - key: DODO_PAYMENTS_WEBHOOK_KEY
+        sync: false
+      - key: DODO_PAYMENTS_PRODUCT_ID
+        sync: false
+      - key: DODO_PAYMENTS_RETURN_URL
+        sync: false
+      - key: DODO_PAYMENTS_ENVIRONMENT
+        value: "live_mode"
+      - key: DODO_PAYMENTS_EXPECTED_AMOUNT
+        value: "500"
+      - key: DODO_PAYMENTS_EXPECTED_CURRENCY
+        value: "USD"
+      - key: DODO_PAYMENTS_EXPECTED_QUANTITY
+        value: "1"

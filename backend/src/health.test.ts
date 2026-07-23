@@ -11,7 +11,12 @@ import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { test } from 'node:test';
 import express from 'express';
-import { livenessStatus, readinessStatus, type ReadinessCheck } from './health.ts';
+import {
+  buildProductionChecks,
+  livenessStatus,
+  readinessStatus,
+  type ReadinessCheck,
+} from './health.ts';
 
 // ── Health function unit tests ───────────────────────────────────────────────
 
@@ -89,6 +94,23 @@ test('readinessStatus runs all checks and includes every result', async () => {
   // Both checks ran despite one failing.
   assert.ok(completed.includes('fast'));
   assert.ok(completed.includes('slow'));
+});
+
+test('production readiness fails closed when live billing is unavailable', async () => {
+  const checks = buildProductionChecks({
+    db: {
+      from: () => ({
+        select: async () => ({ error: null, count: 14 }),
+      }),
+    },
+    gatewayReady: () => true,
+    providerConfigured: () => true,
+    billingConfigured: () => false,
+    expectedMigrationCount: 14,
+  });
+  const result = await readinessStatus(checks);
+  assert.equal(result.status, 'not_ready');
+  assert.equal(result.checks['billing']?.ok, false);
 });
 
 // ── HTTP contract helpers ────────────────────────────────────────────────────

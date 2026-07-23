@@ -100,6 +100,22 @@ class NotchWindowController: NSObject {
         )
     }
 
+    func close() {
+        NotificationCenter.default.removeObserver(self)
+        if let monitor = globalMonitor { NSEvent.removeMonitor(monitor); globalMonitor = nil }
+        if let monitor = localMonitor { NSEvent.removeMonitor(monitor); localMonitor = nil }
+        if let monitor = scrollMonitor { NSEvent.removeMonitor(monitor); scrollMonitor = nil }
+        if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor); keyboardMonitor = nil }
+        if let monitor = localKeyboardMonitor { NSEvent.removeMonitor(monitor); localKeyboardMonitor = nil }
+        collapseTimer?.invalidate()
+        collapseTimer = nil
+        peekCancellable?.cancel()
+        peekCancellable = nil
+        panels.values.forEach { $0.orderOut(nil) }
+        panels.removeAll()
+        activeScreenUUID = nil
+    }
+
     /// Tear down existing panels and create a fresh one for every attached
     /// screen. We do this on initial show and whenever the screen layout
     /// changes (monitor plug/unplug, resolution change).
@@ -443,13 +459,7 @@ class NotchWindowController: NSObject {
     }
 
     deinit {
-        if let m = globalMonitor { NSEvent.removeMonitor(m) }
-        if let m = localMonitor { NSEvent.removeMonitor(m) }
-        if let m = scrollMonitor { NSEvent.removeMonitor(m) }
-        if let m = keyboardMonitor { NSEvent.removeMonitor(m) }
-        if let m = localKeyboardMonitor { NSEvent.removeMonitor(m) }
-        collapseTimer?.invalidate()
-        peekCancellable?.cancel()
+        close()
     }
 }
 

@@ -8,7 +8,7 @@ test('scheduler PATCH accepts only documented editable fields', () => {
     name: 'Updated',
     prompt: 'New prompt',
     cron: '0 9 * * *',
-    interval_ms: 120_000,
+    interval_ms: 900_000,
     notify_user: true,
     target_app: 'gmail',
   });

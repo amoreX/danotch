@@ -1,3 +1,6 @@
+import { config } from '../config.js';
+import { isCronAtLeastInterval, isValidCron } from '../scheduler/compute-next.js';
+
 const EDITABLE_FIELDS = new Set([
   'enabled',
   'name',
@@ -39,13 +42,17 @@ export function validateScheduledPatch(body: unknown): PatchResult {
       return { ok: false, error: `${field} must be a non-empty string` };
     }
   }
+  if (typeof input.cron === 'string'
+    && (!isValidCron(input.cron) || !isCronAtLeastInterval(input.cron, config.scheduler.minIntervalMs))) {
+    return { ok: false, error: 'cron is invalid or runs too frequently' };
+  }
   if (
     input.interval_ms !== undefined
     && (typeof input.interval_ms !== 'number'
       || !Number.isSafeInteger(input.interval_ms)
-      || input.interval_ms < 60_000)
+      || input.interval_ms < config.scheduler.minIntervalMs)
   ) {
-    return { ok: false, error: 'interval_ms must be an integer of at least 60000' };
+    return { ok: false, error: `interval_ms must be an integer of at least ${config.scheduler.minIntervalMs}` };
   }
   if (
     input.target_app !== undefined

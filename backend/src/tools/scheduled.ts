@@ -1,7 +1,7 @@
 import type { CanonicalTool } from '../providers/types.js';
 import { userDb as supabase } from '../lib/user-db.js';
 import { getAdminDb } from '../lib/admin-db.js';
-import { computeNextRun, isValidCron, cronToHuman, scheduleToHuman } from '../scheduler/compute-next.js';
+import { computeNextRun, isValidCron, isCronAtLeastInterval, cronToHuman, scheduleToHuman } from '../scheduler/compute-next.js';
 import { config } from '../config.js';
 import { SupabaseQuotaStore, requestQuotaSubject } from '../security/quota-store.js';
 
@@ -160,8 +160,11 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
   if (taskType === 'scheduled' && (!cron || !isValidCron(cron))) {
     return JSON.stringify({ error: `Invalid or missing cron expression: "${cron}"` });
   }
-  if (taskType === 'poll' && (!intervalMs || intervalMs < 60000)) {
-    return JSON.stringify({ error: 'poll tasks require interval_ms >= 60000 (1 minute)' });
+  if (taskType === 'scheduled' && cron && !isCronAtLeastInterval(cron, config.scheduler.minIntervalMs)) {
+    return JSON.stringify({ error: 'scheduled tasks cannot run more frequently than the configured minimum' });
+  }
+  if (taskType === 'poll' && (!Number.isSafeInteger(intervalMs) || (intervalMs ?? 0) < config.scheduler.minIntervalMs)) {
+    return JSON.stringify({ error: `poll tasks require interval_ms >= ${config.scheduler.minIntervalMs}` });
   }
 
   const nextRunAt = computeNextRun(taskType, cron, intervalMs);
@@ -264,13 +267,16 @@ async function updateTask(input: Record<string, unknown>, userId: string): Promi
   if (input.name) updates.name = input.name;
   if (input.prompt) updates.prompt = input.prompt;
   if (input.cron) {
-    if (!isValidCron(input.cron as string)) {
+    if (!isValidCron(input.cron as string) || !isCronAtLeastInterval(input.cron as string, config.scheduler.minIntervalMs)) {
       return JSON.stringify({ error: `Invalid cron: "${input.cron}"` });
     }
     updates.cron = input.cron;
     nextRunAt = computeNextRun('scheduled', input.cron as string).toISOString();
   }
   if (input.interval_ms) {
+    if (!Number.isSafeInteger(input.interval_ms) || (input.interval_ms as number) < config.scheduler.minIntervalMs) {
+      return JSON.stringify({ error: `interval_ms must be at least ${config.scheduler.minIntervalMs}` });
+    }
     updates.interval_ms = input.interval_ms;
     nextRunAt = computeNextRun('poll', null, input.interval_ms as number).toISOString();
   }

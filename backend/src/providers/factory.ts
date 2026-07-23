@@ -4,6 +4,7 @@ import { decrypt } from './crypto.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
 import type { LLMProvider, ProviderType } from './types.js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 const supabase = new Proxy({} as ReturnType<typeof getAdminDb>, {
@@ -14,53 +15,85 @@ const supabase = new Proxy({} as ReturnType<typeof getAdminDb>, {
   },
 });
 
+export class ProviderLookupError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ProviderLookupError';
+  }
+}
+
+function isNoRowsError(error: unknown): boolean {
+  const postgrestError = error as { code?: string; details?: string } | null;
+  return postgrestError?.code === 'PGRST116'
+    && /\b0 rows?\b/i.test(postgrestError.details ?? '');
+}
+
 /**
  * Get the LLM provider for a specific user.
  * Checks for user's active provider config in DB, falls back to server's ANTHROPIC_API_KEY.
  */
-export async function getProviderForUser(userId: string, fallbackModelId?: string): Promise<LLMProvider> {
+export async function getProviderForUser(
+  userId: string,
+  fallbackModelId?: string,
+  db: SupabaseClient = supabase,
+): Promise<LLMProvider> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('danotch_provider_configs')
       .select('provider, api_key_encrypted, model_id')
       .eq('user_id', userId)
       .eq('is_active', true)
       .single();
 
-    if (!error && data) {
-      const apiKey = decrypt(data.api_key_encrypted);
-      const modelId = fallbackModelId || data.model_id;
-      console.log(`[provider] User ${userId} → ${data.provider} (${modelId})`);
-      return createProvider(data.provider as ProviderType, apiKey, modelId);
+    if (error) {
+      if (isNoRowsError(error)) return getFallbackProvider(fallbackModelId);
+      throw new ProviderLookupError(`Provider lookup failed: ${error.message}`);
     }
-  } catch (err) {
-    console.warn(`[provider] Failed to load config for user ${userId}, using fallback:`, err);
-  }
+    if (!data) throw new ProviderLookupError('Provider lookup returned no result');
 
-  return getFallbackProvider(fallbackModelId);
+    const apiKey = decrypt(data.api_key_encrypted);
+    const modelId = fallbackModelId || data.model_id;
+    console.log(`[provider] User ${userId} → ${data.provider} (${modelId})`);
+    return createProvider(data.provider as ProviderType, apiKey, modelId);
+  } catch (err) {
+    if (err instanceof ProviderLookupError) throw err;
+    throw new ProviderLookupError(`Provider config for user ${userId} could not be resolved`, {
+      cause: err,
+    });
+  }
 }
 
 /**
  * Get only the user's active BYOK provider. Does not fall back to the server key.
  */
-export async function getActiveProviderForUser(userId: string, modelOverride?: string): Promise<LLMProvider | null> {
+export async function getActiveProviderForUser(
+  userId: string,
+  modelOverride?: string,
+  db: SupabaseClient = supabase,
+): Promise<LLMProvider | null> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('danotch_provider_configs')
       .select('provider, api_key_encrypted, model_id')
       .eq('user_id', userId)
       .eq('is_active', true)
       .single();
 
-    if (error || !data) return null;
+    if (error) {
+      if (isNoRowsError(error)) return null;
+      throw new ProviderLookupError(`Active provider lookup failed: ${error.message}`);
+    }
+    if (!data) throw new ProviderLookupError('Active provider lookup returned no result');
 
     const apiKey = decrypt(data.api_key_encrypted);
     const modelId = modelOverride || data.model_id;
     console.log(`[provider] User ${userId} BYOK → ${data.provider} (${modelId})`);
     return createProvider(data.provider as ProviderType, apiKey, modelId);
   } catch (err) {
-    console.warn(`[provider] Failed to load active provider for user ${userId}:`, err);
-    return null;
+    if (err instanceof ProviderLookupError) throw err;
+    throw new ProviderLookupError(`Active provider for user ${userId} could not be resolved`, {
+      cause: err,
+    });
   }
 }
 
@@ -69,9 +102,16 @@ export async function getActiveProviderForUser(userId: string, modelOverride?: s
  * Used when user has no provider config or for unauthenticated requests.
  */
 export function getFallbackProvider(modelId?: string): LLMProvider {
+  if (!config.containment.trialsEnabled || !config.trial.apiKey) {
+    throw new ProviderLookupError('Server-funded trials are not configured');
+  }
+  const selectedModel = modelId ?? config.trial.defaultModel;
+  if (!config.trial.allowedModels.includes(selectedModel)) {
+    throw new ProviderLookupError('Requested model is not available for server-funded trials');
+  }
   return new AnthropicProvider(
-    process.env.ANTHROPIC_API_KEY ?? '',
-    modelId || config.api.model
+    config.trial.apiKey,
+    selectedModel,
   );
 }
 

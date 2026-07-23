@@ -5,10 +5,19 @@ import QuartzCore
 @main
 struct PerchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @StateObject private var updates = UpdateController.shared
 
     var body: some Scene {
         Settings {
             EmptyView()
+        }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updates.checkForUpdates()
+                }
+                .disabled(!updates.canCheckForUpdates)
+            }
         }
     }
 }
@@ -23,11 +32,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         applyAppIcon()
         viewModel.authManager = auth
-        auth.onSessionWillChange = { [weak viewModel] _, _ in
-            viewModel?.switchAccount(to: nil)
+        auth.onSessionWillChange = { [weak self] oldUserID, newUserID in
+            guard oldUserID != newUserID else { return }
+            self?.stopNotch()
+            self?.viewModel.switchAccount(to: nil)
         }
-        auth.onSessionDidChange = { [weak viewModel] session in
-            viewModel?.switchAccount(to: session)
+        auth.onSessionDidChange = { [weak self] session in
+            guard let self else { return }
+            self.viewModel.switchAccount(to: session)
+            if session == nil {
+                self.showOnboarding()
+            } else if self.onboardingWindow == nil && OnboardingCompletionStore.isComplete {
+                self.startNotch()
+            }
         }
         viewModel.switchAccount(to: auth.session)
         viewModel.interruptInProgressConversations()
@@ -67,6 +84,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         onboardingWindow?.close()
         onboardingWindow = nil
 
+        stopNotch()
         windowController = NotchWindowController(viewModel: viewModel)
         windowController?.show()
 
@@ -91,6 +109,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showOnboarding() {
+        if let onboardingWindow {
+            onboardingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         // Temporarily show in dock so the window gets focus
         NSApp.setActivationPolicy(.regular)
         applyAppIcon()
@@ -144,6 +167,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         self.onboardingWindow = window
+    }
+
+    private func stopNotch() {
+        guard windowController != nil else { return }
+        windowController?.close()
+        windowController = nil
+        viewModel.cancelDeviceConnection()
+        viewModel.isExpanded = false
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        guard urls.contains(where: {
+            $0.scheme?.lowercased() == "perch"
+                && $0.host?.lowercased() == "billing"
+                && $0.path == "/complete"
+        }) else { return }
+        viewModel.handleBillingCompletionURL()
     }
 
     func applicationWillTerminate(_ notification: Notification) {

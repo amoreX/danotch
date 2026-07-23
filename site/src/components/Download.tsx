@@ -1,5 +1,77 @@
+import { useEffect, useState } from 'react';
 import Button from './Button';
 import { SITE } from './site-config';
+
+type DownloadArtifact = {
+  url: string;
+  version?: string;
+};
+
+function validHTTPSURL(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.username === '' && url.password === ''
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function useDownloadArtifact() {
+  const fallbackURL = validHTTPSURL(SITE.downloadUrl);
+  const [artifact, setArtifact] = useState<DownloadArtifact | null>(
+    fallbackURL ? { url: fallbackURL } : null,
+  );
+  const [loading, setLoading] = useState(Boolean(SITE.downloadManifestUrl));
+
+  useEffect(() => {
+    const manifestURL = validHTTPSURL(SITE.downloadManifestUrl);
+    if (!manifestURL) {
+      return;
+    }
+
+    const controller = new AbortController();
+    let active = true;
+    void fetch(manifestURL, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('release manifest unavailable');
+        const data = await response.json() as Record<string, unknown>;
+        const url = validHTTPSURL(data.url);
+        if (
+          !url
+          || typeof data.version !== 'string'
+          || !/^\d+\.\d+\.\d+$/.test(data.version)
+          || typeof data.build !== 'number'
+          || !Number.isSafeInteger(data.build)
+          || data.build <= 0
+          || typeof data.sha256 !== 'string'
+          || !/^[0-9a-f]{64}$/.test(data.sha256)
+        ) {
+          throw new Error('invalid release manifest');
+        }
+        if (active) setArtifact({ url, version: data.version });
+      })
+      .catch(() => {
+        // Keep the last known static fallback, if one was configured.
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [fallbackURL]);
+
+  return { artifact, loading };
+}
 
 function AppleIcon() {
   return (
@@ -9,12 +81,18 @@ function AppleIcon() {
   );
 }
 
-function DownloadCTA() {
-  if (!SITE.downloadUrl) {
+function DownloadCTA({
+  artifact,
+  loading,
+}: {
+  artifact: DownloadArtifact | null;
+  loading: boolean;
+}) {
+  if (!artifact) {
     return (
       <div
         role="status"
-        aria-label="Download coming soon"
+        aria-label={loading ? 'Checking latest download' : 'Download coming soon'}
         className="inline-flex items-center gap-2 rounded-full border border-white/20 px-6 py-3"
         style={{
           fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
@@ -25,13 +103,13 @@ function DownloadCTA() {
         }}
       >
         <AppleIcon />
-        Coming soon
+        {loading ? 'Checking latest…' : 'Coming soon'}
       </div>
     );
   }
 
   return (
-    <Button href={SITE.downloadUrl} size="xl" external className="w-full sm:w-auto">
+    <Button href={artifact.url} size="xl" external className="w-full sm:w-auto">
       <span className="[&_svg]:size-4">
         <AppleIcon />
       </span>
@@ -41,6 +119,8 @@ function DownloadCTA() {
 }
 
 export default function Download() {
+  const { artifact, loading } = useDownloadArtifact();
+
   return (
     <section
       id="download"
@@ -74,7 +154,7 @@ export default function Download() {
           </h2>
 
           <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
-            <DownloadCTA />
+            <DownloadCTA artifact={artifact} loading={loading} />
 
             <a
               href={SITE.supportEmail ? `mailto:${SITE.supportEmail}` : '#contact'}
@@ -92,7 +172,7 @@ export default function Download() {
             </a>
           </div>
 
-          {SITE.downloadUrl && (
+          {artifact && (
             <p
               className="m-0 text-white/35"
               style={{
@@ -102,6 +182,7 @@ export default function Download() {
               }}
             >
               macOS 14+ · Apple silicon · Notarized by Apple
+              {artifact.version ? ` · Version ${artifact.version}` : ''}
             </p>
           )}
         </div>

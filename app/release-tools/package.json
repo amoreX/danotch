@@ -1,0 +1,14 @@
+{
+  "name": "perch-release-tools",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "test": "node --test blob-put.test.mjs"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.6.1"
+  }
+}

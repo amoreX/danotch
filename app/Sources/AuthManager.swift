@@ -20,6 +20,15 @@ struct AuthSession: Codable, Equatable {
     var fullName: String
 }
 
+enum RefreshFailureDisposition: Equatable {
+    case preserveSession
+    case logout
+
+    static func classify(statusCode: Int, code: String?) -> Self {
+        statusCode == 401 && code == "invalid_refresh_token" ? .logout : .preserveSession
+    }
+}
+
 class AuthManager: ObservableObject {
     static let shared = AuthManager()
 
@@ -65,9 +74,14 @@ class AuthManager: ObservableObject {
             await MainActor.run { error = "Could not open secure signup." }
             return false
         }
+        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
         await MainActor.run {
-            NSWorkspace.shared.open(url)
-            lifecycleState = .checkEmail(email)
+            if opened {
+                lifecycleState = .checkEmail(email)
+            } else {
+                error = "Could not open your browser. Check your default browser and try again."
+                lifecycleState = .credentials
+            }
         }
         return false
     }
@@ -164,13 +178,22 @@ class AuthManager: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             guard status == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let json,
                   let sessionObj = json["session"] as? [String: Any],
                   let newAccess = sessionObj["access_token"] as? String,
                   let newRefresh = sessionObj["refresh_token"] as? String else {
-                print("[AuthManager] Refresh failed (status=\(status)), logging out")
-                await MainActor.run { self.logout() }
+                let code = json?["code"] as? String
+                let disposition = RefreshFailureDisposition.classify(statusCode: status, code: code)
+                print("[AuthManager] Refresh failed (status=\(status), disposition=\(disposition))")
+                await MainActor.run {
+                    if disposition == .logout {
+                        self.logout()
+                    } else {
+                        self.error = "Session refresh is temporarily unavailable. Your saved session was preserved."
+                    }
+                }
                 return
             }
 
@@ -193,16 +216,14 @@ class AuthManager: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self.error = "Credential rotation failed. Please sign in again."
-                    self.logout()
+                    self.error = "Credential refresh could not be saved. Your existing session was preserved."
                 }
             }
             print("[AuthManager] Token refreshed successfully")
         } catch {
             print("[AuthManager] Refresh error: \(error.localizedDescription)")
             await MainActor.run {
-                self.error = "Session refresh failed. Please sign in again."
-                self.logout()
+                self.error = "Session refresh is temporarily unavailable. Your saved session was preserved."
             }
         }
     }

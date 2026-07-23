@@ -102,7 +102,7 @@ export function createTaskRoutes(notch: NotchBridge): Router {
         return;
       }
       console.error(`[chat] Error:`, err);
-      res.status(500).json({ error: err instanceof Error ? err.message : 'Unknown error' });
+      res.status(500).json({ error: 'The request could not be completed.' });
     }
   });
 

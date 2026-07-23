@@ -475,22 +475,6 @@ struct ProviderModelOption: Identifiable, Equatable {
     }
 }
 
-struct BillingStatus {
-    let billingStatus: String
-    let trialStartedAt: String?
-    let trialEndsAt: String?
-    let trialDaysRemaining: Int
-    let lifetimePurchasedAt: String?
-    let hasActiveProvider: Bool
-    let activeProvider: String?
-    let canUseServerKey: Bool
-    let requiresPurchase: Bool
-    let requiresProviderKey: Bool
-
-    var isPaid: Bool { billingStatus == "paid" || lifetimePurchasedAt != nil }
-    var isTrialing: Bool { billingStatus == "trialing" && trialDaysRemaining > 0 }
-}
-
 struct NotificationItem: Identifiable {
     let id: String
     let title: String

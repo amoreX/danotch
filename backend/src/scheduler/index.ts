@@ -37,7 +37,7 @@ export async function tick(notch: NotchBridge, workerId = schedulerWorkerId) {
   try {
     const { data: dueTasks, error } = await supabase.rpc('danotch_claim_due_schedules', {
       p_worker_id: workerId,
-      p_limit: 25,
+      p_limit: config.scheduler.claimLimit,
       p_lease_seconds: 180,
     });
 
@@ -108,7 +108,13 @@ async function executeTask(
   // Resolve the user's LLM provider (BYOK or server fallback)
   let providerName = 'unknown';
   try {
-    const provider = (await resolveProviderForUser(userId, undefined, getAdminDb('scheduler'))).provider;
+    const schedulerDb = getAdminDb('scheduler');
+    const provider = (await resolveProviderForUser(
+      userId,
+      undefined,
+      schedulerDb,
+      { trialDb: schedulerDb },
+    )).provider;
     providerName = `${provider.providerName}/${provider.modelId}`;
 
     // Build system prompt
@@ -130,7 +136,7 @@ async function executeTask(
     const result = await provider.complete({
       messages: [{ role: 'user', content: actualPrompt }],
       systemPrompt,
-      maxTokens: config.api.maxTokens,
+      maxTokens: config.scheduler.maxTokens,
     });
 
     resultText = result.text;

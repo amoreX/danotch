@@ -2,7 +2,6 @@ import { v4 as uuid } from 'uuid';
 import type { NotchBridge } from '../events/notch.js';
 import type { Task, ChatMessage } from '../types.js';
 import type { CanonicalTool, CanonicalMessage, CanonicalContentBlock, CanonicalToolResultBlock } from '../providers/types.js';
-import { getProviderForUser, getFallbackProvider } from '../providers/factory.js';
 import { config } from '../config.js';
 import { userDb as supabase } from '../lib/user-db.js';
 import { resolveProviderForUser } from '../billing/entitlements.js';
@@ -122,9 +121,13 @@ async function generateThreadTitle(
 ) {
   try {
     // Use user's provider for title generation, or fallback
-    const provider = userId
-      ? await getProviderForUser(userId, fallbackModelId)
-      : getFallbackProvider(fallbackModelId);
+    if (!userId) return;
+    const provider = (await resolveProviderForUser(
+      userId,
+      fallbackModelId,
+      supabase,
+      { trialDb: getAdminDb('runner') },
+    )).provider;
 
     const result = await provider.complete({
       messages: [
@@ -186,7 +189,12 @@ export async function runChat(
   // must propagate to the route as a deterministic error, not be swallowed
   // into a "failed" task. Authenticated users can use the server key only
   // during trial; after that they need an active BYOK provider.
-  const provider = (await resolveProviderForUser(userId, options?.modelId)).provider;
+  const provider = (await resolveProviderForUser(
+    userId,
+    options?.modelId,
+    supabase,
+    { trialDb: getAdminDb('runner') },
+  )).provider;
 
   const durableStore = options?.durableStore ?? new DurableRunStore();
   let durableRun = await durableStore.create({
@@ -284,7 +292,8 @@ export async function runChat(
           },
         });
       } catch (streamError) {
-        const message = streamError instanceof Error ? streamError.message : 'provider stream interrupted';
+        console.error('[runner] Provider stream interrupted:', streamError);
+        const message = 'Provider stream interrupted';
         durableRun = await durableStore.transition(durableRun, {
           transitionId: uuid(),
           targetState: 'failed_recoverable',
@@ -525,7 +534,10 @@ export async function runChat(
     notch.sendDone(id, { status: 'completed', result: fallback });
     return { ...task, threadId };
   } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+    const errorMsg = err instanceof RecoverableProviderStreamError
+      ? err.message
+      : 'The request could not be completed.';
+    console.error('[runner] Run failed:', err);
     task.status = 'failed';
     task.error = errorMsg;
     task.completedAt = new Date();

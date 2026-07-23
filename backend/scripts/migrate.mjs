@@ -45,10 +45,16 @@ const migrations = await Promise.all(files.map(async (file) => {
     checksum: createHash('sha256').update(sql).digest('hex'),
   };
 }));
+const databaseUrl = new URL(connectionString);
+const isLocalDatabase = ['localhost', '127.0.0.1', '::1'].includes(databaseUrl.hostname);
+const ca = process.env.DATABASE_SSL_CA
+  ?? (process.env.DATABASE_SSL_CA_FILE
+    ? await readFile(process.env.DATABASE_SSL_CA_FILE, 'utf8')
+    : undefined);
 
 const client = new Client({
   connectionString,
-  ssl: connectionString.includes('localhost') ? false : { rejectUnauthorized: false },
+  ssl: isLocalDatabase ? false : { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
 });
 
 await main();

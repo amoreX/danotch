@@ -14,6 +14,8 @@ import { startScheduler, stopScheduler } from './scheduler/index.js';
 import { DurableRunStore } from './protocol/durable-run-store.js';
 import { SupabaseReplayStore } from './protocol/replay.js';
 import { SupabaseQuotaStore } from './security/quota-store.js';
+import { EXPECTED_MIGRATION_COUNT } from './db/migration-contract.js';
+import { isDodoLiveReady } from './billing/dodo-client.js';
 
 const notch = new NotchBridge(config.notchWsUrl);
 const fencingQuota = new SupabaseQuotaStore(getAdminDb('fencing'));
@@ -63,13 +65,14 @@ const readinessDbAdapter = {
   }),
 };
 
-// Number of SQL migration files shipped in this build.
-const EXPECTED_MIGRATION_COUNT = 11;
-
 const readinessChecks = buildProductionChecks({
   db: readinessDbAdapter,
   gatewayReady: () => gateway.isReady(),
-  providerConfigured: () => !!(process.env.ANTHROPIC_API_KEY || process.env.PROVIDER_KEY_SECRET),
+  providerConfigured: () => (
+    (!config.containment.trialsEnabled || Boolean(config.trial.apiKey))
+    && Boolean(config.providerKeySecret)
+  ),
+  billingConfigured: isDodoLiveReady,
   expectedMigrationCount: EXPECTED_MIGRATION_COUNT,
 });
 

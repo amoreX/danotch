@@ -9,7 +9,7 @@ xcuserdata/
 DerivedData/
 
 # Node
-backend/node_modules/
+node_modules/
 
 # Other projects
 ghost-desktop-mono/

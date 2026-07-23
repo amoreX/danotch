@@ -794,7 +794,7 @@ begin
   if exists (select 1 from pg_roles where rolname = 'authenticator') then
     grant danotch_runner to authenticator;
   end if;
-end
+end;
 $$;
 alter role danotch_runner bypassrls;
 grant usage on schema public to danotch_runner;
@@ -1031,7 +1031,7 @@ begin
       item.table_name || '_immutable_owner', item.table_name, item.column_name
     );
   end loop;
-end
+end;
 $$;
 
 do $$
@@ -1052,7 +1052,7 @@ begin
       table_name || '_owner_select', table_name
     );
   end loop;
-end
+end;
 $$;
 
 revoke all on public.danotch_devices, public.danotch_runs,
@@ -1151,7 +1151,7 @@ begin
     );
   end if;
   return created;
-end
+end;
 $$;
 
 create function public.danotch_transition_run(
@@ -1278,7 +1278,7 @@ begin
     on conflict (run_id) do nothing;
   end if;
   return current_run;
-end
+end;
 $$;
 
 create function public.danotch_recover_interrupted_streams()
@@ -1307,7 +1307,7 @@ begin
     recovered := recovered + 1;
   end loop;
   return recovered;
-end
+end;
 $$;
 
 create function public.danotch_acknowledge_event(
@@ -1343,7 +1343,7 @@ begin
   )
   on conflict (event_id, device_id) do nothing;
   return 'acknowledged';
-end
+end;
 $$;
 
 create function public.danotch_decide_local_action(
@@ -1405,7 +1405,7 @@ begin
     terminal_at = case when p_decision = 'rejected' then now() else null end
   where id = p_action_id and user_id = p_user_id;
   return p_decision;
-end
+end;
 $$;
 
 create function public.danotch_mint_execution_grant(
@@ -1458,7 +1458,7 @@ begin
   update public.danotch_local_action_requests set state = 'granted'
   where id = p_action_id and user_id = p_user_id and state = 'approved';
   return grant_row;
-end
+end;
 $$;
 
 create function public.danotch_consume_execution_grant(
@@ -1503,7 +1503,7 @@ begin
   update public.danotch_local_action_requests set state = 'executing'
   where id = p_action_id and user_id = p_user_id and state = 'granted';
   return 'consumed';
-end
+end;
 $$;
 
 create function public.danotch_cancel_run(
@@ -1536,7 +1536,7 @@ begin
     'cancellation_requested', 'cancellation_requested',
     jsonb_build_object('reason', left(p_reason, 500)), null
   );
-end
+end;
 $$;
 
 create function public.danotch_record_action_result(
@@ -1615,7 +1615,7 @@ begin
     terminal_at = now()
   where id = p_action_id and user_id = p_user_id;
   return p_status;
-end
+end;
 $$;
 
 revoke all on function public.danotch_create_run(uuid, uuid, uuid, text, jsonb, integer) from public;
@@ -3743,3 +3743,1052 @@ grant execute on function public.danotch_expire_pending_actions(timestamptz)
 
 revoke all on function public.danotch_pending_action_immutable_contract() from public;
 -- END 011_identity_oauth_actions_scheduler.sql
+-- BEGIN 012_launch_readiness.sql
+-- Launch-readiness corrections for verified provisioning and protocol journals.
+
+-- A fresh profile must satisfy the billing_status constraint before the trial
+-- fields are finalized later in the same transaction.
+create or replace function public.danotch_provision_verified_user(
+  p_user_id uuid,
+  p_email text,
+  p_full_name text,
+  p_trial_subject_hash text,
+  p_apps text[]
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_verified_at timestamptz;
+  quota_result jsonb;
+  provision public.danotch_verified_provisioning;
+  profile_exists boolean;
+begin
+  select email_confirmed_at into v_verified_at from auth.users where id = p_user_id for update;
+  if v_verified_at is null then
+    raise exception 'verified email required' using errcode = '42501';
+  end if;
+  select exists(select 1 from public.danotch_user_profiles where id = p_user_id)
+    into profile_exists;
+  if not profile_exists and not exists (
+    select 1 from public.danotch_signup_enrollments
+    where email_hash = encode(
+        digest(convert_to(lower(p_email), 'utf8'), 'sha256'), 'hex'
+      )
+      and (user_id is null or user_id = p_user_id)
+      and status = 'pending'
+      and requested_at <= v_verified_at
+  ) then
+    raise exception 'verified signup enrollment required' using errcode = '42501';
+  end if;
+  update public.danotch_signup_enrollments set user_id = p_user_id
+    where email_hash = encode(
+      digest(convert_to(lower(p_email), 'utf8'), 'sha256'), 'hex'
+    ) and (user_id is null or user_id = p_user_id);
+  insert into public.danotch_verified_provisioning(user_id, attempts)
+    values (p_user_id, 1)
+    on conflict (user_id) do update set attempts =
+      public.danotch_verified_provisioning.attempts + 1, updated_at = now();
+  insert into public.danotch_user_profiles(
+    id, email, full_name, trial_started_at, trial_ends_at, billing_status
+  ) values (
+    p_user_id, lower(p_email), p_full_name, null, null, 'trialing'
+  ) on conflict (id) do update set
+    email = excluded.email,
+    full_name = case when public.danotch_user_profiles.full_name = ''
+      then excluded.full_name else public.danotch_user_profiles.full_name end;
+  update public.danotch_verified_provisioning set profile_ready = true where user_id = p_user_id;
+  insert into public.danotch_connected_apps(user_id, app_type, active)
+    select p_user_id, app_type, false from unnest(p_apps) app_type
+    on conflict (user_id, app_type) do nothing;
+  update public.danotch_verified_provisioning set apps_ready = true where user_id = p_user_id;
+  select * into provision from public.danotch_verified_provisioning where user_id = p_user_id;
+  if not provision.trial_ready then
+    quota_result := public.danotch_consume_capability_quota(
+      'trial', p_trial_subject_hash, 1, p_user_id::text
+    );
+    if coalesce((quota_result ->> 'allowed')::boolean, false) is not true then
+      raise exception 'trial quota exceeded' using errcode = 'P0001';
+    end if;
+    update public.danotch_user_profiles set
+      trial_started_at = coalesce(trial_started_at, now()),
+      trial_ends_at = coalesce(trial_ends_at, now() + interval '14 days'),
+      billing_status = case
+        when lifetime_purchased_at is not null then 'paid'
+        else 'trialing'
+      end
+    where id = p_user_id;
+    update public.danotch_verified_provisioning set trial_ready = true where user_id = p_user_id;
+  end if;
+  update public.danotch_verified_provisioning
+    set completed_at = now(), last_error = null, updated_at = now()
+    where user_id = p_user_id and profile_ready and apps_ready and trial_ready;
+  update public.danotch_signup_enrollments
+    set status = 'verified', verified_at = v_verified_at
+    where user_id = p_user_id and status = 'pending';
+  return (select to_jsonb(row_value) from (
+    select profile_ready, apps_ready, trial_ready, completed_at
+    from public.danotch_verified_provisioning where user_id = p_user_id
+  ) row_value);
+end
+$$;
+
+-- Run revisions count state transitions, while the journal also contains grant
+-- events. Allocate the next run sequence from the journal itself so a later
+-- transition cannot collide with a non-transition event.
+create or replace function public.danotch_transition_run(
+  p_run_id uuid,
+  p_user_id uuid,
+  p_transition_id uuid,
+  p_expected_revision bigint,
+  p_target_state text,
+  p_event_type text,
+  p_payload jsonb default '{}'::jsonb,
+  p_checkpoint jsonb default null
+) returns public.danotch_runs
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  current_run public.danotch_runs;
+  next_device_sequence bigint;
+  next_run_sequence bigint;
+  allowed boolean := false;
+begin
+  select * into current_run from public.danotch_runs
+  where id = p_run_id and user_id = p_user_id for update;
+  if not found then
+    raise exception 'run not found for owner' using errcode = '42501';
+  end if;
+
+  if exists (select 1 from public.danotch_run_events where id = p_transition_id) then
+    if not exists (
+      select 1 from public.danotch_run_events
+      where id = p_transition_id and run_id = p_run_id and user_id = p_user_id
+        and to_state = p_target_state and event_type = p_event_type
+        and payload = coalesce(p_payload, '{}'::jsonb)
+        and checkpoint is not distinct from p_checkpoint
+    ) then
+      raise exception 'transition id reused with different content' using errcode = '23505';
+    end if;
+    return current_run;
+  end if;
+  if current_run.revision <> p_expected_revision then
+    raise exception 'out-of-order transition: expected %, actual %',
+      p_expected_revision, current_run.revision using errcode = '40001';
+  end if;
+  if current_run.state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired') then
+    raise exception 'late transition for terminal run' using errcode = '55000';
+  end if;
+  if p_target_state is distinct from (case p_event_type
+    when 'provider_stream_started' then 'provider_streaming'
+    when 'provider_checkpointed' then 'checkpointed'
+    when 'local_action_offered' then 'waiting_for_device'
+    when 'cancellation_requested' then 'cancellation_requested'
+    when 'run_completed' then 'completed'
+    when 'run_failed' then 'failed'
+    when 'provider_stream_interrupted' then 'failed_recoverable'
+    when 'run_cancelled' then 'cancelled'
+    when 'run_expired' then 'expired'
+    else null
+  end) then
+    raise exception 'event type does not authorize target state' using errcode = '22023';
+  end if;
+
+  allowed := case current_run.state
+    when 'queued' then p_target_state in (
+      'provider_streaming', 'waiting_for_device', 'cancellation_requested', 'failed'
+    )
+    when 'provider_streaming' then p_target_state in (
+      'checkpointed', 'completed', 'failed', 'failed_recoverable', 'cancellation_requested'
+    )
+    when 'checkpointed' then p_target_state in (
+      'provider_streaming', 'waiting_for_device', 'completed', 'failed', 'cancellation_requested'
+    )
+    when 'waiting_for_device' then p_target_state in (
+      'checkpointed', 'cancellation_requested', 'cancelled', 'expired', 'failed'
+    )
+    when 'cancellation_requested' then p_target_state in ('cancelled', 'failed')
+    else false
+  end;
+  if not allowed then
+    raise exception 'invalid run transition: % -> %', current_run.state, p_target_state
+      using errcode = '22023';
+  end if;
+
+  if current_run.device_id is not null then
+    update public.danotch_devices
+    set next_event_sequence = next_event_sequence + 1
+    where id = current_run.device_id and user_id = p_user_id
+    returning next_event_sequence - 1 into next_device_sequence;
+  end if;
+  select coalesce(max(run_sequence), 0) + 1 into next_run_sequence
+  from public.danotch_run_events where run_id = p_run_id;
+
+  insert into public.danotch_run_events(
+    id, run_id, user_id, device_id, run_sequence, device_sequence,
+    event_type, from_state, to_state, payload, checkpoint
+  ) values (
+    p_transition_id, p_run_id, p_user_id, current_run.device_id,
+    next_run_sequence, next_device_sequence, p_event_type,
+    current_run.state, p_target_state, coalesce(p_payload, '{}'::jsonb), p_checkpoint
+  );
+
+  update public.danotch_runs set
+    state = p_target_state,
+    revision = revision + 1,
+    checkpoint = case when p_checkpoint is null then checkpoint else p_checkpoint end,
+    terminal_code = case
+      when p_target_state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired')
+        then coalesce(p_payload ->> 'code', p_target_state)
+      else terminal_code
+    end,
+    terminal_at = case
+      when p_target_state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired')
+        then now()
+      else terminal_at
+    end,
+    updated_at = now()
+  where id = p_run_id and user_id = p_user_id
+  returning * into current_run;
+
+  if p_target_state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired') then
+    insert into public.danotch_terminal_results(
+      id, run_id, user_id, device_id, status, result
+    ) values (
+      p_transition_id, p_run_id, p_user_id, current_run.device_id,
+      p_target_state, coalesce(p_payload, '{}'::jsonb)
+    )
+    on conflict (run_id) do nothing;
+  end if;
+  return current_run;
+end
+$$;
+-- END 012_launch_readiness.sql
+-- BEGIN 013_billing_launch_readiness.sql
+-- Launch-ready one-time billing.
+--
+-- Policy:
+--   * one unexpired checkout exists per user/product/environment;
+--   * a payment grants lifetime access only when it names the exact internal
+--     checkout record and the exact attached Dodo checkout session;
+--   * verified full refunds and terminal lost/accepted disputes revoke the
+--     currently-backed lifetime entitlement, while preserving purchase history;
+--   * a later successful purchase restores lifetime access.
+
+alter table public.danotch_checkout_records
+  add column checkout_url text,
+  add column idempotency_key text,
+  add column attached_at timestamptz;
+
+update public.danotch_checkout_records
+set idempotency_key = 'checkout:' || id::text
+where idempotency_key is null;
+
+alter table public.danotch_checkout_records
+  alter column idempotency_key set not null,
+  add constraint danotch_checkout_records_idempotency_key_key unique (idempotency_key);
+
+update public.danotch_checkout_records
+set status = 'expired'
+where status = 'pending' and expires_at <= now();
+
+with ranked as (
+  select id, row_number() over (
+    partition by user_id, product_id, environment
+    order by created_at desc, id desc
+  ) as position
+  from public.danotch_checkout_records
+  where status = 'pending'
+)
+update public.danotch_checkout_records checkout
+set status = 'expired'
+from ranked
+where checkout.id = ranked.id and ranked.position > 1;
+
+alter table public.danotch_checkout_records
+  drop constraint danotch_checkout_records_status_check,
+  add constraint danotch_checkout_records_status_check
+    check (status in ('pending', 'active', 'consumed', 'expired'));
+
+create unique index danotch_checkout_records_one_active_idx
+  on public.danotch_checkout_records(user_id, product_id, environment)
+  where status in ('pending', 'active');
+
+alter table public.danotch_user_profiles
+  add column lifetime_revoked_at timestamptz,
+  add column lifetime_revocation_reason text;
+
+grant select (lifetime_revoked_at)
+  on public.danotch_user_profiles to authenticated;
+
+alter table public.danotch_user_profiles
+  drop constraint danotch_user_profiles_billing_status_check,
+  add constraint danotch_user_profiles_billing_status_check
+    check (billing_status in ('trialing', 'paid', 'expired', 'revoked'));
+
+alter table public.danotch_payment_events
+  add column checkout_record_id uuid
+    references public.danotch_checkout_records(id) on delete set null,
+  add column provider_event_id text;
+
+update public.danotch_payment_events
+set provider_event_id = payment_id
+where provider_event_id is null;
+
+alter table public.danotch_payment_events
+  alter column provider_event_id set not null,
+  drop constraint danotch_payment_events_payment_id_key,
+  drop constraint danotch_payment_events_outcome_check,
+  add constraint danotch_payment_events_outcome_check
+    check (outcome in (
+      'processing', 'granted', 'duplicate', 'unknown_profile',
+      'rejected', 'revoked', 'ignored'
+    ));
+
+create unique index danotch_payment_events_semantic_event_uidx
+  on public.danotch_payment_events(event_type, provider_event_id);
+create index danotch_payment_events_payment_idx
+  on public.danotch_payment_events(payment_id);
+create index danotch_payment_events_checkout_idx
+  on public.danotch_payment_events(checkout_record_id);
+
+create or replace function public.danotch_reserve_checkout(
+  p_user_id uuid,
+  p_product_id text,
+  p_expected_amount integer,
+  p_expected_currency text,
+  p_expected_quantity integer,
+  p_environment text
+) returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  checkout public.danotch_checkout_records;
+begin
+  if p_product_id = ''
+    or p_expected_amount <= 0
+    or p_expected_quantity <= 0
+    or upper(p_expected_currency) !~ '^[A-Z]{3}$'
+    or p_environment not in ('test_mode', 'live_mode')
+  then
+    raise exception 'invalid checkout contract' using errcode = '22023';
+  end if;
+
+  if not exists (
+    select 1 from public.danotch_user_profiles where id = p_user_id
+  ) then
+    raise exception 'checkout profile not found' using errcode = '23503';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(
+    p_user_id::text || ':' || p_product_id || ':' || p_environment,
+    0
+  ));
+
+  update public.danotch_checkout_records
+  set status = 'expired'
+  where user_id = p_user_id
+    and product_id = p_product_id
+    and environment = p_environment
+    and status in ('pending', 'active')
+    and expires_at <= now();
+
+  select * into checkout
+  from public.danotch_checkout_records
+  where user_id = p_user_id
+    and product_id = p_product_id
+    and environment = p_environment
+    and status in ('pending', 'active')
+    and expires_at > now()
+  order by created_at desc
+  limit 1
+  for update;
+
+  if found then
+    if checkout.expected_amount <> p_expected_amount
+      or checkout.expected_currency <> upper(p_expected_currency)
+      or checkout.expected_quantity <> p_expected_quantity
+    then
+      raise exception 'active checkout contract differs from configured contract'
+        using errcode = '22023';
+    end if;
+  else
+    insert into public.danotch_checkout_records(
+      user_id, product_id, expected_amount, expected_currency,
+      expected_quantity, environment, status, idempotency_key
+    ) values (
+      p_user_id, p_product_id, p_expected_amount, upper(p_expected_currency),
+      p_expected_quantity, p_environment, 'pending',
+      'checkout:' || gen_random_uuid()::text
+    )
+    returning * into checkout;
+  end if;
+
+  return jsonb_build_object(
+    'id', checkout.id,
+    'idempotency_key', checkout.idempotency_key,
+    'dodo_session_id', checkout.dodo_session_id,
+    'checkout_url', checkout.checkout_url,
+    'expires_at', checkout.expires_at
+  );
+end
+$$;
+
+create or replace function public.danotch_attach_checkout_session(
+  p_checkout_record_id uuid,
+  p_idempotency_key text,
+  p_dodo_session_id text,
+  p_checkout_url text
+) returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  checkout public.danotch_checkout_records;
+begin
+  if p_dodo_session_id = '' or p_checkout_url = '' then
+    return false;
+  end if;
+
+  select * into checkout
+  from public.danotch_checkout_records
+  where id = p_checkout_record_id
+  for update;
+
+  if not found
+    or checkout.idempotency_key <> p_idempotency_key
+    or checkout.status not in ('pending', 'active')
+    or checkout.expires_at <= now()
+    or (
+      checkout.dodo_session_id is not null
+      and checkout.dodo_session_id <> p_dodo_session_id
+    )
+    or (
+      checkout.checkout_url is not null
+      and checkout.checkout_url <> p_checkout_url
+    )
+  then
+    return false;
+  end if;
+
+  update public.danotch_checkout_records
+  set dodo_session_id = p_dodo_session_id,
+      checkout_url = p_checkout_url,
+      status = 'active',
+      attached_at = coalesce(attached_at, now())
+  where id = p_checkout_record_id;
+  return true;
+exception
+  when unique_violation then
+    return false;
+end
+$$;
+
+drop function public.danotch_record_payment(
+  text, text, text, text, text, integer, text, text
+);
+
+create function public.danotch_record_payment(
+  p_delivery_id text,
+  p_payment_id text,
+  p_claimed_user_id text,
+  p_customer_id text,
+  p_event_type text,
+  p_amount integer,
+  p_currency text,
+  p_product_id text,
+  p_quantity integer,
+  p_checkout_record_id uuid,
+  p_dodo_session_id text,
+  p_environment text
+) returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_profile_id uuid;
+  checkout public.danotch_checkout_records;
+  event_id uuid := gen_random_uuid();
+begin
+  insert into public.danotch_payment_events(
+    id, delivery_id, payment_id, provider_event_id, claimed_user_id,
+    event_type, amount, currency, product_id, checkout_record_id, outcome
+  ) values (
+    event_id, p_delivery_id, p_payment_id, p_payment_id, p_claimed_user_id,
+    p_event_type, p_amount, upper(p_currency), p_product_id,
+    null, 'processing'
+  )
+  on conflict do nothing;
+
+  if not found then
+    return 'duplicate';
+  end if;
+
+  begin
+    v_profile_id := p_claimed_user_id::uuid;
+  exception when invalid_text_representation then
+    v_profile_id := null;
+  end;
+
+  if v_profile_id is null or not exists (
+    select 1 from public.danotch_user_profiles where id = v_profile_id
+  ) then
+    update public.danotch_payment_events
+    set outcome = 'unknown_profile', error = 'claimed profile does not exist'
+    where id = event_id;
+    return 'unknown_profile';
+  end if;
+
+  select * into checkout
+  from public.danotch_checkout_records
+  where id = p_checkout_record_id
+    and user_id = v_profile_id
+    and dodo_session_id = p_dodo_session_id
+    and product_id = p_product_id
+    and expected_amount = p_amount
+    and expected_currency = upper(p_currency)
+    and expected_quantity = p_quantity
+    and environment = p_environment
+    and status = 'active'
+    and expires_at > now()
+  for update;
+
+  if not found then
+    update public.danotch_payment_events
+    set outcome = 'rejected', error = 'exact attached checkout record did not match'
+    where id = event_id;
+    return 'rejected';
+  end if;
+
+  update public.danotch_checkout_records
+  set status = 'consumed', consumed_at = now()
+  where id = checkout.id;
+
+  update public.danotch_user_profiles
+  set billing_status = 'paid',
+      plan = 'paid',
+      lifetime_purchased_at = coalesce(lifetime_purchased_at, now()),
+      lifetime_revoked_at = null,
+      lifetime_revocation_reason = null,
+      dodo_customer_id = p_customer_id,
+      dodo_payment_id = p_payment_id
+  where id = v_profile_id;
+
+  update public.danotch_payment_events
+  set profile_id = v_profile_id,
+      outcome = 'granted',
+      checkout_record_id = checkout.id
+  where id = event_id;
+  return 'granted';
+end
+$$;
+
+create function public.danotch_record_payment_reversal(
+  p_delivery_id text,
+  p_event_type text,
+  p_provider_event_id text,
+  p_payment_id text,
+  p_amount integer,
+  p_currency text,
+  p_is_full_refund boolean,
+  p_reason text
+) returns text
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  original public.danotch_payment_events;
+  event_id uuid := gen_random_uuid();
+  should_revoke boolean := false;
+begin
+  insert into public.danotch_payment_events(
+    id, delivery_id, payment_id, provider_event_id, claimed_user_id,
+    event_type, amount, currency, product_id, outcome
+  ) values (
+    event_id, p_delivery_id, p_payment_id, p_provider_event_id, null,
+    p_event_type, p_amount, upper(p_currency), null, 'processing'
+  )
+  on conflict do nothing;
+
+  if not found then
+    return 'duplicate';
+  end if;
+
+  select * into original
+  from public.danotch_payment_events
+  where payment_id = p_payment_id
+    and event_type = 'payment.succeeded'
+    and outcome = 'granted'
+  order by created_at
+  limit 1;
+
+  if not found then
+    -- Delivery order is not guaranteed. Roll the event claim back and ask the
+    -- provider to retry rather than acknowledging a reversal before its payment.
+    raise exception 'granted payment not found for reversal'
+      using errcode = '40001';
+  end if;
+
+  should_revoke := case
+    when p_event_type = 'refund.succeeded' then
+      p_is_full_refund
+      and (
+        p_amount is null
+        or (
+          p_amount = original.amount
+          and upper(p_currency) = original.currency
+        )
+      )
+    when p_event_type in ('dispute.accepted', 'dispute.lost') then true
+    else false
+  end;
+
+  if not should_revoke then
+    update public.danotch_payment_events
+    set profile_id = original.profile_id,
+        checkout_record_id = original.checkout_record_id,
+        product_id = original.product_id,
+        outcome = 'ignored',
+        error = 'reversal policy did not require revocation'
+    where id = event_id;
+    return 'ignored';
+  end if;
+
+  update public.danotch_user_profiles
+  set billing_status = 'revoked',
+      plan = 'free',
+      lifetime_revoked_at = now(),
+      lifetime_revocation_reason = p_event_type || coalesce(': ' || nullif(p_reason, ''), '')
+  where id = original.profile_id
+    and dodo_payment_id = p_payment_id;
+
+  if not found then
+    update public.danotch_payment_events
+    set profile_id = original.profile_id,
+        checkout_record_id = original.checkout_record_id,
+        product_id = original.product_id,
+        outcome = 'ignored',
+        error = 'payment no longer backs current entitlement'
+    where id = event_id;
+    return 'ignored';
+  end if;
+
+  update public.danotch_payment_events
+  set profile_id = original.profile_id,
+      claimed_user_id = original.claimed_user_id,
+      checkout_record_id = original.checkout_record_id,
+      product_id = original.product_id,
+      outcome = 'revoked'
+  where id = event_id;
+  return 'revoked';
+end
+$$;
+
+revoke all on function public.danotch_reserve_checkout(
+  uuid, text, integer, text, integer, text
+) from public;
+revoke all on function public.danotch_attach_checkout_session(
+  uuid, text, text, text
+) from public;
+revoke all on function public.danotch_record_payment(
+  text, text, text, text, text, integer, text, text, integer, uuid, text, text
+) from public;
+revoke all on function public.danotch_record_payment_reversal(
+  text, text, text, text, integer, text, boolean, text
+) from public;
+
+grant execute on function public.danotch_reserve_checkout(
+  uuid, text, integer, text, integer, text
+) to danotch_webhook;
+grant execute on function public.danotch_attach_checkout_session(
+  uuid, text, text, text
+) to danotch_webhook;
+grant execute on function public.danotch_record_payment(
+  text, text, text, text, text, integer, text, text, integer, uuid, text, text
+) to danotch_webhook;
+grant execute on function public.danotch_record_payment_reversal(
+  text, text, text, text, integer, text, boolean, text
+) to danotch_webhook;
+-- END 013_billing_launch_readiness.sql
+-- BEGIN 014_trial_cost_security.sql
+-- Server-funded trial budgets and scheduler abuse ceilings.
+
+create table public.danotch_trial_usage_daily (
+  user_id uuid not null references public.danotch_user_profiles(id) on delete cascade,
+  usage_day date not null,
+  tokens_used bigint not null default 0 check (tokens_used >= 0),
+  spend_micro_usd bigint not null default 0 check (spend_micro_usd >= 0),
+  primary key (user_id, usage_day)
+);
+
+create table public.danotch_trial_usage_leases (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.danotch_user_profiles(id) on delete cascade,
+  reserved_tokens integer not null check (reserved_tokens > 0),
+  reserved_spend_micro_usd integer not null check (reserved_spend_micro_usd > 0),
+  expires_at timestamptz not null default now() + interval '5 minutes',
+  created_at timestamptz not null default now()
+);
+create index danotch_trial_usage_leases_user_idx
+  on public.danotch_trial_usage_leases(user_id, expires_at);
+
+create function public.danotch_reserve_trial_usage(
+  p_user_id uuid,
+  p_reserved_tokens integer,
+  p_reserved_spend_micro_usd integer,
+  p_daily_token_limit integer,
+  p_daily_spend_micro_usd integer,
+  p_max_concurrency integer
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  daily public.danotch_trial_usage_daily;
+  reserved_tokens bigint;
+  reserved_spend bigint;
+  active_count integer;
+  lease_id uuid;
+begin
+  if p_reserved_tokens <= 0 or p_reserved_spend_micro_usd <= 0
+    or p_daily_token_limit <= 0 or p_daily_token_limit > 10000000
+    or p_daily_spend_micro_usd <= 0 or p_daily_spend_micro_usd > 100000000
+    or p_max_concurrency <= 0 or p_max_concurrency > 10
+  then
+    raise exception 'invalid trial budget configuration' using errcode = '22023';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text || ':trial-usage', 0));
+  delete from public.danotch_trial_usage_leases
+    where user_id = p_user_id and expires_at <= now();
+  insert into public.danotch_trial_usage_daily(user_id, usage_day)
+    values (p_user_id, current_date) on conflict do nothing;
+  select * into daily from public.danotch_trial_usage_daily
+    where user_id = p_user_id and usage_day = current_date for update;
+  select coalesce(sum(reserved_tokens), 0),
+         coalesce(sum(reserved_spend_micro_usd), 0),
+         count(*)::integer
+    into reserved_tokens, reserved_spend, active_count
+    from public.danotch_trial_usage_leases
+    where user_id = p_user_id and expires_at > now();
+
+  if active_count >= p_max_concurrency
+    or daily.tokens_used + reserved_tokens + p_reserved_tokens > p_daily_token_limit
+    or daily.spend_micro_usd + reserved_spend + p_reserved_spend_micro_usd > p_daily_spend_micro_usd
+  then
+    return jsonb_build_object('allowed', false, 'retry_after_seconds', 60);
+  end if;
+
+  insert into public.danotch_trial_usage_leases(
+    user_id, reserved_tokens, reserved_spend_micro_usd
+  ) values (p_user_id, p_reserved_tokens, p_reserved_spend_micro_usd)
+  returning id into lease_id;
+  return jsonb_build_object('allowed', true, 'lease_id', lease_id);
+end
+$$;
+
+create function public.danotch_settle_trial_usage(
+  p_lease_id uuid,
+  p_user_id uuid,
+  p_actual_tokens integer,
+  p_actual_spend_micro_usd integer
+) returns boolean
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  removed integer;
+begin
+  if p_actual_tokens < 0 or p_actual_spend_micro_usd < 0 then
+    raise exception 'invalid trial usage' using errcode = '22023';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended(p_user_id::text || ':trial-usage', 0));
+  delete from public.danotch_trial_usage_leases
+    where id = p_lease_id and user_id = p_user_id;
+  get diagnostics removed = row_count;
+  if removed <> 1 then return false; end if;
+  insert into public.danotch_trial_usage_daily(
+    user_id, usage_day, tokens_used, spend_micro_usd
+  ) values (p_user_id, current_date, p_actual_tokens, p_actual_spend_micro_usd)
+  on conflict (user_id, usage_day) do update set
+    tokens_used = public.danotch_trial_usage_daily.tokens_used + excluded.tokens_used,
+    spend_micro_usd = public.danotch_trial_usage_daily.spend_micro_usd + excluded.spend_micro_usd;
+  return true;
+end
+$$;
+
+create function public.danotch_enforce_schedule_caps() returns trigger
+language plpgsql security definer set search_path = ''
+as $$
+begin
+  if new.interval_ms is not null and new.interval_ms < 900000 then
+    raise exception 'scheduled interval must be at least 15 minutes' using errcode = '23514';
+  end if;
+  if tg_op = 'INSERT' then
+    perform pg_advisory_xact_lock(hashtextextended(new.user_id::text || ':schedules', 0));
+    if (select count(*) from public.danotch_scheduled_tasks where user_id = new.user_id) >= 5 then
+      raise exception 'scheduled task limit reached' using errcode = '23514';
+    end if;
+  end if;
+  return new;
+end
+$$;
+
+create trigger danotch_scheduled_tasks_caps
+before insert or update of interval_ms on public.danotch_scheduled_tasks
+for each row execute function public.danotch_enforce_schedule_caps();
+
+alter table public.danotch_trial_usage_daily enable row level security;
+alter table public.danotch_trial_usage_daily force row level security;
+alter table public.danotch_trial_usage_leases enable row level security;
+alter table public.danotch_trial_usage_leases force row level security;
+revoke all on public.danotch_trial_usage_daily,
+  public.danotch_trial_usage_leases from public, anon, authenticated;
+revoke all on function public.danotch_reserve_trial_usage(uuid, integer, integer, integer, integer, integer),
+  public.danotch_settle_trial_usage(uuid, uuid, integer, integer),
+  public.danotch_enforce_schedule_caps() from public, anon, authenticated;
+grant execute on function public.danotch_reserve_trial_usage(uuid, integer, integer, integer, integer, integer),
+  public.danotch_settle_trial_usage(uuid, uuid, integer, integer)
+  to danotch_runner, danotch_scheduler;
+-- END 014_trial_cost_security.sql
+-- BEGIN 015_provisioning_result_privileges.sql
+-- Launch-readiness privilege corrections. Keep generic run transitions scoped
+-- to the runner while allowing the validated action-result reducer to perform
+-- its terminal transition atomically.
+
+alter function public.danotch_record_action_result(
+  uuid, uuid, uuid, uuid, uuid, text, jsonb, bigint
+) security definer;
+alter function public.danotch_record_action_result(
+  uuid, uuid, uuid, uuid, uuid, text, jsonb, bigint
+) set search_path = '';
+
+-- Defense in depth: fencing may submit a fully validated action result, but it
+-- must never gain arbitrary access to the generic run state transition API.
+revoke execute on function public.danotch_transition_run(
+  uuid, uuid, uuid, bigint, text, text, jsonb, jsonb
+) from danotch_fencing;
+
+-- The provisioning function intentionally has an empty search_path. pgcrypto
+-- installs digest in public in this schema, so qualify it explicitly.
+create or replace function public.danotch_provision_verified_user(
+  p_user_id uuid,
+  p_email text,
+  p_full_name text,
+  p_trial_subject_hash text,
+  p_apps text[]
+) returns jsonb
+language plpgsql security definer set search_path = ''
+as $$
+declare
+  v_verified_at timestamptz;
+  quota_result jsonb;
+  provision public.danotch_verified_provisioning;
+  profile_exists boolean;
+begin
+  select email_confirmed_at into v_verified_at from auth.users where id = p_user_id for update;
+  if v_verified_at is null then
+    raise exception 'verified email required' using errcode = '42501';
+  end if;
+  select exists(select 1 from public.danotch_user_profiles where id = p_user_id)
+    into profile_exists;
+  if not profile_exists and not exists (
+    select 1 from public.danotch_signup_enrollments
+    where email_hash = encode(
+        public.digest(convert_to(lower(p_email), 'utf8'), 'sha256'), 'hex'
+      )
+      and (user_id is null or user_id = p_user_id)
+      and status = 'pending'
+      and requested_at <= v_verified_at
+  ) then
+    raise exception 'verified signup enrollment required' using errcode = '42501';
+  end if;
+  update public.danotch_signup_enrollments set user_id = p_user_id
+    where email_hash = encode(
+      public.digest(convert_to(lower(p_email), 'utf8'), 'sha256'), 'hex'
+    ) and (user_id is null or user_id = p_user_id);
+  insert into public.danotch_verified_provisioning(user_id, attempts)
+    values (p_user_id, 1)
+    on conflict (user_id) do update set attempts =
+      public.danotch_verified_provisioning.attempts + 1, updated_at = now();
+  insert into public.danotch_user_profiles(
+    id, email, full_name, trial_started_at, trial_ends_at, billing_status
+  ) values (
+    p_user_id, lower(p_email), p_full_name, null, null, 'trialing'
+  ) on conflict (id) do update set
+    email = excluded.email,
+    full_name = case when public.danotch_user_profiles.full_name = ''
+      then excluded.full_name else public.danotch_user_profiles.full_name end;
+  update public.danotch_verified_provisioning set profile_ready = true where user_id = p_user_id;
+  insert into public.danotch_connected_apps(user_id, app_type, active)
+    select p_user_id, app_type, false from unnest(p_apps) app_type
+    on conflict (user_id, app_type) do nothing;
+  update public.danotch_verified_provisioning set apps_ready = true where user_id = p_user_id;
+  select * into provision from public.danotch_verified_provisioning where user_id = p_user_id;
+  if not provision.trial_ready then
+    quota_result := public.danotch_consume_capability_quota(
+      'trial', p_trial_subject_hash, 1, p_user_id::text
+    );
+    if coalesce((quota_result ->> 'allowed')::boolean, false) is not true then
+      raise exception 'trial quota exceeded' using errcode = 'P0001';
+    end if;
+    update public.danotch_user_profiles set
+      trial_started_at = coalesce(trial_started_at, now()),
+      trial_ends_at = coalesce(trial_ends_at, now() + interval '14 days'),
+      billing_status = case
+        when lifetime_purchased_at is not null then 'paid'
+        else 'trialing'
+      end
+    where id = p_user_id;
+    update public.danotch_verified_provisioning set trial_ready = true where user_id = p_user_id;
+  end if;
+  update public.danotch_verified_provisioning
+    set completed_at = now(), last_error = null, updated_at = now()
+    where user_id = p_user_id and profile_ready and apps_ready and trial_ready;
+  update public.danotch_signup_enrollments
+    set status = 'verified', verified_at = v_verified_at
+    where user_id = p_user_id and status = 'pending';
+  return (select to_jsonb(row_value) from (
+    select profile_ready, apps_ready, trial_ready, completed_at
+    from public.danotch_verified_provisioning where user_id = p_user_id
+  ) row_value);
+end
+$$;
+
+-- Device-local execution completes while the run is waiting for its device.
+-- Permit that validated terminal path without changing who may execute the
+-- generic transition reducer.
+create or replace function public.danotch_transition_run(
+  p_run_id uuid,
+  p_user_id uuid,
+  p_transition_id uuid,
+  p_expected_revision bigint,
+  p_target_state text,
+  p_event_type text,
+  p_payload jsonb default '{}'::jsonb,
+  p_checkpoint jsonb default null
+) returns public.danotch_runs
+language plpgsql
+security invoker
+set search_path = ''
+as $$
+declare
+  current_run public.danotch_runs;
+  next_device_sequence bigint;
+  next_run_sequence bigint;
+  allowed boolean := false;
+begin
+  select * into current_run from public.danotch_runs
+  where id = p_run_id and user_id = p_user_id for update;
+  if not found then
+    raise exception 'run not found for owner' using errcode = '42501';
+  end if;
+
+  if exists (select 1 from public.danotch_run_events where id = p_transition_id) then
+    if not exists (
+      select 1 from public.danotch_run_events
+      where id = p_transition_id and run_id = p_run_id and user_id = p_user_id
+        and to_state = p_target_state and event_type = p_event_type
+        and payload = coalesce(p_payload, '{}'::jsonb)
+        and checkpoint is not distinct from p_checkpoint
+    ) then
+      raise exception 'transition id reused with different content' using errcode = '23505';
+    end if;
+    return current_run;
+  end if;
+  if current_run.revision <> p_expected_revision then
+    raise exception 'out-of-order transition: expected %, actual %',
+      p_expected_revision, current_run.revision using errcode = '40001';
+  end if;
+  if current_run.state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired') then
+    raise exception 'late transition for terminal run' using errcode = '55000';
+  end if;
+  if p_target_state is distinct from (case p_event_type
+    when 'provider_stream_started' then 'provider_streaming'
+    when 'provider_checkpointed' then 'checkpointed'
+    when 'local_action_offered' then 'waiting_for_device'
+    when 'cancellation_requested' then 'cancellation_requested'
+    when 'run_completed' then 'completed'
+    when 'run_failed' then 'failed'
+    when 'provider_stream_interrupted' then 'failed_recoverable'
+    when 'run_cancelled' then 'cancelled'
+    when 'run_expired' then 'expired'
+    else null
+  end) then
+    raise exception 'event type does not authorize target state' using errcode = '22023';
+  end if;
+
+  allowed := case current_run.state
+    when 'queued' then p_target_state in (
+      'provider_streaming', 'waiting_for_device', 'cancellation_requested', 'failed'
+    )
+    when 'provider_streaming' then p_target_state in (
+      'checkpointed', 'completed', 'failed', 'failed_recoverable', 'cancellation_requested'
+    )
+    when 'checkpointed' then p_target_state in (
+      'provider_streaming', 'waiting_for_device', 'completed', 'failed', 'cancellation_requested'
+    )
+    when 'waiting_for_device' then p_target_state in (
+      'checkpointed', 'completed', 'cancellation_requested', 'cancelled', 'expired', 'failed'
+    )
+    when 'cancellation_requested' then p_target_state in ('cancelled', 'failed')
+    else false
+  end;
+  if not allowed then
+    raise exception 'invalid run transition: % -> %', current_run.state, p_target_state
+      using errcode = '22023';
+  end if;
+
+  if current_run.device_id is not null then
+    update public.danotch_devices
+    set next_event_sequence = next_event_sequence + 1
+    where id = current_run.device_id and user_id = p_user_id
+    returning next_event_sequence - 1 into next_device_sequence;
+  end if;
+  select coalesce(max(run_sequence), 0) + 1 into next_run_sequence
+  from public.danotch_run_events where run_id = p_run_id;
+
+  insert into public.danotch_run_events(
+    id, run_id, user_id, device_id, run_sequence, device_sequence,
+    event_type, from_state, to_state, payload, checkpoint
+  ) values (
+    p_transition_id, p_run_id, p_user_id, current_run.device_id,
+    next_run_sequence, next_device_sequence, p_event_type,
+    current_run.state, p_target_state, coalesce(p_payload, '{}'::jsonb), p_checkpoint
+  );
+
+  update public.danotch_runs set
+    state = p_target_state,
+    revision = revision + 1,
+    checkpoint = case when p_checkpoint is null then checkpoint else p_checkpoint end,
+    terminal_code = case
+      when p_target_state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired')
+        then coalesce(p_payload ->> 'code', p_target_state)
+      else terminal_code
+    end,
+    terminal_at = case
+      when p_target_state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired')
+        then now()
+      else terminal_at
+    end,
+    updated_at = now()
+  where id = p_run_id and user_id = p_user_id
+  returning * into current_run;
+
+  if p_target_state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired') then
+    insert into public.danotch_terminal_results(
+      id, run_id, user_id, device_id, status, result
+    ) values (
+      p_transition_id, p_run_id, p_user_id, current_run.device_id,
+      p_target_state, coalesce(p_payload, '{}'::jsonb)
+    )
+    on conflict (run_id) do nothing;
+  end if;
+  return current_run;
+end
+$$;
+-- END 015_provisioning_result_privileges.sql

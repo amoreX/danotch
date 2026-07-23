@@ -525,6 +525,11 @@ private struct DeviceConnectionBanner: View {
             Text(viewModel.connectionState.title)
                 .font(.system(size: 10, weight: .semibold))
             Spacer()
+            if viewModel.connectionState.requiresUpdate {
+                Button("Check for Updates") { UpdateController.shared.checkForUpdates() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+            }
             if viewModel.connectionState.canRetry {
                 Button("Retry") { viewModel.retryDeviceConnection() }
                     .buttonStyle(.plain)
@@ -546,6 +551,10 @@ private struct DeviceConnectionBanner: View {
 }
 
 extension DeviceConnectionState {
+    var requiresUpdate: Bool {
+        self == .unsupportedProtocol
+    }
+
     var needsAttention: Bool {
         switch self {
         case .offline, .expired, .revoked, .interrupted,
@@ -974,6 +983,12 @@ struct SettingsPanel: View {
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
+                if viewModel.connectionState.requiresUpdate {
+                    Button("Check for Updates") {
+                        UpdateController.shared.checkForUpdates()
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                }
                 if viewModel.connectionState.canReenroll {
                     Button("Re-enroll") { viewModel.reenrollDevice() }
                         .buttonStyle(.bordered).controlSize(.small)
@@ -1077,6 +1092,16 @@ struct SettingsPanel: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
+            Text("14-day server-funded trial · $5 lifetime app unlock · your own provider API key is mandatory after the trial.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Label(checkoutStateText, systemImage: checkoutStateIcon)
+                .font(.caption)
+                .foregroundStyle(checkoutStateColor)
+                .fixedSize(horizontal: false, vertical: true)
+
             if let error = viewModel.billingError {
                 Text(error)
                     .font(.caption)
@@ -1090,13 +1115,61 @@ struct SettingsPanel: View {
                     .controlSize(.small)
                     .tint(.clear)
 
-                if viewModel.billingStatus?.requiresPurchase == true {
-                    Button("Buy $5") { viewModel.startCheckout() }
+                if viewModel.billingStatus?.canPurchase == true {
+                    Button(viewModel.checkoutState.isBusy ? "Checkout pending…" : "Buy $5 lifetime") {
+                        viewModel.startCheckout()
+                    }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(DN.accent)
+                        .disabled(viewModel.checkoutState.isBusy)
+                }
+
+                if viewModel.billingStatus?.requiresProviderKey == true
+                    || viewModel.billingStatus?.hasActiveProvider == false {
+                    Button("Add Provider") {
+                        viewModel.requestProviderSetup()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.clear)
                 }
             }
+
+            Text("Purchases are account-based. Sign in with this same account to restore your lifetime unlock.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var checkoutStateText: String {
+        switch viewModel.checkoutState {
+        case .idle: return "Checkout ready."
+        case .creating: return "Creating a secure checkout…"
+        case .pending: return "Checkout opened. Waiting for verified payment confirmation…"
+        case .success: return "Purchase confirmed for this account."
+        case .timeout: return "Confirmation timed out. Your payment may still complete; refresh to check."
+        case .error(let message): return message
+        }
+    }
+
+    private var checkoutStateIcon: String {
+        switch viewModel.checkoutState {
+        case .idle: return "creditcard"
+        case .creating: return "arrow.triangle.2.circlepath"
+        case .pending: return "clock"
+        case .success: return "checkmark.circle.fill"
+        case .timeout: return "clock.badge.exclamationmark"
+        case .error: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var checkoutStateColor: Color {
+        switch viewModel.checkoutState {
+        case .success: return DN.success
+        case .timeout, .error: return DN.accent
+        case .creating, .pending: return DN.warning
+        case .idle: return .secondary
         }
     }
 
@@ -1364,6 +1437,19 @@ struct ProviderRow: View {
                 .onAppear {
                     if modelId.isEmpty { modelId = config?.modelId ?? defaultModel }
                 }
+            }
+        }
+        .onAppear {
+            if viewModel.requestedProviderType == providerType {
+                isExpanded = true
+                modelId = config?.modelId ?? defaultModel
+            }
+        }
+        .onChange(of: viewModel.requestedProviderType) { _, requested in
+            guard requested == providerType else { return }
+            withAnimation(DN.transition) {
+                isExpanded = true
+                modelId = config?.modelId ?? defaultModel
             }
         }
     }

@@ -21,6 +21,20 @@ function positiveInteger(
   return value;
 }
 
+function boundedPositiveInteger(
+  env: Environment,
+  name: string,
+  developmentDefault: number,
+  production: boolean,
+  maximum: number,
+  minimum = 1,
+): number {
+  const value = positiveInteger(env, name, developmentDefault, production);
+  if (value < minimum) throw new Error(`${name} must be at least ${minimum}`);
+  if (value > maximum) throw new Error(`${name} must be at most ${maximum}`);
+  return value;
+}
+
 function secureUrl(value: string, name: string, protocol: 'https:' | 'wss:'): string {
   let parsed: URL;
   try {
@@ -84,6 +98,7 @@ export function loadConfig(env: Environment = process.env) {
     );
   }
   const publicSignupEnabled = containmentFeatureEnabled(isProduction, env.PUBLIC_SIGNUP_ENABLED);
+  const trialsEnabled = env.TRIALS_ENABLED === 'true';
   const costlyIntegrationsEnabled = containmentFeatureEnabled(
     isProduction,
     env.COSTLY_INTEGRATIONS_ENABLED,
@@ -101,6 +116,21 @@ export function loadConfig(env: Environment = process.env) {
   ) {
     throw new Error('Pinned COMPOSIO_AUTH_CONFIG_* identifiers are required');
   }
+  const trialApiKey = env.TRIAL_ANTHROPIC_API_KEY ?? '';
+  if (trialsEnabled && !trialApiKey) {
+    throw new Error('TRIAL_ANTHROPIC_API_KEY is required when TRIALS_ENABLED is true');
+  }
+  const trialModels = (env.TRIAL_ANTHROPIC_MODELS ?? 'claude-sonnet-4-6')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+  if (trialsEnabled && (trialModels.length === 0 || trialModels.some((model) => !/^[a-zA-Z0-9._-]{1,100}$/.test(model)))) {
+    throw new Error('TRIAL_ANTHROPIC_MODELS must be a non-empty comma-separated model allowlist');
+  }
+  const trialDefaultModel = env.TRIAL_ANTHROPIC_MODEL ?? trialModels[0] ?? '';
+  if (trialsEnabled && !trialModels.includes(trialDefaultModel)) {
+    throw new Error('TRIAL_ANTHROPIC_MODEL must appear in TRIAL_ANTHROPIC_MODELS');
+  }
 
   // PROVIDER_KEY_SECRET is required in production. In development the crypto
   // module throws lazily, but we validate eagerly here so startup fails closed.
@@ -110,6 +140,50 @@ export function loadConfig(env: Environment = process.env) {
       'PROVIDER_KEY_SECRET must be at least 32 characters in production. '
       + 'Generate a long random secret and add it to your environment.',
     );
+  }
+
+  const dodoEnvironment = env.DODO_PAYMENTS_ENVIRONMENT ?? (isProduction ? '' : 'test_mode');
+  if (dodoEnvironment !== 'test_mode' && dodoEnvironment !== 'live_mode') {
+    throw new Error('DODO_PAYMENTS_ENVIRONMENT must be test_mode or live_mode');
+  }
+  const dodoApiKey = env.DODO_PAYMENTS_API_KEY ?? '';
+  const dodoWebhookKey = env.DODO_PAYMENTS_WEBHOOK_KEY ?? '';
+  const dodoProductId = env.DODO_PAYMENTS_PRODUCT_ID ?? '';
+  const dodoReturnUrl = env.DODO_PAYMENTS_RETURN_URL ?? '';
+  const dodoExpectedAmount = positiveInteger(
+    env,
+    'DODO_PAYMENTS_EXPECTED_AMOUNT',
+    500,
+    isProduction,
+  );
+  const dodoExpectedQuantity = positiveInteger(
+    env,
+    'DODO_PAYMENTS_EXPECTED_QUANTITY',
+    1,
+    isProduction,
+  );
+  const dodoExpectedCurrency = (env.DODO_PAYMENTS_EXPECTED_CURRENCY ?? 'USD').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(dodoExpectedCurrency)) {
+    throw new Error('DODO_PAYMENTS_EXPECTED_CURRENCY must be a three-letter ISO currency code');
+  }
+  if (isProduction) {
+    if (dodoEnvironment !== 'live_mode') {
+      throw new Error('DODO_PAYMENTS_ENVIRONMENT must be live_mode in production');
+    }
+    const missing = [
+      ['DODO_PAYMENTS_API_KEY', dodoApiKey],
+      ['DODO_PAYMENTS_WEBHOOK_KEY', dodoWebhookKey],
+      ['DODO_PAYMENTS_PRODUCT_ID', dodoProductId],
+      ['DODO_PAYMENTS_RETURN_URL', dodoReturnUrl],
+    ].filter(([, value]) => !value).map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(`Missing production Dodo configuration: ${missing.join(', ')}`);
+    }
+    const returnUrl = secureUrl(dodoReturnUrl, 'DODO_PAYMENTS_RETURN_URL', 'https:');
+    const expectedReturnUrl = `${publicBaseUrl}/api/billing/return`;
+    if (returnUrl !== expectedReturnUrl) {
+      throw new Error(`DODO_PAYMENTS_RETURN_URL must equal ${expectedReturnUrl}`);
+    }
   }
 
   return {
@@ -137,9 +211,15 @@ export function loadConfig(env: Environment = process.env) {
     oauth: {
       stateTtlMs: positiveInteger(env, 'OAUTH_STATE_TTL_MS', 10 * 60_000, isProduction),
     },
+    authRateLimit: {
+      windowMs: boundedPositiveInteger(env, 'AUTH_RATE_WINDOW_MS', 15 * 60_000, isProduction, 86_400_000),
+      login: boundedPositiveInteger(env, 'AUTH_LOGIN_RATE_LIMIT', 10, isProduction, 1000),
+      refresh: boundedPositiveInteger(env, 'AUTH_REFRESH_RATE_LIMIT', 30, isProduction, 5000),
+    },
     containment: {
       publicSignupEnabled,
       costlyIntegrationsEnabled,
+      trialsEnabled,
     },
     deviceGateway: {
       publicUrl: gatewayPublicUrl,
@@ -169,9 +249,30 @@ export function loadConfig(env: Environment = process.env) {
       ),
     },
     api: {
-      model: env.CLAUDE_MODEL || 'claude-sonnet-4-6',
-      maxTokens: parseInt(env.MAX_TOKENS || '4096', 10),
+      model: trialDefaultModel || 'claude-sonnet-4-6',
+      maxTokens: boundedPositiveInteger(env, 'MAX_TOKENS', 4096, isProduction, 16_384),
       systemPrompt: CHAT_SYSTEM_PROMPT,
+    },
+    trial: {
+      apiKey: trialApiKey,
+      allowedModels: trialModels,
+      defaultModel: trialDefaultModel,
+      maxConcurrency: boundedPositiveInteger(env, 'TRIAL_MAX_CONCURRENCY', 2, isProduction, 10),
+      dailyTokenLimit: boundedPositiveInteger(env, 'TRIAL_DAILY_TOKEN_LIMIT', 50_000, isProduction, 10_000_000),
+      dailySpendMicroUsd: boundedPositiveInteger(env, 'TRIAL_DAILY_SPEND_MICRO_USD', 250_000, isProduction, 100_000_000),
+    },
+    scheduler: {
+      maxTasksPerUser: boundedPositiveInteger(env, 'SCHEDULER_MAX_TASKS_PER_USER', 5, isProduction, 5),
+      minIntervalMs: boundedPositiveInteger(
+        env,
+        'SCHEDULER_MIN_INTERVAL_MS',
+        15 * 60_000,
+        isProduction,
+        86_400_000,
+        15 * 60_000,
+      ),
+      maxTokens: boundedPositiveInteger(env, 'SCHEDULER_MAX_TOKENS', 1024, isProduction, 4096),
+      claimLimit: boundedPositiveInteger(env, 'SCHEDULER_CLAIM_LIMIT', 10, isProduction, 100),
     },
     defaultModels: {
       anthropic: 'claude-sonnet-4-6',
@@ -183,14 +284,14 @@ export function loadConfig(env: Environment = process.env) {
       authConfigIds: composioAuthConfigIds,
     },
     dodo: {
-      apiKey: env.DODO_PAYMENTS_API_KEY || '',
-      webhookKey: env.DODO_PAYMENTS_WEBHOOK_KEY || '',
-      productId: env.DODO_PAYMENTS_PRODUCT_ID || '',
-      returnUrl: env.DODO_PAYMENTS_RETURN_URL || '',
-      environment: env.DODO_PAYMENTS_ENVIRONMENT || 'test_mode',
-      expectedAmount: parseInt(env.DODO_PAYMENTS_EXPECTED_AMOUNT || '500', 10),
-      expectedCurrency: (env.DODO_PAYMENTS_EXPECTED_CURRENCY || 'USD').toUpperCase(),
-      expectedQuantity: parseInt(env.DODO_PAYMENTS_EXPECTED_QUANTITY || '1', 10),
+      apiKey: dodoApiKey,
+      webhookKey: dodoWebhookKey,
+      productId: dodoProductId,
+      returnUrl: dodoReturnUrl,
+      environment: dodoEnvironment,
+      expectedAmount: dodoExpectedAmount,
+      expectedCurrency: dodoExpectedCurrency,
+      expectedQuantity: dodoExpectedQuantity,
     },
   } as const;
 }

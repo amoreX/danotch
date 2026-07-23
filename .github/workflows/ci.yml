@@ -116,6 +116,20 @@ jobs:
       - name: Swift build
         working-directory: app
         run: swift build
+      - name: Direct-distribution static verification
+        run: |
+          python3 app/scripts/verify_release_static.py
+          npm ci --prefix app/release-tools
+          npm test --prefix app/release-tools
+      - name: Generate Xcode project and resolve release dependencies
+        working-directory: app
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          xcodebuild -resolvePackageDependencies -project Perch.xcodeproj -scheme Perch
+          xcodebuild -project Perch.xcodeproj -scheme Perch -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/perch-ci" \
+            CODE_SIGNING_ALLOWED=NO build
 
   migrations-verify:
     name: Database — migration verify + RLS

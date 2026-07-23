@@ -1,12 +1,17 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { userDb } from '../lib/user-db.js';
 import { getAdminDb } from '../lib/admin-db.js';
-import { getActiveProviderForUser, getFallbackProvider } from '../providers/factory.js';
+import {
+  getActiveProviderForUser,
+  getFallbackProvider,
+  ProviderLookupError,
+} from '../providers/factory.js';
 import type { LLMProvider } from '../providers/types.js';
+import { MeteredTrialProvider } from './trial-provider.js';
 
 const TRIAL_DAYS = 14;
 
-type BillingState = 'trialing' | 'paid' | 'expired';
+type BillingState = 'trialing' | 'paid' | 'expired' | 'revoked';
 
 export type BillingStatus = {
   userId: string;
@@ -47,7 +52,9 @@ export async function getBillingStatus(
 ): Promise<BillingStatus> {
   const { data: profile, error } = await db
     .from('danotch_user_profiles')
-    .select('id, trial_started_at, trial_ends_at, lifetime_purchased_at, billing_status')
+    .select(
+      'id, trial_started_at, trial_ends_at, lifetime_purchased_at, lifetime_revoked_at, billing_status',
+    )
     .eq('id', userId)
     .single();
 
@@ -69,17 +76,24 @@ export async function getBillingStatus(
   const trialEndsAt = parseDate(profile.trial_ends_at) ?? addDays(trialStartedAt, TRIAL_DAYS);
   const lifetimePurchasedAt = parseDate(profile.lifetime_purchased_at);
 
-  const { data: activeProvider } = await db
+  const { data: activeProvider, error: providerError } = await db
     .from('danotch_provider_configs')
     .select('provider')
     .eq('user_id', userId)
     .eq('is_active', true)
     .maybeSingle();
+  if (providerError) {
+    throw new EntitlementError(
+      'operational',
+      `Provider status is temporarily unavailable: ${providerError.message}`,
+    );
+  }
 
   const hasActiveProvider = Boolean(activeProvider?.provider);
   const trialActive = trialEndsAt.getTime() > now.getTime();
-  const paid = Boolean(lifetimePurchasedAt) || profile.billing_status === 'paid';
-  const billingStatus: BillingState = paid ? 'paid' : trialActive ? 'trialing' : 'expired';
+  const revoked = Boolean(parseDate(profile.lifetime_revoked_at));
+  const paid = Boolean(lifetimePurchasedAt) && !revoked;
+  const billingStatus: BillingState = paid ? 'paid' : revoked ? 'revoked' : trialActive ? 'trialing' : 'expired';
   const trialDaysRemaining = trialActive
     ? Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / 86_400_000))
     : 0;
@@ -93,8 +107,8 @@ export async function getBillingStatus(
     lifetimePurchasedAt: lifetimePurchasedAt?.toISOString() ?? null,
     hasActiveProvider,
     activeProvider: activeProvider?.provider ?? null,
-    canUseServerKey: !hasActiveProvider && trialActive,
-    requiresPurchase: !paid && !trialActive,
+    canUseServerKey: !revoked && !hasActiveProvider && trialActive,
+    requiresPurchase: revoked || (!paid && !trialActive),
     requiresProviderKey: paid && !trialActive && !hasActiveProvider,
   };
 }
@@ -105,7 +119,15 @@ export async function getBillingStatus(
  * records for the authenticated user (product, amount, currency, unexpired).
  * Returns the record id so the caller can attach the Dodo session id afterwards.
  */
-export async function createCheckoutRecord(
+export type CheckoutReservation = {
+  id: string;
+  idempotencyKey: string;
+  dodoSessionId: string | null;
+  checkoutUrl: string | null;
+  expiresAt: string;
+};
+
+export async function reserveCheckout(
   userId: string,
   {
     productId,
@@ -120,31 +142,58 @@ export async function createCheckoutRecord(
     expectedQuantity: number;
     environment: string;
   },
-): Promise<string> {
-  const { data, error } = await getAdminDb('webhook')
-    .from('danotch_checkout_records')
-    .insert({
-      user_id: userId,
-      product_id: productId,
-      expected_amount: expectedAmount,
-      expected_currency: expectedCurrency.toUpperCase(),
-      expected_quantity: expectedQuantity,
-      environment,
-    })
-    .select('id')
-    .single();
+): Promise<CheckoutReservation> {
+  const { data, error } = await getAdminDb('webhook').rpc('danotch_reserve_checkout', {
+    p_user_id: userId,
+    p_product_id: productId,
+    p_expected_amount: expectedAmount,
+    p_expected_currency: expectedCurrency.toUpperCase(),
+    p_expected_quantity: expectedQuantity,
+    p_environment: environment,
+  });
 
   if (error || !data) {
-    throw new Error(`Failed to create checkout record: ${error?.message ?? 'unknown error'}`);
+    throw new Error(`Failed to reserve checkout: ${error?.message ?? 'unknown error'}`);
   }
-  return data.id;
+  const record = data as {
+    id?: unknown;
+    idempotency_key?: unknown;
+    dodo_session_id?: unknown;
+    checkout_url?: unknown;
+    expires_at?: unknown;
+  };
+  if (
+    typeof record.id !== 'string'
+    || typeof record.idempotency_key !== 'string'
+    || typeof record.expires_at !== 'string'
+  ) {
+    throw new Error('Failed to reserve checkout: invalid RPC response');
+  }
+  return {
+    id: record.id,
+    idempotencyKey: record.idempotency_key,
+    dodoSessionId: typeof record.dodo_session_id === 'string' ? record.dodo_session_id : null,
+    checkoutUrl: typeof record.checkout_url === 'string' ? record.checkout_url : null,
+    expiresAt: record.expires_at,
+  };
 }
 
-export async function attachCheckoutSession(recordId: string, dodoSessionId: string): Promise<void> {
-  await getAdminDb('webhook')
-    .from('danotch_checkout_records')
-    .update({ dodo_session_id: dodoSessionId })
-    .eq('id', recordId);
+export async function attachCheckoutSession(params: {
+  recordId: string;
+  idempotencyKey: string;
+  dodoSessionId: string;
+  checkoutUrl: string;
+}): Promise<boolean> {
+  const { data, error } = await getAdminDb('webhook').rpc('danotch_attach_checkout_session', {
+    p_checkout_record_id: params.recordId,
+    p_idempotency_key: params.idempotencyKey,
+    p_dodo_session_id: params.dodoSessionId,
+    p_checkout_url: params.checkoutUrl,
+  });
+  if (error) {
+    throw new Error(`Failed to attach checkout session: ${error.message}`);
+  }
+  return data === true;
 }
 
 /**
@@ -163,6 +212,10 @@ export async function recordPayment(params: {
   amount: number | null;
   currency: string | null;
   productId: string | null;
+  quantity: number;
+  checkoutRecordId: string;
+  dodoSessionId: string;
+  environment: string;
 }): Promise<PaymentOutcome> {
   const { data, error } = await getAdminDb('webhook').rpc('danotch_record_payment', {
     p_delivery_id: params.deliveryId,
@@ -173,6 +226,10 @@ export async function recordPayment(params: {
     p_amount: params.amount,
     p_currency: params.currency ? params.currency.toUpperCase() : null,
     p_product_id: params.productId,
+    p_quantity: params.quantity,
+    p_checkout_record_id: params.checkoutRecordId,
+    p_dodo_session_id: params.dodoSessionId,
+    p_environment: params.environment,
   });
 
   if (error) {
@@ -182,25 +239,48 @@ export async function recordPayment(params: {
   return (data as PaymentOutcome) ?? 'rejected';
 }
 
+export type PaymentReversalOutcome = 'revoked' | 'ignored' | 'duplicate';
+
+export async function recordPaymentReversal(params: {
+  deliveryId: string | null;
+  eventType: 'refund.succeeded' | 'dispute.accepted' | 'dispute.lost';
+  providerEventId: string;
+  paymentId: string;
+  amount: number | null;
+  currency: string | null;
+  reason: string | null;
+}): Promise<PaymentReversalOutcome> {
+  const { data, error } = await getAdminDb('webhook').rpc('danotch_record_payment_reversal', {
+    p_delivery_id: params.deliveryId,
+    p_event_type: params.eventType,
+    p_provider_event_id: params.providerEventId,
+    p_payment_id: params.paymentId,
+    p_amount: params.amount,
+    p_currency: params.currency?.toUpperCase() ?? null,
+    p_is_full_refund: params.eventType === 'refund.succeeded',
+    p_reason: params.reason,
+  });
+  if (error) {
+    throw new Error(`recordPaymentReversal RPC failed for payment ${params.paymentId}: ${error.message}`);
+  }
+  return (data as PaymentReversalOutcome) ?? 'ignored';
+}
+
 export async function resolveProviderForUser(
   userId: string,
   modelOverride?: string,
   db: SupabaseClient = userDb,
+  dependencies: {
+    billingStatus?: typeof getBillingStatus;
+    activeProvider?: typeof getActiveProviderForUser;
+    fallbackProvider?: typeof getFallbackProvider;
+    trialDb?: SupabaseClient;
+  } = {},
 ): Promise<{ provider: LLMProvider; billingStatus: BillingStatus; source: 'byok' | 'trial_server_key' }> {
-  const byokProvider = await getActiveProviderForUser(userId, modelOverride);
-  const billingStatus = await getBillingStatus(userId, db);
-
-  if (byokProvider) {
-    return { provider: byokProvider, billingStatus, source: 'byok' };
-  }
-
-  if (billingStatus.canUseServerKey) {
-    return {
-      provider: getFallbackProvider(modelOverride),
-      billingStatus,
-      source: 'trial_server_key',
-    };
-  }
+  const loadBillingStatus = dependencies.billingStatus ?? getBillingStatus;
+  const loadActiveProvider = dependencies.activeProvider ?? getActiveProviderForUser;
+  const loadFallbackProvider = dependencies.fallbackProvider ?? getFallbackProvider;
+  const billingStatus = await loadBillingStatus(userId, db);
 
   if (billingStatus.requiresPurchase) {
     throw new EntitlementError(
@@ -208,6 +288,42 @@ export async function resolveProviderForUser(
       'Your 14-day trial has ended. Buy Perch for $5 to continue, then add your own provider key.',
       billingStatus,
     );
+  }
+
+  let byokProvider: LLMProvider | null;
+  try {
+    byokProvider = await loadActiveProvider(userId, modelOverride);
+  } catch (error) {
+    if (error instanceof ProviderLookupError) {
+      throw new EntitlementError(
+        'operational',
+        'Provider configuration is temporarily unavailable.',
+        billingStatus,
+      );
+    }
+    throw error;
+  }
+
+  if (byokProvider) {
+    return { provider: byokProvider, billingStatus, source: 'byok' };
+  }
+
+  if (billingStatus.canUseServerKey) {
+    let fallback: LLMProvider;
+    try {
+      fallback = loadFallbackProvider(modelOverride);
+    } catch {
+      throw new EntitlementError(
+        'operational',
+        'Server-funded trials are temporarily unavailable.',
+        billingStatus,
+      );
+    }
+    return {
+      provider: new MeteredTrialProvider(userId, fallback, dependencies.trialDb),
+      billingStatus,
+      source: 'trial_server_key',
+    };
   }
 
   throw new EntitlementError(

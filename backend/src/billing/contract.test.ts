@@ -16,7 +16,11 @@ function validPayload() {
       payment_id: 'pay_123',
       total_amount: 500,
       currency: 'usd',
-      metadata: { user_id: 'user-abc' },
+      metadata: {
+        user_id: 'user-abc',
+        checkout_record_id: 'b148a55f-d2bf-4f8c-8994-78a950969a5d',
+      },
+      checkout_session_id: 'cks_123',
       customer: { customer_id: 'cus_1' },
       product_cart: [{ product_id: 'prod_perch_lifetime', quantity: 1 }],
     },
@@ -31,6 +35,8 @@ test('accepts a payment matching the configured contract', () => {
     assert.equal(result.userId, 'user-abc');
     assert.equal(result.amount, 500);
     assert.equal(result.currency, 'USD');
+    assert.equal(result.checkoutRecordId, 'b148a55f-d2bf-4f8c-8994-78a950969a5d');
+    assert.equal(result.dodoSessionId, 'cks_123');
   }
 });
 
@@ -44,6 +50,16 @@ test('rejects missing metadata.user_id', () => {
   const p = validPayload();
   p.data.metadata = {};
   assert.equal(validatePaymentContract(p).ok, false);
+});
+
+test('rejects payment without exact internal checkout and Dodo session bindings', () => {
+  const missingRecord = validPayload();
+  delete missingRecord.data.metadata.checkout_record_id;
+  assert.equal(validatePaymentContract(missingRecord).ok, false);
+
+  const missingSession = validPayload();
+  delete (missingSession.data as { checkout_session_id?: string }).checkout_session_id;
+  assert.equal(validatePaymentContract(missingSession).ok, false);
 });
 
 test('rejects a missing product cart (fails closed)', () => {
@@ -77,4 +93,52 @@ test('rejects extra cart items', () => {
     { product_id: 'prod_extra', quantity: 1 },
   ];
   assert.equal(validatePaymentContract(p).ok, false);
+});
+
+test('accepts terminal full-refund and lost-dispute reversal contracts', async () => {
+  const { validatePaymentReversal } = await import('./contract.ts');
+  const refund = validatePaymentReversal({
+    type: 'refund.succeeded',
+    data: {
+      refund_id: 'ref_1',
+      payment_id: 'pay_123',
+      is_partial: false,
+      amount: 500,
+      currency: 'usd',
+      reason: 'requested',
+    },
+  });
+  assert.equal(refund.ok, true);
+  assert.equal(validatePaymentReversal({
+    type: 'refund.succeeded',
+    data: {
+      refund_id: 'ref_without_optional_amount',
+      payment_id: 'pay_123',
+      is_partial: false,
+    },
+  }).ok, true);
+
+  const dispute = validatePaymentReversal({
+    type: 'dispute.lost',
+    data: { dispute_id: 'dsp_1', payment_id: 'pay_123', currency: 'usd' },
+  });
+  assert.equal(dispute.ok, true);
+});
+
+test('fails closed for partial refunds and non-terminal disputes', async () => {
+  const { validatePaymentReversal } = await import('./contract.ts');
+  assert.equal(validatePaymentReversal({
+    type: 'refund.succeeded',
+    data: {
+      refund_id: 'ref_partial',
+      payment_id: 'pay_123',
+      is_partial: true,
+      amount: 100,
+      currency: 'USD',
+    },
+  }).ok, false);
+  assert.equal(validatePaymentReversal({
+    type: 'dispute.opened',
+    data: { dispute_id: 'dsp_open', payment_id: 'pay_123' },
+  }).ok, false);
 });

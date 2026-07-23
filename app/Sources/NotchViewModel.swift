@@ -329,7 +329,10 @@ class NotchViewModel: ObservableObject {
     @Published var billingStatus: BillingStatus?
     @Published var billingLoading = false
     @Published var billingError: String?
+    @Published var checkoutState: CheckoutState = .idle
+    @Published var requestedProviderType: String?
     private var checkoutPollTimer: Timer?
+    private var billingExpiryTimer: Timer?
     private var checkoutPollAttempts = 0
     private let checkoutPollMaxAttempts = 40 // ~2 min at 3s intervals
 
@@ -402,6 +405,7 @@ class NotchViewModel: ObservableObject {
 
     deinit {
         checkoutPollTimer?.invalidate()
+        billingExpiryTimer?.invalidate()
     }
 
     func startClock() {
@@ -464,6 +468,11 @@ class NotchViewModel: ObservableObject {
         appConnected = [:]
         providerConfigs = []
         billingStatus = nil
+        checkoutState = .idle
+        requestedProviderType = nil
+        stopCheckoutPolling()
+        billingExpiryTimer?.invalidate()
+        billingExpiryTimer = nil
         viewState = .overview
         dismissPeek()
         deviceConnection.logout()
@@ -1048,39 +1057,36 @@ class NotchViewModel: ObservableObject {
             }
 
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
 
             guard status == 200 else {
+                let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
                 let message = json["error"] as? String ?? "Billing status unavailable"
                 await MainActor.run {
                     self.billingLoading = false
                     self.billingError = message
-                    if status == 404 {
+                    if status == 404, json["code"] as? String == "profile_not_found" {
                         self.authManager?.logout()
                     }
                 }
                 return
             }
 
-            let parsed = BillingStatus(
-                billingStatus: json["billingStatus"] as? String ?? "trialing",
-                trialStartedAt: json["trialStartedAt"] as? String,
-                trialEndsAt: json["trialEndsAt"] as? String,
-                trialDaysRemaining: json["trialDaysRemaining"] as? Int ?? 0,
-                lifetimePurchasedAt: json["lifetimePurchasedAt"] as? String,
-                hasActiveProvider: json["hasActiveProvider"] as? Bool ?? false,
-                activeProvider: json["activeProvider"] as? String,
-                canUseServerKey: json["canUseServerKey"] as? Bool ?? false,
-                requiresPurchase: json["requiresPurchase"] as? Bool ?? false,
-                requiresProviderKey: json["requiresProviderKey"] as? Bool ?? false
-            )
+            guard let parsed = try? JSONDecoder().decode(BillingStatus.self, from: data) else {
+                await MainActor.run {
+                    self.billingLoading = false
+                    self.billingError = "The billing service returned an invalid response."
+                }
+                return
+            }
 
             await MainActor.run {
                 guard self.activeUserID == requestUserID else { return }
                 self.billingStatus = parsed
                 self.billingLoading = false
                 self.billingError = nil
-                if parsed.billingStatus == "paid" {
+                self.scheduleBillingRefresh(at: parsed.trialEndDate)
+                if parsed.isPaid {
+                    self.checkoutState = reduceCheckout(self.checkoutState, action: .purchased)
                     self.stopCheckoutPolling()
                 }
             }
@@ -1101,6 +1107,7 @@ class NotchViewModel: ObservableObject {
             self.checkoutPollAttempts += 1
             if self.checkoutPollAttempts >= self.checkoutPollMaxAttempts {
                 self.stopCheckoutPolling()
+                self.checkoutState = reduceCheckout(self.checkoutState, action: .timedOut)
                 return
             }
             self.loadBillingStatus()
@@ -1108,16 +1115,20 @@ class NotchViewModel: ObservableObject {
     }
 
     func startCheckout() {
-        guard let auth = authManager, auth.accessToken != nil else { return }
-        billingLoading = true
+        guard let auth = authManager, auth.accessToken != nil,
+              billingStatus?.canPurchase != false,
+              !checkoutState.isBusy else { return }
+        checkoutState = reduceCheckout(checkoutState, action: .start)
         billingError = nil
 
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else {
                 await MainActor.run {
-                    self.billingLoading = false
-                    self.billingError = "Session expired — please sign in again."
+                    self.checkoutState = reduceCheckout(
+                        self.checkoutState,
+                        action: .failed("Your session could not be refreshed. Try again.")
+                    )
                 }
                 return
             }
@@ -1129,24 +1140,68 @@ class NotchViewModel: ObservableObject {
 
             guard let (data, response) = try? await URLSession.shared.data(for: request) else {
                 await MainActor.run {
-                    self.billingLoading = false
-                    self.billingError = "Cannot start checkout"
+                    self.checkoutState = reduceCheckout(
+                        self.checkoutState,
+                        action: .failed("Cannot reach checkout. Try again.")
+                    )
                 }
                 return
             }
 
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
 
             await MainActor.run {
-                self.billingLoading = false
-                if status == 200, let urlString = json["checkout_url"] as? String, let url = URL(string: urlString) {
-                    NSWorkspace.shared.open(url)
-                    self.startCheckoutPolling()
-                } else {
-                    self.billingError = json["error"] as? String ?? "Checkout is not ready yet"
+                guard status == 200 else {
+                    let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+                    let message = json["error"] as? String ?? "Checkout is not ready yet."
+                    self.checkoutState = reduceCheckout(self.checkoutState, action: .failed(message))
+                    return
                 }
+                guard let checkout = try? JSONDecoder().decode(CheckoutResponse.self, from: data) else {
+                    self.checkoutState = reduceCheckout(
+                        self.checkoutState,
+                        action: .failed("Checkout returned an invalid response.")
+                    )
+                    return
+                }
+                guard NSWorkspace.shared.open(checkout.checkoutURL) else {
+                    self.checkoutState = reduceCheckout(
+                        self.checkoutState,
+                        action: .failed("Could not open your browser. Check your default browser and try again.")
+                    )
+                    return
+                }
+                self.checkoutState = reduceCheckout(self.checkoutState, action: .opened)
+                self.startCheckoutPolling()
             }
+        }
+    }
+
+    func handleBillingCompletionURL() {
+        guard authManager?.isAuthenticated == true else { return }
+        if checkoutState != .success {
+            checkoutState = .pending
+        }
+        loadBillingStatus()
+    }
+
+    func requestProviderSetup() {
+        requestedProviderType = activeProviderType
+    }
+
+    private func scheduleBillingRefresh(at trialEnd: Date) {
+        billingExpiryTimer?.invalidate()
+        guard billingStatus?.billingStatus == .trialing else {
+            billingExpiryTimer = nil
+            return
+        }
+        let delay = trialEnd.timeIntervalSinceNow
+        guard delay > 0 else {
+            billingExpiryTimer = nil
+            return
+        }
+        billingExpiryTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            self?.loadBillingStatus()
         }
     }
 
@@ -2282,6 +2337,11 @@ class NotchViewModel: ObservableObject {
                     }
                     self.persistTask(at: idx)
                     if status == 401 { self.authManager?.logout() }
+                    if status == 402 {
+                        self.loadBillingStatus()
+                        self.requestedProviderType = self.activeProviderType
+                        self.viewState = .settings
+                    }
                     return
                 }
                 // Capture thread_id from response for follow-ups

@@ -74,6 +74,8 @@ export interface ReadinessCheckDeps {
   gatewayReady: () => boolean;
   /** True when at least one critical LLM provider key is configured */
   providerConfigured: () => boolean;
+  /** True when live checkout and verified webhook handling are configured */
+  billingConfigured: () => boolean;
   /** Expected number of applied migrations (length of sql/ directory) */
   expectedMigrationCount: number;
 }
@@ -118,6 +120,15 @@ export function buildProductionChecks(deps: ReadinessCheckDeps): ReadinessCheck[
         return configured
           ? { ok: true }
           : { ok: false, detail: 'no critical LLM provider configured' };
+      },
+    },
+    {
+      name: 'billing',
+      check: async () => {
+        const configured = deps.billingConfigured();
+        return configured
+          ? { ok: true }
+          : { ok: false, detail: 'Dodo live checkout/webhook configuration is incomplete' };
       },
     },
   ];

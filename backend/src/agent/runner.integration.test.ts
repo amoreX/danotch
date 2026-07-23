@@ -215,7 +215,7 @@ test('local action decisions are immutable and execution grants are one-use', {
     assert.equal(decision.rows[0].grant.grant_id, GRANT);
     const duplicateDecision = await client.query(
       `select public.danotch_fenced_claim_approval_and_mint_grant(
-        $1, gen_random_uuid(), $3, $4, $5, $6, $7, 'y'::text || repeat('y', 42),
+        $1, $2, $3, $4, $5, $6, $7, 'y'::text || repeat('y', 42),
         0, now() + interval '1 minute'
       ) as grant`,
       [
@@ -256,6 +256,13 @@ test('local action decisions are immutable and execution grants are one-use', {
         actionHash, HASH, bound.rows[0].normalized_parameters,
         bound.rows[0].capabilities, IMAGE_DIGEST,
       ],
+    );
+    await expectDenied(
+      client,
+      `select public.danotch_transition_run(
+        $1, $2, gen_random_uuid(), 3, 'completed', 'run_completed', '{}'::jsonb, null
+      )`,
+      [RUN_ACTION, OWNER_A],
     );
     const result = await client.query(
       `select public.danotch_record_action_result(

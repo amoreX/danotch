@@ -19,6 +19,7 @@
 		280B1575A79B03D7D3CC1E58 /* DeviceIdentityStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6783E9058D4E8E23EDA78A03 /* DeviceIdentityStoreTests.swift */; };
 		39AE20D72BCD96C9D304F35C /* ContainerRuntimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14ECCFBC55DEC24A48A615F9 /* ContainerRuntimeTests.swift */; };
 		40A97DF3462396246B11BF89 /* AccountDataStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C37F96EE3FA8AF8F7F59974 /* AccountDataStore.swift */; };
+		4214C1F6C87C67F9521BC0A3 /* OnboardingAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 266A70DC0EA1D5A477ED17CB /* OnboardingAuthTests.swift */; };
 		4229A22674D7E54A5F554951 /* WidgetGridLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C35B01F3F77AEE8A323D9C /* WidgetGridLayoutTests.swift */; };
 		503459F6A4C76206C6B64ED5 /* DeviceIdentityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15ED0FA8F02C21AB2D639682 /* DeviceIdentityStore.swift */; };
 		5992CB9813874354EA326F4E /* NotchContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC45EA89D779025968C1235C /* NotchContentView.swift */; };
@@ -28,6 +29,7 @@
 		695666704F8AE718CE432090 /* ExecutorArtifacts.json in Resources */ = {isa = PBXBuildFile; fileRef = EE0B9F6EF185962F5CAA6B95 /* ExecutorArtifacts.json */; };
 		6FA4BD62A47461BE7BD5979B /* ExecutorIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1E516BC8454168BB2E8CB86 /* ExecutorIPC.swift */; };
 		7366286B56152360C882D422 /* DanotchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D5F20E37E12A8548D0B7D98 /* DanotchApp.swift */; };
+		73C90F8C09ACE3313CDB0E0E /* BillingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE4595C11E81F78280CB65DC /* BillingTests.swift */; };
 		771A08BBC44DE7958AED668A /* SecureSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48AEF3171CD944CBFACDA4EE /* SecureSessionStore.swift */; };
 		77C7A14117319CE042F87F4F /* LocalConsentCardReducerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D67146F158E3395AB4D9401 /* LocalConsentCardReducerTests.swift */; };
 		787CDB29843DB16DEB3874C2 /* PerchExecutorMain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40E22FEEC4F60A4410C27147 /* PerchExecutorMain.swift */; };
@@ -42,6 +44,7 @@
 		8BD78C5B7847AB2A1B10C90C /* ContainerizationArchive in Frameworks */ = {isa = PBXBuildFile; productRef = CB3F58CE30F386A5B1E24EC6 /* ContainerizationArchive */; };
 		95036D7A49EEB51EF0A1C8B7 /* QuickPromptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ED5E9E8F1430038EA87E969 /* QuickPromptView.swift */; };
 		A0451EAB404ECD4E17C1D5E4 /* ExecutionConsent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9826B3FDC99CC70B12884186 /* ExecutionConsent.swift */; };
+		A05090E84B7CD15E07DBDE0B /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = E3BB5F1DB6BAED23E792A030 /* Sparkle */; };
 		A49E311936B4DA5FCF94FFC2 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 77C72AD1B16631301B90801C /* AppIcon.icns */; };
 		AEABBB87A84549C7A8484BA7 /* ExecutionConsentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41FB747AE3B5930FBDDF39B4 /* ExecutionConsentTests.swift */; };
 		B2233E63D8BC743A45C917B4 /* ExecutorProcessBackend.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A980F7457ECDD32889F7D18 /* ExecutorProcessBackend.swift */; };
@@ -53,11 +56,14 @@
 		CD8CE4D7FAF5D128940B2E93 /* ExecutorIPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1E516BC8454168BB2E8CB86 /* ExecutorIPC.swift */; };
 		D0B1684BE2DF5BEE45870406 /* AccountDataStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73232B2D0524B3BD0BCA4CCB /* AccountDataStoreTests.swift */; };
 		D118AF26FA1E3D7DF6505CC4 /* ExecutionResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF47ACFA1D42B8668C14E47D /* ExecutionResult.swift */; };
+		D2C69F522389C49576F21455 /* UpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACBFF5F326FF08DC130F1D90 /* UpdateController.swift */; };
 		D8924CBF31F6B2D175A67DCD /* ExecutionResult.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF47ACFA1D42B8668C14E47D /* ExecutionResult.swift */; };
 		D9058BF0F095A5813980C3D4 /* WorkspaceSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70706D3088F1B4F1550349EF /* WorkspaceSnapshot.swift */; };
 		DFA1E0CCA5B7021B0866F656 /* LocalConversationStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C2872E075CA335C1E27F246 /* LocalConversationStore.swift */; };
 		E99AB4F40359E41FBFD95CFF /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F121A693299E0E7DD0531DD0 /* Models.swift */; };
+		EA3119C90548AA4DCDDA563A /* Billing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01268BC2AA24306413C3D043 /* Billing.swift */; };
 		ED4131EE697E1DBCC8ACBF1F /* ActionRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08A73FE6AE24A6F2DA8ABEE0 /* ActionRegistry.swift */; };
+		EEC6834E5C92820BB160198A /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = 246AADB5E59EDC581E467542 /* Info.plist */; };
 		F28FB4C546827CA0FA725637 /* AppleContainerRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 213ABFE224215B7125B9886C /* AppleContainerRuntime.swift */; };
 		F2D2B99B65AB1FE53D1F50B3 /* LocalActionRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF9C9EAE88780456E8C8B364 /* LocalActionRegistryTests.swift */; };
 		FEF006088F1D01FA8E6732F8 /* ContainerRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FC232381489660897638E0A /* ContainerRuntime.swift */; };
@@ -81,12 +87,15 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		01268BC2AA24306413C3D043 /* Billing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Billing.swift; sourceTree = "<group>"; };
 		08A73FE6AE24A6F2DA8ABEE0 /* ActionRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionRegistry.swift; sourceTree = "<group>"; };
 		0D5F20E37E12A8548D0B7D98 /* DanotchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DanotchApp.swift; sourceTree = "<group>"; };
 		122F55C0A067BE4D40A4CAA0 /* EventRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventRoutingTests.swift; sourceTree = "<group>"; };
 		14ECCFBC55DEC24A48A615F9 /* ContainerRuntimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerRuntimeTests.swift; sourceTree = "<group>"; };
 		15ED0FA8F02C21AB2D639682 /* DeviceIdentityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentityStore.swift; sourceTree = "<group>"; };
 		213ABFE224215B7125B9886C /* AppleContainerRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleContainerRuntime.swift; sourceTree = "<group>"; };
+		246AADB5E59EDC581E467542 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		266A70DC0EA1D5A477ED17CB /* OnboardingAuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingAuthTests.swift; sourceTree = "<group>"; };
 		30C9182F0602B11A7E616D46 /* DeviceConnectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceConnectionTests.swift; sourceTree = "<group>"; };
 		32C35B01F3F77AEE8A323D9C /* WidgetGridLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetGridLayoutTests.swift; sourceTree = "<group>"; };
 		3673D29BC29340ACA6A5FEEC /* StatsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsPanel.swift; sourceTree = "<group>"; };
@@ -113,11 +122,13 @@
 		9826B3FDC99CC70B12884186 /* ExecutionConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionConsent.swift; sourceTree = "<group>"; };
 		9A980F7457ECDD32889F7D18 /* ExecutorProcessBackend.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutorProcessBackend.swift; sourceTree = "<group>"; };
 		9FC232381489660897638E0A /* ContainerRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerRuntime.swift; sourceTree = "<group>"; };
+		ACBFF5F326FF08DC130F1D90 /* UpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateController.swift; sourceTree = "<group>"; };
 		B255F66F8DF0D15C8957F171 /* WidgetGridLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetGridLayout.swift; sourceTree = "<group>"; };
 		B70770D781EBB1DCF7ABB4A0 /* WorkspaceAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceAccessTests.swift; sourceTree = "<group>"; };
 		B75D37099FAE68A947F821C5 /* WorkspaceAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceAccess.swift; sourceTree = "<group>"; };
 		B85A45E74A903332227D8CF6 /* AgentChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentChatView.swift; sourceTree = "<group>"; };
 		B9C11CB6F201B9372EA0827B /* PerchTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PerchTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BE4595C11E81F78280CB65DC /* BillingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BillingTests.swift; sourceTree = "<group>"; };
 		BF47ACFA1D42B8668C14E47D /* ExecutionResult.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutionResult.swift; sourceTree = "<group>"; };
 		BF9C9EAE88780456E8C8B364 /* LocalActionRegistryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalActionRegistryTests.swift; sourceTree = "<group>"; };
 		C1E516BC8454168BB2E8CB86 /* ExecutorIPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExecutorIPC.swift; sourceTree = "<group>"; };
@@ -138,6 +149,14 @@
 			files = (
 				5D4A8F62CB3B3DF6C86177C0 /* Containerization in Frameworks */,
 				8BD78C5B7847AB2A1B10C90C /* ContainerizationArchive in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		599C95ED543616392CB25279 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A05090E84B7CD15E07DBDE0B /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -178,6 +197,7 @@
 				8C37F96EE3FA8AF8F7F59974 /* AccountDataStore.swift */,
 				CD36A0530BCF7787FECDFB57 /* AgentMonitor.swift */,
 				7D08DFA84A7EF0E2E130C9DC /* AuthManager.swift */,
+				01268BC2AA24306413C3D043 /* Billing.swift */,
 				0D5F20E37E12A8548D0B7D98 /* DanotchApp.swift */,
 				F240DE87B67BFD139854D139 /* DeviceConnection.swift */,
 				15ED0FA8F02C21AB2D639682 /* DeviceIdentityStore.swift */,
@@ -188,6 +208,7 @@
 				E5BEA6CFAF492E12C2AF3FC1 /* NotchWindow.swift */,
 				48AEF3171CD944CBFACDA4EE /* SecureSessionStore.swift */,
 				5A53D411B5F98EFC03D036A2 /* Theme.swift */,
+				ACBFF5F326FF08DC130F1D90 /* UpdateController.swift */,
 				B255F66F8DF0D15C8957F171 /* WidgetGridLayout.swift */,
 				14E19106BF698A38A911EF68 /* Executor */,
 				147D4C40D8E79427AA9F17F4 /* Views */,
@@ -200,6 +221,7 @@
 			children = (
 				77C72AD1B16631301B90801C /* AppIcon.icns */,
 				EE0B9F6EF185962F5CAA6B95 /* ExecutorArtifacts.json */,
+				246AADB5E59EDC581E467542 /* Info.plist */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -229,6 +251,7 @@
 			isa = PBXGroup;
 			children = (
 				73232B2D0524B3BD0BCA4CCB /* AccountDataStoreTests.swift */,
+				BE4595C11E81F78280CB65DC /* BillingTests.swift */,
 				14ECCFBC55DEC24A48A615F9 /* ContainerRuntimeTests.swift */,
 				30C9182F0602B11A7E616D46 /* DeviceConnectionTests.swift */,
 				6783E9058D4E8E23EDA78A03 /* DeviceIdentityStoreTests.swift */,
@@ -237,6 +260,7 @@
 				4EFF078773EFED5FF63D6F21 /* ExecutorIPCTests.swift */,
 				BF9C9EAE88780456E8C8B364 /* LocalActionRegistryTests.swift */,
 				6D67146F158E3395AB4D9401 /* LocalConsentCardReducerTests.swift */,
+				266A70DC0EA1D5A477ED17CB /* OnboardingAuthTests.swift */,
 				3AD6D943C90B1E993DA4C762 /* SecureSessionStoreTests.swift */,
 				32C35B01F3F77AEE8A323D9C /* WidgetGridLayoutTests.swift */,
 				B70770D781EBB1DCF7ABB4A0 /* WorkspaceAccessTests.swift */,
@@ -266,6 +290,7 @@
 				D1A1C77C580B3DEA6A464FB2 /* Sources */,
 				67BFB14C0DAE62C764806509 /* Embed verified executor helper */,
 				2C8B29F9A60922A813480135 /* Resources */,
+				599C95ED543616392CB25279 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -274,6 +299,7 @@
 			);
 			name = Perch;
 			packageProductDependencies = (
+				E3BB5F1DB6BAED23E792A030 /* Sparkle */,
 			);
 			productName = Perch;
 			productReference = D41D4D3B908363F711572982 /* Perch.app */;
@@ -349,6 +375,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				2DAAD996092750194CDDFA37 /* XCRemoteSwiftPackageReference "containerization" */,
+				8C879B7CA78D6CA0967E2DD0 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 5604ACE44E439FA92A920531 /* Products */;
@@ -369,6 +396,7 @@
 			files = (
 				A49E311936B4DA5FCF94FFC2 /* AppIcon.icns in Resources */,
 				695666704F8AE718CE432090 /* ExecutorArtifacts.json in Resources */,
+				EEC6834E5C92820BB160198A /* Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -423,6 +451,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D0B1684BE2DF5BEE45870406 /* AccountDataStoreTests.swift in Sources */,
+				73C90F8C09ACE3313CDB0E0E /* BillingTests.swift in Sources */,
 				39AE20D72BCD96C9D304F35C /* ContainerRuntimeTests.swift in Sources */,
 				02003229CB8E9BC14F232CA9 /* DeviceConnectionTests.swift in Sources */,
 				280B1575A79B03D7D3CC1E58 /* DeviceIdentityStoreTests.swift in Sources */,
@@ -431,6 +460,7 @@
 				69064A53E5B481A52E81B871 /* ExecutorIPCTests.swift in Sources */,
 				F2D2B99B65AB1FE53D1F50B3 /* LocalActionRegistryTests.swift in Sources */,
 				77C7A14117319CE042F87F4F /* LocalConsentCardReducerTests.swift in Sources */,
+				4214C1F6C87C67F9521BC0A3 /* OnboardingAuthTests.swift in Sources */,
 				8266E53D85A10FD661F39A8E /* SecureSessionStoreTests.swift in Sources */,
 				4229A22674D7E54A5F554951 /* WidgetGridLayoutTests.swift in Sources */,
 				C69C4082956F5ABFFFAFDB10 /* WorkspaceAccessTests.swift in Sources */,
@@ -463,6 +493,7 @@
 				796FF93C5E96BE28E4856175 /* AgentChatView.swift in Sources */,
 				041D6492A54FFBF8177212B5 /* AgentMonitor.swift in Sources */,
 				BAAF33091609D96F0B2B57F7 /* AuthManager.swift in Sources */,
+				EA3119C90548AA4DCDDA563A /* Billing.swift in Sources */,
 				7F3C4F1C45BAAC53795E4944 /* ChatModelSelectorView.swift in Sources */,
 				68D2DA318BAD2E4B136FB2F4 /* ContainerRuntime.swift in Sources */,
 				7366286B56152360C882D422 /* DanotchApp.swift in Sources */,
@@ -483,6 +514,7 @@
 				771A08BBC44DE7958AED668A /* SecureSessionStore.swift in Sources */,
 				10652F2018BE96A44BCDA245 /* StatsPanel.swift in Sources */,
 				18858C8BF86CEFD40768FE42 /* Theme.swift in Sources */,
+				D2C69F522389C49576F21455 /* UpdateController.swift in Sources */,
 				10721005DEB1B3ED613879F6 /* WidgetGridLayout.swift in Sources */,
 				BD715D317EA82B160EB091F9 /* WorkspaceAccess.swift in Sources */,
 				810342C22CAD6B6A40A4DCA3 /* WorkspaceSnapshot.swift in Sources */,
@@ -569,17 +601,18 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = "$(PERCH_BUILD_NUMBER)";
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Perch accesses Apple Music only to display and control the track you are playing.";
-				INFOPLIST_KEY_NSHighResolutionCapable = YES;
-				INFOPLIST_KEY_PerchAPIBaseURL = "$(PERCH_API_BASE_URL)";
-				INFOPLIST_KEY_PerchDeviceGatewayURL = "$(PERCH_DEVICE_GATEWAY_URL)";
+				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MARKETING_VERSION = "$(PERCH_MARKETING_VERSION)";
+				PERCH_BUILD_NUMBER = 1;
+				PERCH_MARKETING_VERSION = 0.0.0;
+				PERCH_SPARKLE_FEED_URL = "";
+				PERCH_SPARKLE_PUBLIC_KEY = "";
 				PRODUCT_BUNDLE_IDENTIFIER = engineering.super.Perch;
 				PRODUCT_NAME = Perch;
 				SDKROOT = macosx;
@@ -739,17 +772,18 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = "$(PERCH_BUILD_NUMBER)";
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Perch accesses Apple Music only to display and control the track you are playing.";
-				INFOPLIST_KEY_NSHighResolutionCapable = YES;
-				INFOPLIST_KEY_PerchAPIBaseURL = "$(PERCH_API_BASE_URL)";
-				INFOPLIST_KEY_PerchDeviceGatewayURL = "$(PERCH_DEVICE_GATEWAY_URL)";
+				INFOPLIST_FILE = Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MARKETING_VERSION = "$(PERCH_MARKETING_VERSION)";
+				PERCH_BUILD_NUMBER = 1;
+				PERCH_MARKETING_VERSION = 0.0.0;
+				PERCH_SPARKLE_FEED_URL = "";
+				PERCH_SPARKLE_PUBLIC_KEY = "";
 				PRODUCT_BUNDLE_IDENTIFIER = engineering.super.Perch;
 				PRODUCT_NAME = Perch;
 				SDKROOT = macosx;
@@ -806,6 +840,14 @@
 				version = 0.33.3;
 			};
 		};
+		8C879B7CA78D6CA0967E2DD0 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle.git";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.4;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -818,6 +860,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 2DAAD996092750194CDDFA37 /* XCRemoteSwiftPackageReference "containerization" */;
 			productName = ContainerizationArchive;
+		};
+		E3BB5F1DB6BAED23E792A030 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8C879B7CA78D6CA0967E2DD0 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
