@@ -64,8 +64,11 @@ export function createBillingRoutes(
         res.status(404).json({ error: err.message, code: 'profile_not_found' });
         return;
       }
-      const message = err instanceof Error ? err.message : 'Failed to load billing status';
-      res.status(503).json({ error: message, code: 'billing_unavailable' });
+      console.error('[billing] status lookup failed:', err instanceof Error ? err.message : err);
+      res.status(503).json({
+        error: 'Billing status is temporarily unavailable.',
+        code: 'billing_unavailable',
+      });
     }
   });
 

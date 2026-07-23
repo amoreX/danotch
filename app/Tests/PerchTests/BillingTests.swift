@@ -15,7 +15,19 @@ final class BillingTests: XCTestCase {
       "activeProvider": null,
       "canUseServerKey": true,
       "requiresPurchase": false,
-      "requiresProviderKey": false
+      "requiresProviderKey": false,
+      "trialUsage": {
+        "usageDay": "2026-01-02",
+        "dailyRequests": 3,
+        "dailyTokens": 1200,
+        "dailySpendMicroUsd": 1250000,
+        "dailySpendLimitMicroUsd": 5000000,
+        "dailyLimitReached": false,
+        "resetsAt": "2026-01-03T00:00:00.000Z",
+        "totalRequests": 8,
+        "totalTokens": 4200,
+        "totalSpendMicroUsd": 2000000
+      }
     }
     """
 
@@ -24,6 +36,14 @@ final class BillingTests: XCTestCase {
         XCTAssertEqual(decoded.billingStatus, .trialing)
         XCTAssertTrue(decoded.canPurchase)
         XCTAssertTrue(decoded.isTrialing)
+        XCTAssertEqual(decoded.trialUsage.dailySpendDollars, 1.25)
+        XCTAssertEqual(decoded.trialUsage.dailyLimitDollars, 5)
+        XCTAssertEqual(decoded.trialUsage.dailyUsageFraction, 0.25)
+        XCTAssertEqual(decoded.trialUsage.totalSpendDollars, 2)
+        XCTAssertEqual(decoded.trialUsage.dailyRequests, 3)
+        XCTAssertEqual(decoded.trialUsage.totalRequests, 8)
+        XCTAssertFalse(decoded.trialUsage.dailyLimitReached)
+        XCTAssertNotNil(decoded.trialUsage.resetDate)
 
         let missingField = validStatus.replacingOccurrences(
             of: "      \"requiresPurchase\": false,\n",
@@ -36,6 +56,14 @@ final class BillingTests: XCTestCase {
         let unknownState = validStatus.replacingOccurrences(of: #""trialing""#, with: #""unknown""#)
         XCTAssertThrowsError(
             try JSONDecoder().decode(BillingStatus.self, from: Data(unknownState.utf8))
+        )
+
+        let invalidUsage = validStatus.replacingOccurrences(
+            of: #""dailySpendMicroUsd": 1250000"#,
+            with: #""dailySpendMicroUsd": -1"#
+        )
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(BillingStatus.self, from: Data(invalidUsage.utf8))
         )
     }
 

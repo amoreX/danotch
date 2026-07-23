@@ -1092,7 +1092,7 @@ struct SettingsPanel: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("14-day server-funded trial · $5 lifetime app unlock · your own provider API key is mandatory after the trial.")
+            Text("14-day server-funded trial · up to $5 of shared chat + scheduled usage daily · $5 lifetime app unlock · your own provider API key is mandatory after the trial.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1178,6 +1178,9 @@ struct SettingsPanel: View {
             return viewModel.billingLoading ? "Loading trial status" : "Trial status"
         }
         if status.isPaid { return "Lifetime unlocked" }
+        if status.canUseServerKey && status.trialUsage.dailyLimitReached {
+            return "Daily limit reached"
+        }
         if status.isTrialing { return "\(status.trialDaysRemaining) day trial left" }
         return "Trial ended"
     }
@@ -1186,11 +1189,16 @@ struct SettingsPanel: View {
         guard let status = viewModel.billingStatus else {
             return "Perch checks trial and purchase status on the backend."
         }
+        if status.canUseServerKey && status.trialUsage.dailyLimitReached {
+            let reset = status.trialUsage.resetDate?.formatted(date: .omitted, time: .shortened)
+                ?? "tomorrow"
+            return "Chat and scheduled tasks resume automatically at \(reset). You can still pause or resume schedules."
+        }
         if status.hasActiveProvider {
             return "Using your \(status.activeProvider ?? "provider") key for chat and scheduled tasks."
         }
         if status.canUseServerKey {
-            return "Using the server Anthropic key during your 14-day trial."
+            return "Using the server Anthropic key with a shared $5 daily chat and scheduled-task allowance."
         }
         if status.requiresPurchase {
             return "Buy once to unlock the app, then add your own provider key to continue."

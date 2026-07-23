@@ -7,6 +7,74 @@ enum BillingAccountState: String, Codable, Equatable {
     case revoked
 }
 
+struct TrialUsageSummary: Decodable, Equatable {
+    let usageDay: String
+    let dailyRequests: Int
+    let dailyTokens: Int
+    let dailySpendMicroUsd: Int
+    let dailySpendLimitMicroUsd: Int
+    let dailyLimitReached: Bool
+    let resetsAt: String
+    let totalRequests: Int
+    let totalTokens: Int
+    let totalSpendMicroUsd: Int
+
+    var dailySpendDollars: Double { Double(dailySpendMicroUsd) / 1_000_000 }
+    var dailyLimitDollars: Double { Double(dailySpendLimitMicroUsd) / 1_000_000 }
+    var totalSpendDollars: Double { Double(totalSpendMicroUsd) / 1_000_000 }
+    var resetDate: Date? { Self.parseServerDate(resetsAt) }
+    var dailyUsageFraction: Double {
+        guard dailySpendLimitMicroUsd > 0 else { return 0 }
+        return min(1, max(0, Double(dailySpendMicroUsd) / Double(dailySpendLimitMicroUsd)))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case usageDay
+        case dailyRequests
+        case dailyTokens
+        case dailySpendMicroUsd
+        case dailySpendLimitMicroUsd
+        case dailyLimitReached
+        case resetsAt
+        case totalRequests
+        case totalTokens
+        case totalSpendMicroUsd
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        usageDay = try values.decode(String.self, forKey: .usageDay)
+        dailyRequests = try values.decode(Int.self, forKey: .dailyRequests)
+        dailyTokens = try values.decode(Int.self, forKey: .dailyTokens)
+        dailySpendMicroUsd = try values.decode(Int.self, forKey: .dailySpendMicroUsd)
+        dailySpendLimitMicroUsd = try values.decode(Int.self, forKey: .dailySpendLimitMicroUsd)
+        dailyLimitReached = try values.decode(Bool.self, forKey: .dailyLimitReached)
+        resetsAt = try values.decode(String.self, forKey: .resetsAt)
+        totalRequests = try values.decode(Int.self, forKey: .totalRequests)
+        totalTokens = try values.decode(Int.self, forKey: .totalTokens)
+        totalSpendMicroUsd = try values.decode(Int.self, forKey: .totalSpendMicroUsd)
+        guard usageDay.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil,
+              dailyRequests >= 0,
+              dailyTokens >= 0,
+              dailySpendMicroUsd >= 0,
+              dailySpendLimitMicroUsd > 0,
+              Self.parseServerDate(resetsAt) != nil,
+              totalRequests >= dailyRequests,
+              totalTokens >= dailyTokens,
+              totalSpendMicroUsd >= dailySpendMicroUsd else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: values.codingPath, debugDescription: "Invalid trial usage values")
+            )
+        }
+    }
+
+    private static func parseServerDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
 struct BillingStatus: Decodable, Equatable {
     let userId: String
     let billingStatus: BillingAccountState
@@ -19,6 +87,7 @@ struct BillingStatus: Decodable, Equatable {
     let canUseServerKey: Bool
     let requiresPurchase: Bool
     let requiresProviderKey: Bool
+    let trialUsage: TrialUsageSummary
 
     var isPaid: Bool { billingStatus == .paid }
     var isTrialing: Bool { billingStatus == .trialing && trialEndDate > Date() }
@@ -42,6 +111,7 @@ struct BillingStatus: Decodable, Equatable {
         case canUseServerKey
         case requiresPurchase
         case requiresProviderKey
+        case trialUsage
     }
 
     init(from decoder: Decoder) throws {
@@ -57,6 +127,7 @@ struct BillingStatus: Decodable, Equatable {
         canUseServerKey = try values.decode(Bool.self, forKey: .canUseServerKey)
         requiresPurchase = try values.decode(Bool.self, forKey: .requiresPurchase)
         requiresProviderKey = try values.decode(Bool.self, forKey: .requiresProviderKey)
+        trialUsage = try values.decode(TrialUsageSummary.self, forKey: .trialUsage)
 
         guard !userId.isEmpty,
               trialDaysRemaining >= 0,

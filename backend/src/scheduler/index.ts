@@ -3,6 +3,7 @@ import { getAdminDb } from '../lib/admin-db.js';
 import { computeNextRun } from './compute-next.js';
 import type { NotchBridge } from '../events/notch.js';
 import { resolveProviderForUser } from '../billing/entitlements.js';
+import { TrialLimitError } from '../billing/trial-provider.js';
 import { config } from '../config.js';
 import { SupabaseQuotaStore, requestQuotaSubject } from '../security/quota-store.js';
 
@@ -104,6 +105,8 @@ async function executeTask(
   let status = 'completed';
   let errorMsg: string | undefined;
   let shouldNotify = false;
+  let finishOutcome: 'completed' | 'retry' | 'trial_limit' = 'completed';
+  let scheduledNextRun = nextRun;
 
   // Resolve the user's LLM provider (BYOK or server fallback)
   let providerName = 'unknown';
@@ -154,10 +157,25 @@ async function executeTask(
       }
     }
   } catch (err) {
-    status = 'failed';
-    errorMsg = err instanceof Error ? err.message : 'Unknown error';
-    resultText = errorMsg;
-    console.error(`[scheduler] Task "${taskName}" failed (${providerName}):`, errorMsg);
+    if (err instanceof TrialLimitError && err.isDailyLimit) {
+      status = 'trial_limit';
+      finishOutcome = 'trial_limit';
+      resultText = err.message;
+      const parsedReset = err.resetAt ? new Date(err.resetAt) : null;
+      const resetAt = parsedReset && Number.isFinite(parsedReset.getTime())
+        ? parsedReset
+        : new Date(Date.now() + err.retryAfterSeconds * 1000);
+      scheduledNextRun = new Date(Math.max(nextRun.getTime(), resetAt.getTime()));
+      console.log(
+        `[scheduler] Task "${taskName}" deferred until ${scheduledNextRun.toISOString()} (daily trial limit)`,
+      );
+    } else {
+      status = 'failed';
+      finishOutcome = 'retry';
+      errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      resultText = errorMsg;
+      console.error(`[scheduler] Task "${taskName}" failed (${providerName}):`, errorMsg);
+    }
   }
 
   const lastResult = {
@@ -171,12 +189,25 @@ async function executeTask(
     taskId,
     workerId,
     leaseToken,
-    status === 'completed' ? 'completed' : 'retry',
-    nextRun,
+    finishOutcome,
+    scheduledNextRun,
     lastResult,
   );
   stopLeaseHeartbeat();
   if (finish !== 'updated') return;
+
+  if (status === 'trial_limit') {
+    notch.send({
+      type: 'scheduled_task_update' as any,
+      data: {
+        task_id: taskId,
+        status,
+        summary: resultText,
+        next_run_at: scheduledNextRun.toISOString(),
+      },
+    } as any);
+    return;
+  }
 
   if (!notifyUser) {
     console.log(`[scheduler] Task "${taskName}" ${status} via ${providerName} (silent)`);
@@ -245,7 +276,7 @@ async function finishSchedule(
   taskId: string,
   workerId: string,
   leaseToken: string,
-  outcome: 'completed' | 'queued_local' | 'retry',
+  outcome: 'completed' | 'queued_local' | 'retry' | 'trial_limit',
   nextRun: Date,
   result: Record<string, unknown>,
 ): Promise<string> {

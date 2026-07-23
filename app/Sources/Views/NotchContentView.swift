@@ -347,7 +347,10 @@ private struct TodayPage: View {
         HStack(spacing: 10) {
             ChatModelSelectorView(viewModel: viewModel, maxWidth: 122)
 
-            TextField("Ask Perch anything…", text: $composerText)
+            TextField(
+                viewModel.trialDailyLimitReached ? "Daily limit reached — resumes automatically" : "Ask Perch anything…",
+                text: $composerText
+            )
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
@@ -357,6 +360,7 @@ private struct TodayPage: View {
                 .onTapGesture { composerFocused = true }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
+                .disabled(viewModel.trialDailyLimitReached)
             sendButton
         }
         .padding(.horizontal, 14)
@@ -368,11 +372,14 @@ private struct TodayPage: View {
         // though the TextField above already claims its own tap — otherwise
         // only the placeholder/text glyphs were focusable, not the rest of
         // the field's padded width or the empty capsule area around it.
-        .simultaneousGesture(TapGesture().onEnded { composerFocused = true })
+        .simultaneousGesture(TapGesture().onEnded {
+            if !viewModel.trialDailyLimitReached { composerFocused = true }
+        })
     }
 
     private var sendButton: some View {
-        let enabled = !composerText.trimmingCharacters(in: .whitespaces).isEmpty
+        let enabled = !viewModel.trialDailyLimitReached
+            && !composerText.trimmingCharacters(in: .whitespaces).isEmpty
         return Image(systemName: "arrow.up")
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
@@ -385,7 +392,7 @@ private struct TodayPage: View {
 
     private func submit() {
         let trimmed = composerText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
+        guard !viewModel.trialDailyLimitReached, !trimmed.isEmpty else { return }
         composerText = ""
         composerFocused = false
         viewModel.sendChat(message: trimmed)
@@ -608,6 +615,11 @@ private struct ScheduledTasksTodayCard: View {
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
                             Spacer()
+                            if task.lastStatus == "trial_limit" {
+                                Text("LIMIT · AUTO-RESUME")
+                                    .font(.system(size: 7, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(DN.accent)
+                            }
                             Text(task.scheduleHuman)
                                 .font(.system(size: 9, design: .monospaced))
                                 .foregroundStyle(.tertiary)
@@ -1832,6 +1844,23 @@ struct ScheduledTaskRow: View {
     @State private var isHovering = false
     @State private var isExpanded = false
 
+    private var statusLabel: String? {
+        switch task.lastStatus {
+        case "completed": return "✓"
+        case "trial_limit": return "LIMIT · AUTO-RESUME"
+        case .some: return "✗"
+        case .none: return nil
+        }
+    }
+
+    private var statusColor: Color {
+        switch task.lastStatus {
+        case "completed": return DN.success
+        case "trial_limit": return DN.accent
+        default: return DN.accent
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Main row
@@ -1857,12 +1886,12 @@ struct ScheduledTaskRow: View {
                             .font(DN.mono(8))
                             .foregroundColor(DN.textDisabled)
 
-                        if let lastStatus = task.lastStatus {
+                        if let statusLabel {
                             Text("·")
                                 .foregroundColor(DN.textDisabled)
-                            Text(lastStatus == "completed" ? "✓" : "✗")
+                            Text(statusLabel)
                                 .font(DN.mono(8))
-                                .foregroundColor(lastStatus == "completed" ? DN.success : DN.accent)
+                                .foregroundColor(statusColor)
                         }
 
                         if task.runCount > 0 {

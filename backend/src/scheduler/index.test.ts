@@ -44,3 +44,23 @@ test('hosted scheduler source contains no local command execution path', async (
   assert.doesNotMatch(source, /bash_execute|execFile|spawn\(/);
   assert.match(source, /danotch_renew_schedule_lease/);
 });
+
+test('daily trial exhaustion defers schedules without disabling or poisoning them', async () => {
+  const source = await readFile(new URL('./index.ts', import.meta.url), 'utf8');
+  assert.match(source, /err instanceof TrialLimitError && err\.isDailyLimit/);
+  assert.match(source, /finishOutcome = 'trial_limit'/);
+  assert.match(source, /Math\.max\(nextRun\.getTime\(\), resetAt\.getTime\(\)\)/);
+
+  const sql = await readFile(
+    new URL('../../sql/016_trial_usage_summary.sql', import.meta.url),
+    'utf8',
+  );
+  const branchStart = sql.indexOf("elsif p_outcome = 'trial_limit'");
+  const branchEnd = sql.indexOf("elsif p_outcome = 'queued_local'", branchStart);
+  assert.ok(branchStart >= 0 && branchEnd > branchStart);
+  const branch = sql.slice(branchStart, branchEnd);
+  assert.match(branch, /run_state = 'ready'/);
+  assert.match(branch, /next_run_at = p_next_run_at/);
+  assert.match(branch, /attempt_count = 0/);
+  assert.doesNotMatch(branch, /enabled = false|run_state = 'poisoned'/);
+});

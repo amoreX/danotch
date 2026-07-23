@@ -61,6 +61,13 @@ export function createApp(dependencies: AppDependencies): Express {
   // Raw body for billing webhook before JSON parsing.
   app.use('/api/billing/webhook', express.raw({ type: '*/*', limit: '256kb' }));
   app.use(express.json({ limit: config.jsonBodyLimit }));
+  // Browser signup is the only form POST. Keep this parser narrowly scoped and
+  // non-nested so form fields cannot introduce arbitrary object structures.
+  app.use('/auth/signup', express.urlencoded({
+    extended: false,
+    limit: Math.min(config.jsonBodyLimit, 16 * 1024),
+    parameterLimit: 16,
+  }));
 
   // Security headers on every response.
   app.use((_req, res, next) => {

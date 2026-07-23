@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { validateScheduledPatch } from './scheduled-policy.ts';
 
 test('scheduler PATCH accepts only documented editable fields', () => {
@@ -49,4 +50,14 @@ test('scheduler PATCH rejects empty and wrongly typed updates', () => {
   assert.equal(validateScheduledPatch({}).ok, false);
   assert.equal(validateScheduledPatch({ enabled: 'yes' }).ok, false);
   assert.equal(validateScheduledPatch({ interval_ms: 10 }).ok, false);
+});
+
+test('users can pause and restart deferred schedules from a clean state', async () => {
+  const source = await readFile(new URL('./scheduled.ts', import.meta.url), 'utf8');
+  assert.match(source, /updates\.enabled === false[\s\S]*run_state: 'cancelled'/);
+  assert.match(
+    source,
+    /updates\.enabled === true[\s\S]*run_state: 'ready', attempt_count: 0, retry_at: null/,
+  );
+  assert.match(source, /updates\.enabled === true \|\| updates\.cron \|\| updates\.interval_ms/);
 });

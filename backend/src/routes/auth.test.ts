@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { containmentFeatureEnabled } from '../config.ts';
+import { signupBrowserCsp } from './signup-browser.ts';
 
 test('production freezes signup and costly integrations unless explicitly enabled', () => {
   assert.equal(containmentFeatureEnabled(true, undefined), false);
@@ -23,6 +24,25 @@ test('signup is public, CAPTCHA-gated, anti-enumerating, and never auto-confirms
   assert.match(source, /GENERIC_SIGNUP_MESSAGE/);
   assert.match(source, /emailRedirectTo: `\$\{config\.publicBaseUrl\}\/auth\/verified`/);
   assert.doesNotMatch(source, /auth\.admin\.createUser|email_confirm\s*:\s*true/);
+});
+
+test('browser signup parses forms and permits only the configured CAPTCHA origins', async () => {
+  const appSource = await readFile(new URL('../app.ts', import.meta.url), 'utf8');
+  assert.match(
+    appSource,
+    /app\.use\('\/auth\/signup', express\.urlencoded\(\{[\s\S]*extended: false[\s\S]*parameterLimit: 16/,
+  );
+
+  const turnstile = signupBrowserCsp('turnstile');
+  assert.match(turnstile, /script-src https:\/\/challenges\.cloudflare\.com/);
+  assert.match(turnstile, /frame-src https:\/\/challenges\.cloudflare\.com/);
+  assert.match(turnstile, /connect-src https:\/\/challenges\.cloudflare\.com/);
+  assert.match(turnstile, /form-action 'self'/);
+  assert.doesNotMatch(turnstile, /\*/);
+
+  const hcaptcha = signupBrowserCsp('hcaptcha');
+  assert.match(hcaptcha, /script-src https:\/\/js\.hcaptcha\.com https:\/\/\*\.hcaptcha\.com/);
+  assert.match(hcaptcha, /frame-src https:\/\/\*\.hcaptcha\.com/);
 });
 
 test('verified provisioning is idempotent and trial is last behind a fail-closed quota', async () => {

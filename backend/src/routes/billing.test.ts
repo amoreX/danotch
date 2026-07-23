@@ -42,6 +42,18 @@ const expiredStatus = {
   canUseServerKey: false,
   requiresPurchase: true,
   requiresProviderKey: false,
+  trialUsage: {
+    usageDay: '2026-01-15',
+    dailyRequests: 0,
+    dailyTokens: 0,
+    dailySpendMicroUsd: 0,
+    dailySpendLimitMicroUsd: 5_000_000,
+    dailyLimitReached: false,
+    resetsAt: '2026-01-16T00:00:00.000Z',
+    totalRequests: 1,
+    totalTokens: 1000,
+    totalSpendMicroUsd: 15_000,
+  },
 };
 
 const reservation = {

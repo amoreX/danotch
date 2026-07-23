@@ -331,6 +331,10 @@ class NotchViewModel: ObservableObject {
     @Published var billingError: String?
     @Published var checkoutState: CheckoutState = .idle
     @Published var requestedProviderType: String?
+    var trialDailyLimitReached: Bool {
+        billingStatus?.canUseServerKey == true
+            && billingStatus?.trialUsage.dailyLimitReached == true
+    }
     private var checkoutPollTimer: Timer?
     private var billingExpiryTimer: Timer?
     private var checkoutPollAttempts = 0
@@ -1514,6 +1518,9 @@ class NotchViewModel: ObservableObject {
         switch type {
         case "subagent_event": processSubagentEvent(json)
         case "task_summary": processBulkUpdate(json)
+        case "scheduled_task_update":
+            loadScheduledTasks()
+            loadBillingStatus()
         case "notification": processNotification(json)
         case "peek_notification": processPeekNotification(json)
         case "connection_request": processConnectionRequest(json)
@@ -1757,6 +1764,7 @@ class NotchViewModel: ObservableObject {
             ))
         }
         persistTask(at: idx)
+        loadBillingStatus()
     }
 
     func approveDraftAction(_ actionId: String) {

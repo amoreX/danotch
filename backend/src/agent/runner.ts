@@ -5,6 +5,7 @@ import type { CanonicalTool, CanonicalMessage, CanonicalContentBlock, CanonicalT
 import { config } from '../config.js';
 import { userDb as supabase } from '../lib/user-db.js';
 import { resolveProviderForUser } from '../billing/entitlements.js';
+import { TrialLimitError } from '../billing/trial-provider.js';
 import { scheduledTaskTools, executeScheduledTool } from '../tools/scheduled.js';
 import { hostedTools, executeHostedTool } from '../tools/local.js';
 import { loadComposioTools, executeComposioTool, loadToolsForApp, COMPOSIO_APPS } from '../composio/tools.js';
@@ -534,7 +535,7 @@ export async function runChat(
     notch.sendDone(id, { status: 'completed', result: fallback });
     return { ...task, threadId };
   } catch (err) {
-    const errorMsg = err instanceof RecoverableProviderStreamError
+    const errorMsg = err instanceof RecoverableProviderStreamError || err instanceof TrialLimitError
       ? err.message
       : 'The request could not be completed.';
     console.error('[runner] Run failed:', err);
@@ -548,7 +549,10 @@ export async function runChat(
           transitionId: uuid(),
           targetState: 'failed',
           eventType: 'run_failed',
-          payload: { code: 'run_failed', detail: errorMsg.slice(0, 500) },
+          payload: {
+            code: err instanceof TrialLimitError ? err.code : 'run_failed',
+            detail: errorMsg.slice(0, 500),
+          },
         });
       } catch (persistError) {
         console.error('[runner] Failed to persist terminal run state:', persistError);

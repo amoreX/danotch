@@ -38,8 +38,10 @@ function production(overrides: Record<string, string | undefined> = {}) {
     AUTH_REFRESH_RATE_LIMIT: '30',
     MAX_TOKENS: '4096',
     TRIAL_MAX_CONCURRENCY: '2',
-    TRIAL_DAILY_TOKEN_LIMIT: '100000',
-    TRIAL_DAILY_SPEND_MICRO_USD: '500000',
+    TRIAL_DAILY_TOKEN_LIMIT: '10000000',
+    TRIAL_DAILY_SPEND_MICRO_USD: '5000000',
+    TRIAL_INPUT_MICRO_USD_PER_TOKEN: '3',
+    TRIAL_OUTPUT_MICRO_USD_PER_TOKEN: '15',
     SCHEDULER_MAX_TASKS_PER_USER: '5',
     SCHEDULER_MIN_INTERVAL_MS: '900000',
     SCHEDULER_MAX_TOKENS: '1024',
@@ -111,6 +113,15 @@ test('trials require a dedicated key and an allowlisted default model', () => {
     })),
     /TRIAL_ANTHROPIC_MODEL/,
   );
+  assert.throws(
+    () => loadConfig(production({
+      TRIALS_ENABLED: 'true',
+      TRIAL_ANTHROPIC_API_KEY: 'trial-key',
+      TRIAL_ANTHROPIC_MODELS: 'cheap-model,expensive-model',
+      TRIAL_ANTHROPIC_MODEL: 'cheap-model',
+    })),
+    /exactly one priced trial model/,
+  );
   const loaded = loadConfig(production({
     TRIALS_ENABLED: 'true',
     TRIAL_ANTHROPIC_API_KEY: 'trial-key',
@@ -118,12 +129,19 @@ test('trials require a dedicated key and an allowlisted default model', () => {
     TRIAL_ANTHROPIC_MODEL: 'allowed-model',
   }));
   assert.equal(loaded.trial.defaultModel, 'allowed-model');
+  assert.equal(loaded.trial.dailySpendMicroUsd, 5_000_000);
+  assert.equal(loaded.trial.inputMicroUsdPerToken, 3);
+  assert.equal(loaded.trial.outputMicroUsdPerToken, 15);
 });
 
 test('token, trial, auth, and scheduler bounds must be positive and capped', () => {
   assert.throws(() => loadConfig(production({ MAX_TOKENS: '0' })), /positive integer/);
   assert.throws(() => loadConfig(production({ MAX_TOKENS: '999999' })), /at most/);
   assert.throws(() => loadConfig(production({ TRIAL_MAX_CONCURRENCY: '-1' })), /positive integer/);
+  assert.throws(
+    () => loadConfig(production({ TRIAL_INPUT_MICRO_USD_PER_TOKEN: '0' })),
+    /positive integer/,
+  );
   assert.throws(() => loadConfig(production({ AUTH_LOGIN_RATE_LIMIT: '0' })), /positive integer/);
   assert.throws(() => loadConfig(production({ SCHEDULER_MAX_TASKS_PER_USER: '6' })), /at most 5/);
   assert.throws(() => loadConfig(production({ SCHEDULER_MIN_INTERVAL_MS: '60000' })), /at least 900000/);

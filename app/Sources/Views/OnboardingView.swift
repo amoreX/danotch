@@ -215,7 +215,7 @@ struct OnboardingView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 8)
 
-            Text("Includes a 14-day server-funded trial. Perch is a $5 lifetime unlock; after the trial, your own Anthropic, OpenAI, or OpenRouter API key is required.")
+            Text("Includes a 14-day server-funded trial with up to $5 of chat and scheduled-task usage each day. Perch is a $5 lifetime unlock; after the trial, your own Anthropic, OpenAI, or OpenRouter API key is required.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -430,12 +430,12 @@ struct OnboardingView: View {
 
     private var modelStep: some View {
         VStack(alignment: .leading, spacing: OB.sectionSpacing) {
-            pageHeader("Choose your model", "The server funds 14 trial days. A $5 lifetime unlock and your own provider key are required afterward.")
+            pageHeader("Choose your model", "The server funds 14 trial days with one shared $5 daily allowance for chat and scheduled tasks. A $5 lifetime unlock and your own provider key are required afterward.")
 
             VStack(spacing: OB.itemSpacing) {
                 optionCard(
                     title: "Use trial model",
-                    subtitle: "Server-funded for 14 days only.",
+                    subtitle: "Server-funded for 14 days, up to $5 total per day.",
                     icon: "server.rack",
                     selected: useDefaultModel
                 ) { useDefaultModel = true }

@@ -328,7 +328,10 @@ struct AgentChatView: View {
         HStack(spacing: 10) {
             ChatModelSelectorView(viewModel: viewModel, maxWidth: 122)
 
-            TextField("Message agent", text: $messageText)
+            TextField(
+                viewModel.trialDailyLimitReached ? "Daily limit reached — resumes automatically" : "Message agent",
+                text: $messageText
+            )
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundStyle(.white)
@@ -336,6 +339,7 @@ struct AgentChatView: View {
                 .onSubmit { sendMessage() }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
+                .disabled(viewModel.trialDailyLimitReached)
 
             sendButton
         }
@@ -343,11 +347,12 @@ struct AgentChatView: View {
         .padding(.vertical, 9)
         .perchGlass(in: Capsule())
         .contentShape(.capsule)
-        .onTapGesture { isMessageFocused = true }
+        .onTapGesture { if !viewModel.trialDailyLimitReached { isMessageFocused = true } }
     }
 
     private var sendButton: some View {
-        let enabled = !messageText.trimmingCharacters(in: .whitespaces).isEmpty
+        let enabled = !viewModel.trialDailyLimitReached
+            && !messageText.trimmingCharacters(in: .whitespaces).isEmpty
         return Image(systemName: "arrow.up")
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
@@ -360,7 +365,7 @@ struct AgentChatView: View {
 
     private func sendMessage() {
         let text = messageText.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
+        guard !viewModel.trialDailyLimitReached, !text.isEmpty else { return }
         messageText = ""
         viewModel.sendChat(message: text, sessionId: taskId)
     }

@@ -20,9 +20,13 @@ services:
       - key: TRIAL_MAX_CONCURRENCY
         value: "2"
       - key: TRIAL_DAILY_TOKEN_LIMIT
-        value: "50000"
+        value: "10000000"
       - key: TRIAL_DAILY_SPEND_MICRO_USD
-        value: "250000"
+        value: "5000000"
+      - key: TRIAL_INPUT_MICRO_USD_PER_TOKEN
+        value: "3"
+      - key: TRIAL_OUTPUT_MICRO_USD_PER_TOKEN
+        value: "15"
       - key: SCHEDULER_MAX_TASKS_PER_USER
         value: "5"
       - key: SCHEDULER_MIN_INTERVAL_MS

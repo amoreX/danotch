@@ -47,6 +47,18 @@ function status(
     canUseServerKey: trialing && !hasActiveProvider,
     requiresPurchase: billingStatus === 'expired',
     requiresProviderKey: paid && !hasActiveProvider,
+    trialUsage: {
+      usageDay: '2026-07-10',
+      dailyRequests: 2,
+      dailyTokens: 1200,
+      dailySpendMicroUsd: 25_000,
+      dailySpendLimitMicroUsd: 5_000_000,
+      dailyLimitReached: false,
+      resetsAt: '2026-07-11T00:00:00.000Z',
+      totalRequests: 8,
+      totalTokens: 5000,
+      totalSpendMicroUsd: 100_000,
+    },
   };
 }
 
@@ -138,6 +150,8 @@ function fakeBillingDb(options: {
   profile: Record<string, unknown>;
   activeProvider?: string | null;
   providerError?: { message: string; code?: string } | null;
+  usage?: Record<string, unknown>;
+  usageError?: { message: string; code?: string } | null;
 }): SupabaseClient {
   return {
     from(table: string) {
@@ -162,6 +176,23 @@ function fakeBillingDb(options: {
       };
       return builder;
     },
+    async rpc(name: string) {
+      assert.equal(name, 'danotch_get_trial_usage_summary');
+      return {
+        data: options.usage ?? {
+          usage_day: '2026-07-10',
+          daily_requests: 2,
+          daily_tokens: 1200,
+          daily_spend_micro_usd: 25_000,
+          daily_limit_reached: false,
+          resets_at: '2026-07-11T00:00:00.000Z',
+          total_requests: 8,
+          total_tokens: 5000,
+          total_spend_micro_usd: 100_000,
+        },
+        error: options.usageError ?? null,
+      };
+    },
   } as unknown as SupabaseClient;
 }
 
@@ -177,6 +208,8 @@ test('billing status requires a lifetime timestamp and fails closed on provider 
   }));
   assert.equal(expired.billingStatus, 'expired');
   assert.equal(expired.requiresPurchase, true);
+  assert.equal(expired.trialUsage.dailySpendLimitMicroUsd, 5_000_000);
+  assert.equal(expired.trialUsage.totalSpendMicroUsd, 100_000);
 
   const revoked = await getBillingStatus(USER_ID, fakeBillingDb({
     profile: {
@@ -202,6 +235,23 @@ test('billing status requires a lifetime timestamp and fails closed on provider 
         billing_status: 'trialing',
       },
       providerError: { message: 'connection refused' },
+    })),
+    (error: unknown) =>
+      error instanceof EntitlementError && error.code === 'operational',
+  );
+});
+
+test('billing status fails closed when the account usage ledger is unavailable', async () => {
+  await assert.rejects(
+    getBillingStatus(USER_ID, fakeBillingDb({
+      profile: {
+        id: USER_ID,
+        trial_started_at: '2026-06-01T00:00:00.000Z',
+        trial_ends_at: '2099-06-15T00:00:00.000Z',
+        lifetime_purchased_at: null,
+        billing_status: 'trialing',
+      },
+      usageError: { message: 'ledger unavailable' },
     })),
     (error: unknown) =>
       error instanceof EntitlementError && error.code === 'operational',

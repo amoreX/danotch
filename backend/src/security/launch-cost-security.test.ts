@@ -15,6 +15,23 @@ test('trial migration atomically enforces daily tokens, spend, and concurrency',
   assert.match(sql, /force row level security/);
 });
 
+test('trial usage meter reads account-scoped daily and durable totals', async () => {
+  const sql = await readFile(
+    new URL('../../sql/016_trial_usage_summary.sql', import.meta.url),
+    'utf8',
+  );
+  assert.match(sql, /v_user_id uuid := auth\.uid\(\)/);
+  assert.match(sql, /usage_day = \(now\(\) at time zone 'UTC'\)::date/);
+  assert.match(sql, /'reason', 'daily_spend'/);
+  assert.match(sql, /limit_reached_at = coalesce\(limit_reached_at, now\(\)\)/);
+  assert.match(sql, /requests_used = public\.danotch_trial_usage_daily\.requests_used \+ 1/);
+  assert.match(sql, /coalesce\(sum\(requests_used\), 0\)/);
+  assert.match(sql, /coalesce\(sum\(tokens_used\), 0\)/);
+  assert.match(sql, /coalesce\(sum\(spend_micro_usd\), 0\)/);
+  assert.match(sql, /grant execute.*authenticated/s);
+  assert.match(sql, /create function public\.danotch_get_trial_usage_summary\(\)/);
+});
+
 test('server trial model is allowlisted and never reads the legacy fallback key', async () => {
   const source = await readFile(new URL('../providers/factory.ts', import.meta.url), 'utf8');
   assert.match(source, /config\.trial\.allowedModels\.includes\(selectedModel\)/);
@@ -33,6 +50,7 @@ test('scheduler has database and application frequency, count, claim, and token 
   assert.match(sql, /new\.interval_ms < 900000/);
   assert.match(scheduler, /p_limit: config\.scheduler\.claimLimit/);
   assert.match(scheduler, /maxTokens: config\.scheduler\.maxTokens/);
+  assert.match(scheduler, /resolveProviderForUser/);
   assert.match(tools, /isCronAtLeastInterval/);
 });
 
@@ -77,5 +95,8 @@ test('Render blueprint declares every launch trust boundary and remains frozen b
   }
   assert.match(render, /key: PUBLIC_SIGNUP_ENABLED\s+value: "false"/);
   assert.match(render, /key: TRIALS_ENABLED\s+value: "false"/);
+  assert.match(render, /key: TRIAL_DAILY_SPEND_MICRO_USD\s+value: "5000000"/);
+  assert.match(render, /key: TRIAL_INPUT_MICRO_USD_PER_TOKEN\s+value: "3"/);
+  assert.match(render, /key: TRIAL_OUTPUT_MICRO_USD_PER_TOKEN\s+value: "15"/);
   assert.match(render, /healthCheckPath: \/health\/ready/);
 });

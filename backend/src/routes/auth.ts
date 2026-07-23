@@ -15,6 +15,7 @@ import {
 } from '../security/quota-store.js';
 import { provisionVerifiedUser } from '../security/verified-provisioning.js';
 import { isEmailVerified } from '../security/identity-state.js';
+import { signupBrowserCsp } from './signup-browser.js';
 
 const GENERIC_SIGNUP_MESSAGE = 'If this address can be registered, a verification email has been sent.';
 const GENERIC_RESEND_MESSAGE = 'If this address has a pending registration, a new email has been sent.';
@@ -53,7 +54,10 @@ export function createAuthRoutes(dependencies: {
       ? 'https://challenges.cloudflare.com/turnstile/v0/api.js'
       : 'https://js.hcaptcha.com/1/api.js';
     const captchaClass = config.captcha.provider === 'turnstile' ? 'cf-turnstile' : 'h-captcha';
-    res.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Create Perch account</title><script src="${captchaScript}" async defer></script></head><body style="background:#050505;color:#fff;font:16px system-ui;max-width:440px;margin:60px auto;padding:24px"><h1>Create your Perch account</h1><p>Email verification is required before a trial or integrations are enabled.</p><form method="post" action="/auth/signup" enctype="application/x-www-form-urlencoded"><input name="full_name" autocomplete="name" placeholder="Full name" required style="display:block;width:100%;margin:12px 0;padding:12px"><input name="email" type="email" autocomplete="email" value="${escapeHtml(email)}" placeholder="Email" required style="display:block;width:100%;margin:12px 0;padding:12px"><input name="password" type="password" autocomplete="new-password" minlength="10" placeholder="Password" required style="display:block;width:100%;margin:12px 0;padding:12px"><div class="${captchaClass}" data-sitekey="${escapeHtml(config.captcha.siteKey)}"></div><button style="margin-top:18px;padding:12px 18px">Send verification email</button></form></body></html>`);
+    res
+      .set('Content-Security-Policy', signupBrowserCsp(config.captcha.provider))
+      .type('html')
+      .send(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Create Perch account</title><script src="${captchaScript}" async defer></script></head><body style="background:#050505;color:#fff;font:16px system-ui;max-width:440px;margin:60px auto;padding:24px"><h1>Create your Perch account</h1><p>Email verification is required before a trial or integrations are enabled.</p><form method="post" action="/auth/signup" enctype="application/x-www-form-urlencoded"><input name="full_name" autocomplete="name" placeholder="Full name" required style="display:block;width:100%;margin:12px 0;padding:12px"><input name="email" type="email" autocomplete="email" value="${escapeHtml(email)}" placeholder="Email" required style="display:block;width:100%;margin:12px 0;padding:12px"><input name="password" type="password" autocomplete="new-password" minlength="10" placeholder="Password" required style="display:block;width:100%;margin:12px 0;padding:12px"><div class="${captchaClass}" data-sitekey="${escapeHtml(config.captcha.siteKey)}"></div><button style="margin-top:18px;padding:12px 18px">Send verification email</button></form></body></html>`);
   });
 
   // Public Supabase signup. No privileged auto-confirm and no session/trial is
@@ -66,10 +70,13 @@ export function createAuthRoutes(dependencies: {
       });
       return;
     }
-    const { email, password, full_name } = req.body;
-    const captchaToken = req.body.captcha_token
-      ?? req.body['cf-turnstile-response']
-      ?? req.body['h-captcha-response'];
+    const body = req.body && typeof req.body === 'object'
+      ? req.body as Record<string, unknown>
+      : {};
+    const { email, password, full_name } = body;
+    const captchaToken = body.captcha_token
+      ?? body['cf-turnstile-response']
+      ?? body['h-captcha-response'];
 
     if (typeof email !== 'string' || typeof password !== 'string' || password.length < 10) {
       res.status(202).json({ message: GENERIC_SIGNUP_MESSAGE, state: 'check_email' });

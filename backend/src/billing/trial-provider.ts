@@ -9,13 +9,26 @@ import type {
   StreamResult,
 } from '../providers/types.js';
 
-const INPUT_MICRO_USD_PER_TOKEN = 3;
-const OUTPUT_MICRO_USD_PER_TOKEN = 15;
+export type TrialLimitReason = 'daily_spend' | 'daily_tokens' | 'concurrency' | 'unavailable';
 
 export class TrialLimitError extends Error {
   readonly code = 'trial_limit_exceeded';
-  constructor(readonly retryAfterSeconds = 60) {
-    super('The daily trial allowance or concurrency limit has been reached.');
+  constructor(
+    readonly reason: TrialLimitReason = 'unavailable',
+    readonly retryAfterSeconds = 60,
+    readonly resetAt: string | null = null,
+  ) {
+    super(
+      reason === 'daily_spend' || reason === 'daily_tokens'
+        ? 'Your $5 daily trial limit has been reached. Usage resumes automatically tomorrow.'
+        : reason === 'concurrency'
+          ? 'Too many trial requests are running. Try again shortly.'
+          : 'Trial usage is temporarily unavailable. Try again shortly.',
+    );
+  }
+
+  get isDailyLimit(): boolean {
+    return this.reason === 'daily_spend' || this.reason === 'daily_tokens';
   }
 }
 
@@ -62,8 +75,8 @@ export class MeteredTrialProvider implements LLMProvider {
     const estimatedInputTokens = estimateInputTokens(messages, systemPrompt, tools);
     const db = this.db ?? getAdminDb('runner');
     const reservedTokens = estimatedInputTokens + maxTokens;
-    const reservedSpend = estimatedInputTokens * INPUT_MICRO_USD_PER_TOKEN
-      + maxTokens * OUTPUT_MICRO_USD_PER_TOKEN;
+    const reservedSpend = estimatedInputTokens * config.trial.inputMicroUsdPerToken
+      + maxTokens * config.trial.outputMicroUsdPerToken;
     const { data, error } = await db.rpc('danotch_reserve_trial_usage', {
       p_user_id: this.userId,
       p_reserved_tokens: reservedTokens,
@@ -72,10 +85,26 @@ export class MeteredTrialProvider implements LLMProvider {
       p_daily_spend_micro_usd: config.trial.dailySpendMicroUsd,
       p_max_concurrency: config.trial.maxConcurrency,
     });
-    if (error || !data) throw new TrialLimitError();
-    const reservation = data as { allowed?: boolean; lease_id?: string; retry_after_seconds?: number };
+    if (error || !data) throw new TrialLimitError('unavailable');
+    const reservation = data as {
+      allowed?: boolean;
+      lease_id?: string;
+      reason?: unknown;
+      retry_after_seconds?: number;
+      reset_at?: unknown;
+    };
     if (!reservation.allowed || !reservation.lease_id) {
-      throw new TrialLimitError(Math.max(1, Number(reservation.retry_after_seconds ?? 60)));
+      const reason: TrialLimitReason = (
+        reservation.reason === 'daily_spend'
+        || reservation.reason === 'daily_tokens'
+        || reservation.reason === 'concurrency'
+      ) ? reservation.reason : 'unavailable';
+      const resetAt = typeof reservation.reset_at === 'string' ? reservation.reset_at : null;
+      throw new TrialLimitError(
+        reason,
+        Math.max(1, Number(reservation.retry_after_seconds ?? 60)),
+        resetAt,
+      );
     }
 
     let actualInput = 0;
@@ -86,8 +115,8 @@ export class MeteredTrialProvider implements LLMProvider {
       actualOutput = result.usage.outputTokens;
       return result;
     } finally {
-      const actualSpend = actualInput * INPUT_MICRO_USD_PER_TOKEN
-        + actualOutput * OUTPUT_MICRO_USD_PER_TOKEN;
+      const actualSpend = actualInput * config.trial.inputMicroUsdPerToken
+        + actualOutput * config.trial.outputMicroUsdPerToken;
       const settled = await db.rpc('danotch_settle_trial_usage', {
         p_lease_id: reservation.lease_id,
         p_user_id: this.userId,

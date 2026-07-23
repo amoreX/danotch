@@ -124,8 +124,11 @@ export function loadConfig(env: Environment = process.env) {
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean);
-  if (trialsEnabled && (trialModels.length === 0 || trialModels.some((model) => !/^[a-zA-Z0-9._-]{1,100}$/.test(model)))) {
-    throw new Error('TRIAL_ANTHROPIC_MODELS must be a non-empty comma-separated model allowlist');
+  if (trialsEnabled && (
+    trialModels.length !== 1
+    || trialModels.some((model) => !/^[a-zA-Z0-9._-]{1,100}$/.test(model))
+  )) {
+    throw new Error('TRIAL_ANTHROPIC_MODELS must contain exactly one priced trial model');
   }
   const trialDefaultModel = env.TRIAL_ANTHROPIC_MODEL ?? trialModels[0] ?? '';
   if (trialsEnabled && !trialModels.includes(trialDefaultModel)) {
@@ -258,8 +261,14 @@ export function loadConfig(env: Environment = process.env) {
       allowedModels: trialModels,
       defaultModel: trialDefaultModel,
       maxConcurrency: boundedPositiveInteger(env, 'TRIAL_MAX_CONCURRENCY', 2, isProduction, 10),
-      dailyTokenLimit: boundedPositiveInteger(env, 'TRIAL_DAILY_TOKEN_LIMIT', 50_000, isProduction, 10_000_000),
-      dailySpendMicroUsd: boundedPositiveInteger(env, 'TRIAL_DAILY_SPEND_MICRO_USD', 250_000, isProduction, 100_000_000),
+      dailyTokenLimit: boundedPositiveInteger(env, 'TRIAL_DAILY_TOKEN_LIMIT', 10_000_000, isProduction, 10_000_000),
+      dailySpendMicroUsd: boundedPositiveInteger(env, 'TRIAL_DAILY_SPEND_MICRO_USD', 5_000_000, isProduction, 100_000_000),
+      inputMicroUsdPerToken: boundedPositiveInteger(
+        env, 'TRIAL_INPUT_MICRO_USD_PER_TOKEN', 3, isProduction, 10_000,
+      ),
+      outputMicroUsdPerToken: boundedPositiveInteger(
+        env, 'TRIAL_OUTPUT_MICRO_USD_PER_TOKEN', 15, isProduction, 10_000,
+      ),
     },
     scheduler: {
       maxTasksPerUser: boundedPositiveInteger(env, 'SCHEDULER_MAX_TASKS_PER_USER', 5, isProduction, 5),

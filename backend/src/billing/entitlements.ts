@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { config } from '../config.js';
 import { userDb } from '../lib/user-db.js';
 import { getAdminDb } from '../lib/admin-db.js';
 import {
@@ -13,6 +14,19 @@ const TRIAL_DAYS = 14;
 
 type BillingState = 'trialing' | 'paid' | 'expired' | 'revoked';
 
+export type TrialUsageSummary = {
+  usageDay: string;
+  dailyRequests: number;
+  dailyTokens: number;
+  dailySpendMicroUsd: number;
+  dailySpendLimitMicroUsd: number;
+  dailyLimitReached: boolean;
+  resetsAt: string;
+  totalRequests: number;
+  totalTokens: number;
+  totalSpendMicroUsd: number;
+};
+
 export type BillingStatus = {
   userId: string;
   billingStatus: BillingState;
@@ -25,6 +39,7 @@ export type BillingStatus = {
   canUseServerKey: boolean;
   requiresPurchase: boolean;
   requiresProviderKey: boolean;
+  trialUsage: TrialUsageSummary;
 };
 
 export class EntitlementError extends Error {
@@ -89,6 +104,39 @@ export async function getBillingStatus(
     );
   }
 
+  const { data: usageData, error: usageError } = await db.rpc(
+    'danotch_get_trial_usage_summary',
+  );
+  if (usageError || !usageData) {
+    throw new EntitlementError(
+      'operational',
+      `Trial usage is temporarily unavailable: ${usageError?.message ?? 'invalid response'}`,
+    );
+  }
+  const usage = usageData as Record<string, unknown>;
+  const usageDay = usage.usage_day;
+  const dailyRequests = Number(usage.daily_requests);
+  const dailyTokens = Number(usage.daily_tokens);
+  const dailySpendMicroUsd = Number(usage.daily_spend_micro_usd);
+  const dailyLimitReached = usage.daily_limit_reached;
+  const resetsAt = usage.resets_at;
+  const totalRequests = Number(usage.total_requests);
+  const totalTokens = Number(usage.total_tokens);
+  const totalSpendMicroUsd = Number(usage.total_spend_micro_usd);
+  if (
+    typeof usageDay !== 'string'
+    || typeof dailyLimitReached !== 'boolean'
+    || typeof resetsAt !== 'string'
+    || !Number.isFinite(new Date(resetsAt).getTime())
+    || ![
+      dailyRequests, dailyTokens, dailySpendMicroUsd,
+      totalRequests, totalTokens, totalSpendMicroUsd,
+    ]
+      .every((value) => Number.isSafeInteger(value) && value >= 0)
+  ) {
+    throw new EntitlementError('operational', 'Trial usage service returned an invalid response.');
+  }
+
   const hasActiveProvider = Boolean(activeProvider?.provider);
   const trialActive = trialEndsAt.getTime() > now.getTime();
   const revoked = Boolean(parseDate(profile.lifetime_revoked_at));
@@ -110,6 +158,19 @@ export async function getBillingStatus(
     canUseServerKey: !revoked && !hasActiveProvider && trialActive,
     requiresPurchase: revoked || (!paid && !trialActive),
     requiresProviderKey: paid && !trialActive && !hasActiveProvider,
+    trialUsage: {
+      usageDay,
+      dailyRequests,
+      dailyTokens,
+      dailySpendMicroUsd,
+      dailySpendLimitMicroUsd: config.trial.dailySpendMicroUsd,
+      dailyLimitReached:
+        dailyLimitReached || dailySpendMicroUsd >= config.trial.dailySpendMicroUsd,
+      resetsAt,
+      totalRequests,
+      totalTokens,
+      totalSpendMicroUsd,
+    },
   };
 }
 

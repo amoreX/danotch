@@ -41,6 +41,8 @@ test('trial provider reserves before use and settles actual token and spend usag
     maxTokens: 100,
   });
   assert.equal(calls[0].name, 'danotch_reserve_trial_usage');
+  assert.equal(calls[0].args.p_daily_spend_micro_usd, 5_000_000);
+  assert.equal(calls[0].args.p_daily_token_limit, 10_000_000);
   assert.equal(calls[1].name, 'danotch_settle_trial_usage');
   assert.equal(calls[1].args.p_actual_tokens, 120);
   assert.equal(calls[1].args.p_actual_spend_micro_usd, 600);
@@ -49,7 +51,15 @@ test('trial provider reserves before use and settles actual token and spend usag
 test('trial provider fails closed when reservation is denied', async () => {
   const db = {
     async rpc() {
-      return { data: { allowed: false, retry_after_seconds: 90 }, error: null };
+      return {
+        data: {
+          allowed: false,
+          reason: 'daily_spend',
+          retry_after_seconds: 90,
+          reset_at: '2026-07-25T00:00:00.000Z',
+        },
+        error: null,
+      };
     },
   } as unknown as SupabaseClient;
   const provider = {
@@ -59,6 +69,11 @@ test('trial provider fails closed when reservation is denied', async () => {
   const metered = new MeteredTrialProvider('user-1', provider, db);
   await assert.rejects(
     metered.complete({ messages: [], systemPrompt: '', maxTokens: 10 }),
-    (error: unknown) => error instanceof TrialLimitError && error.retryAfterSeconds === 90,
+    (error: unknown) =>
+      error instanceof TrialLimitError
+      && error.retryAfterSeconds === 90
+      && error.isDailyLimit
+      && error.resetAt === '2026-07-25T00:00:00.000Z'
+      && /resumes automatically tomorrow/.test(error.message),
   );
 });
