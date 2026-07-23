@@ -24,7 +24,7 @@ alter table public.danotch_local_action_requests
     check (
       jsonb_typeof(result_disclosure_policy) = 'object'
       and result_disclosure_policy ?& array['sensitive_output', 'upload']
-      and jsonb_object_length(result_disclosure_policy) = 2
+      and result_disclosure_policy - array['sensitive_output', 'upload'] = '{}'::jsonb
       and jsonb_typeof(result_disclosure_policy -> 'sensitive_output') = 'boolean'
       and jsonb_typeof(result_disclosure_policy -> 'upload') = 'boolean'
     );
