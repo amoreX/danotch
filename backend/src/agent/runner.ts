@@ -62,7 +62,7 @@ export async function getAllTasks(ownerId: string): Promise<Task[]> {
 // ── DB helpers (fire-and-forget — never block streaming) ──
 
 function dbSave(fn: () => Promise<void>) {
-  fn().catch((err) => console.error('[runner:db]', err));
+  fn().catch(() => console.error('[runner:db] Asynchronous persistence failed'));
 }
 
 async function ensureThread(userId: string, threadId?: string, title?: string): Promise<string> {
@@ -84,7 +84,7 @@ async function ensureThread(userId: string, threadId?: string, title?: string): 
     .single();
 
   if (error) {
-    console.error('[runner] Failed to create thread:', error.message);
+    console.error('[runner] Failed to create thread');
     return id;
   }
   return data.id;
@@ -105,7 +105,7 @@ async function saveMessage(
     metadata: metadata ?? {},
   });
   if (error) {
-    console.error(`[runner] Failed to save ${role} message:`, error.message);
+    console.error(`[runner] Failed to save ${role} message`);
   }
 }
 
@@ -143,7 +143,6 @@ async function generateThreadTitle(
     const title = result.text.trim().slice(0, 80);
 
     if (title) {
-      console.log(`[runner] Thread title: "${title}"`);
       notch.send({
         type: 'subagent_event',
         session_id: sessionId,
@@ -293,7 +292,7 @@ export async function runChat(
           },
         });
       } catch (streamError) {
-        console.error('[runner] Provider stream interrupted:', streamError);
+        console.error('[runner] Provider stream interrupted');
         const message = 'Provider stream interrupted';
         durableRun = await durableStore.transition(durableRun, {
           transitionId: uuid(),
@@ -355,7 +354,7 @@ export async function runChat(
             tool_name: toolBlock.name,
             tool_input: inputSummary,
           });
-          console.log(`[chat] Tool call: ${toolBlock.name} → ${inputSummary}`);
+          console.log(`[chat] Tool call started: ${toolBlock.name}`);
 
           // Route to correct handler
           let result: string;
@@ -374,7 +373,7 @@ export async function runChat(
             const displayName = app?.displayName ?? appType;
             const requestId = uuid();
 
-            console.log(`[chat] Requesting ${displayName} connection from user...`);
+            console.log('[chat] App connection approval requested');
 
             const approved = await notch.requestConnection(requestId, id, appType, displayName, reason);
 
@@ -390,10 +389,10 @@ export async function runChat(
                 newTools.toolNames.forEach(n => composioToolNames.add(n));
               }
               result = `User approved. ${displayName} is now connected and its tools are available. Proceed with the user's request.`;
-              console.log(`[chat] ${displayName} connected — ${newTools.tools.length} tools loaded`);
+              console.log(`[chat] App connection approved; ${newTools.tools.length} tools loaded`);
             } else {
               result = `User denied the ${displayName} connection. Do not request this app again in this conversation. Answer their question another way or explain what you would need.`;
-              console.log(`[chat] ${displayName} connection denied by user`);
+              console.log('[chat] App connection denied');
             }
           } else if (isComposioTool) {
             const policy = classifyAction(toolBlock.name, {
@@ -449,8 +448,6 @@ export async function runChat(
           }
 
           const resultSummary = result.slice(0, 300);
-          console.log(`[chat] Tool result: ${resultSummary.slice(0, 150)}`);
-
           notch.sendProgress(id, {
             type: 'tool_result',
             tool_name: toolBlock.name,
@@ -538,7 +535,7 @@ export async function runChat(
     const errorMsg = err instanceof RecoverableProviderStreamError || err instanceof TrialLimitError
       ? err.message
       : 'The request could not be completed.';
-    console.error('[runner] Run failed:', err);
+    console.error('[runner] Run failed');
     task.status = 'failed';
     task.error = errorMsg;
     task.completedAt = new Date();
@@ -555,7 +552,7 @@ export async function runChat(
           },
         });
       } catch (persistError) {
-        console.error('[runner] Failed to persist terminal run state:', persistError);
+        console.error('[runner] Failed to persist terminal run state');
         throw persistError;
       }
     }
@@ -580,7 +577,7 @@ export async function getThreads(userId: string) {
     .order('updated_at', { ascending: false })
     .limit(50);
   if (error) {
-    console.error('[runner] Failed to get threads:', error.message);
+    console.error('[runner] Failed to get threads');
     return [];
   }
   return data;
@@ -594,7 +591,7 @@ export async function getThreadMessages(userId: string, threadId: string) {
     .eq('user_id', userId)
     .order('created_at', { ascending: true });
   if (error) {
-    console.error('[runner] Failed to get messages:', error.message);
+    console.error('[runner] Failed to get messages');
     return [];
   }
   return data;
@@ -607,7 +604,7 @@ export async function deleteThread(userId: string, threadId: string) {
     .eq('id', threadId)
     .eq('user_id', userId);
   if (error) {
-    console.error('[runner] Failed to delete thread:', error.message);
+    console.error('[runner] Failed to delete thread');
     return false;
   }
   return true;

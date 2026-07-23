@@ -41,8 +41,6 @@ export function createProviderRoutes(): Router {
   // Get all provider configs for user (keys masked)
   router.get('/', requireAuth, async (req, res) => {
     const userId = req.user!.sub;
-    console.log(`[provider] GET / userId=${userId}`);
-
     const { data, error } = await supabase
       .from('danotch_provider_configs')
       .select('id, provider, model_id, is_active, verified_at, created_at, updated_at')
@@ -60,8 +58,6 @@ export function createProviderRoutes(): Router {
   // List available models for the active provider using the saved API key.
   router.get('/models', requireAuth, async (req, res) => {
     const userId = req.user!.sub;
-    console.log(`[provider] GET /models userId=${userId}`);
-
     const { data, error } = await getAdminDb('provider')
       .from('danotch_provider_configs')
       .select('provider, api_key_encrypted, model_id')
@@ -87,9 +83,8 @@ export function createProviderRoutes(): Router {
         active_model: data.model_id,
         models: models.length > 0 ? models : fallbackModels(provider),
       });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to fetch models';
-      console.warn(`[provider] Model list failed: ${msg}`);
+    } catch {
+      console.warn('[provider] Model list failed');
       res.status(502).json({
         error: 'Provider models are temporarily unavailable.',
         models: fallbackModels(data.provider as ProviderType),
@@ -138,12 +133,12 @@ export function createProviderRoutes(): Router {
       .single();
 
     if (error) {
-      console.error(`[provider] Upsert failed:`, error.message);
-      res.status(500).json({ error: error.message });
+      console.error('[provider] Upsert failed');
+      res.status(500).json({ error: 'Provider configuration could not be saved.' });
       return;
     }
 
-    console.log(`[provider] User ${userId} → ${provider} (${modelId})`);
+    console.log('[provider] Configuration saved');
 
     res.json({
       config: data,
@@ -202,11 +197,10 @@ export function createProviderRoutes(): Router {
           .eq('provider', provider);
       }
 
-      console.log(`[provider] Verified ${provider} key (model: ${modelId})`);
+      console.log('[provider] Key verification succeeded');
       res.json({ verified: true, model: modelId, response: result.text.slice(0, 50) });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Verification failed';
-      console.log(`[provider] Verification failed for ${provider}: ${msg}`);
+    } catch {
+      console.log('[provider] Key verification failed');
       res.status(400).json({ verified: false, error: 'Provider verification failed.' });
     }
   });
@@ -251,7 +245,7 @@ export function createProviderRoutes(): Router {
       return;
     }
 
-    console.log(`[provider] Activated ${provider} for user ${userId}`);
+    console.log('[provider] Configuration activated');
     res.json({ config: data });
   });
 
@@ -268,7 +262,7 @@ export function createProviderRoutes(): Router {
       return;
     }
 
-    console.log(`[provider] Using server default for user ${userId}`);
+    console.log('[provider] Server default activated');
     res.json({ ok: true });
   });
 
@@ -292,7 +286,7 @@ export function createProviderRoutes(): Router {
       return;
     }
 
-    console.log(`[provider] Deleted ${provider ?? 'all'} config(s) for user ${userId}`);
+    console.log('[provider] Configuration deleted');
     res.json({ ok: true });
   });
 

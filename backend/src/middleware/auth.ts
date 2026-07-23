@@ -33,7 +33,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   // to PostgREST so authenticated database work is constrained by RLS.
   supabaseAuth.auth.getUser(token).then(({ data, error }) => {
     if (error || !data.user) {
-      console.log(`[auth] Token verification failed: ${error?.message ?? 'no user'}`);
+      console.log('[auth] Token verification failed');
       res.status(401).json({ error: 'Invalid or expired token' });
       return;
     }

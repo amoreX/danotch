@@ -38,8 +38,6 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
 
   router.get('/status', requireAuth, async (req, res) => {
     const userId = req.user!.sub;
-    console.log(`${tag} GET /status userId=${userId}`);
-
     if (!isComposioConfigured()) {
       res.json({ connected: false, reason: 'composio_not_configured' });
       return;
@@ -125,7 +123,6 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
           // was temporarily unavailable.
         }
       }
-      console.log(`${tag} → connected=true (synced to DB)`);
       res.json({ connected: true });
       return;
     }
@@ -139,18 +136,14 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
       .eq('app_type', appType)
       .single();
     if (data?.active) {
-      console.log(`${tag} → connected=true (from DB, composio lagging)`);
       res.json({ connected: true });
       return;
     }
-    console.log(`${tag} → connected=${status.connected}`);
     res.json(status);
   });
 
   router.post('/connect', requireAuth, async (req, res) => {
     const userId = req.user!.sub;
-    console.log(`${tag} POST /connect userId=${userId}`);
-
     if (!isComposioConfigured()) {
       res.status(400).json({ error: 'COMPOSIO_API_KEY not set — add it to backend/.env' });
       return;
@@ -210,12 +203,11 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
     const result = await initiateConnection(userId, toolkitSlug, appType, attempt.callbackUrl);
     if (result.error) {
       await failOAuthLinkAttempt(attempt.id, userId);
-      console.log(`${tag} ✗ ${result.error}`);
+      console.warn(`${tag} Connection initiation failed`);
       res.status(503).json({ error: 'Integration linking could not be started. Try again.' });
       return;
     }
 
-    console.log(`${tag} → redirectUrl=${result.redirectUrl ? 'yes' : 'auto-connected'}`);
     res.json({
       redirectUrl: result.redirectUrl,
       connected: !result.redirectUrl,
@@ -227,8 +219,6 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
 
   router.post('/disconnect', requireAuth, async (req, res) => {
     const userId = req.user!.sub;
-    console.log(`${tag} POST /disconnect userId=${userId}`);
-
     const success = await disconnect(userId, toolkitSlug, appType);
     res.json({ ok: success });
   });
@@ -248,7 +238,7 @@ function createSingleAppRoutes(appType: string, toolkitSlug: string, displayName
       res.status(400).send('<html><body>Invalid or expired connection link. Return to Perch and start again.</body></html>');
       return;
     }
-    console.log(`${tag} OAuth callback accepted for attempt=${result.attemptId}`);
+    console.log(`${tag} OAuth callback accepted`);
 
     res.send(`
       <html>

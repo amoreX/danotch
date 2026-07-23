@@ -59,10 +59,10 @@ export async function loadComposioTools(userId: string): Promise<{
         allTools.push(...tools);
         tools.forEach(t => allToolNames.add(t.name));
         activeAppNames.push(app.displayName);
-        console.log(`[composio] ${app.displayName} tools loaded: ${tools.length}`);
+        console.log(`[composio] App tools loaded: ${tools.length}`);
       }
-    } catch (err) {
-      console.error(`[composio] Failed to load ${app.displayName} tools:`, err);
+    } catch {
+      console.error('[composio] Failed to load app tools');
     }
   }
 
@@ -83,10 +83,10 @@ export async function loadToolsForApp(userId: string, appType: string): Promise<
   try {
     const tools = await getToolsForApp(userId, app.tools);
     const toolNames = new Set(tools.map(t => t.name));
-    console.log(`[composio] ${app.displayName} tools loaded on-demand: ${tools.length}`);
+    console.log(`[composio] App tools loaded on-demand: ${tools.length}`);
     return { tools, toolNames };
-  } catch (err) {
-    console.error(`[composio] Failed to load ${app.displayName} tools on-demand:`, err);
+  } catch {
+    console.error('[composio] Failed to load app tools on-demand');
     return { tools: [], toolNames: new Set() };
   }
 }
@@ -107,8 +107,8 @@ async function getToolsForApp(userId: string, toolActions: string[]): Promise<An
     const c = getComposio();
     const tools = await c.tools.get(userId, { tools: toolActions });
     return (tools ?? []) as unknown as Anthropic.Tool[];
-  } catch (err) {
-    console.error('[composio] Failed to fetch tools:', err);
+  } catch {
+    console.error('[composio] Failed to fetch tools');
     return [];
   }
 }
@@ -153,7 +153,7 @@ export async function executeComposioTool(
     if (toolCall.strictDelivery) throw new Error('Provider returned no reconcilable result');
     return JSON.stringify({ error: 'No result from tool execution' });
   } catch (err: any) {
-    console.error(`[composio] Tool execution failed (${toolCall.name}):`, err);
+    console.error('[composio] Tool execution failed');
     if (toolCall.strictDelivery) throw err;
     return JSON.stringify({ error: err.message || 'Composio tool execution failed' });
   }

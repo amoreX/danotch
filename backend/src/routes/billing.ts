@@ -64,7 +64,7 @@ export function createBillingRoutes(
         res.status(404).json({ error: err.message, code: 'profile_not_found' });
         return;
       }
-      console.error('[billing] status lookup failed:', err instanceof Error ? err.message : err);
+      console.error('[billing] Status lookup failed');
       res.status(503).json({
         error: 'Billing status is temporarily unavailable.',
         code: 'billing_unavailable',
@@ -133,8 +133,8 @@ export function createBillingRoutes(
       }
 
       res.json({ checkout_url: session.checkout_url, reused: false });
-    } catch (err) {
-      console.error('[billing] checkout session creation failed:', err);
+    } catch {
+      console.error('[billing] Checkout session creation failed');
       res.status(502).json({
         error: 'Failed to create checkout session.',
         code: 'checkout_failed',
@@ -178,8 +178,8 @@ export function createBillingRoutes(
         'webhook-signature': req.headers['webhook-signature'] as string,
         'webhook-timestamp': req.headers['webhook-timestamp'] as string,
       });
-    } catch (err) {
-      console.warn('[billing] webhook signature verification failed:', err instanceof Error ? err.message : err);
+    } catch {
+      console.warn('[billing] Webhook signature verification failed');
       res.status(401).json({ error: 'Invalid signature' });
       return;
     }
@@ -191,7 +191,7 @@ export function createBillingRoutes(
     ) {
       const reversal = validatePaymentReversal(payload);
       if (!reversal.ok) {
-        console.warn(`[billing] ${payload.type} rejected: ${reversal.reason}`);
+        console.warn('[billing] Payment reversal contract rejected');
         res.json({ received: true });
         return;
       }
@@ -206,15 +206,15 @@ export function createBillingRoutes(
           reason: reversal.reason,
         });
         res.json({ received: true, outcome });
-      } catch (err) {
-        console.error(`[billing] reversal failed for payment ${reversal.paymentId}:`, err);
+      } catch {
+        console.error('[billing] Payment reversal persistence failed');
         res.status(503).json({ error: 'Temporary failure recording reversal; please retry.' });
       }
       return;
     }
 
     if (payload?.type !== 'payment.succeeded') {
-      console.log(`[billing] webhook event "${payload?.type}" acknowledged (no-op).`);
+      console.log('[billing] Non-actionable webhook acknowledged');
       res.json({ received: true });
       return;
     }
@@ -224,7 +224,7 @@ export function createBillingRoutes(
       // Verified but does not match the configured commercial contract. This is a
       // terminal decision (retrying won't change it), so acknowledge with 200
       // WITHOUT granting anything.
-      console.warn(`[billing] payment.succeeded rejected: ${contract.reason}`);
+      console.warn('[billing] Payment contract rejected');
       res.json({ received: true });
       return;
     }
@@ -244,15 +244,12 @@ export function createBillingRoutes(
         dodoSessionId: contract.dodoSessionId,
         environment: config.dodo.environment,
       });
-      console.log(`[billing] payment ${contract.paymentId} → ${outcome} (user ${contract.userId}).`);
+      console.log(`[billing] Payment processing outcome=${outcome}`);
       // granted / duplicate / unknown_profile / rejected are all terminal.
       res.json({ received: true, outcome });
-    } catch (err) {
+    } catch {
       // Operational/database failure. Return non-2xx so Dodo retries with backoff.
-      console.error(
-        `[billing] recordPayment failed for user_id=${contract.userId} payment_id=${contract.paymentId}:`,
-        err instanceof Error ? err.message : err,
-      );
+      console.error('[billing] Payment persistence failed');
       res.status(503).json({ error: 'Temporary failure recording payment; please retry.' });
     }
   });

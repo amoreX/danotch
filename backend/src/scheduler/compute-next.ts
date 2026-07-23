@@ -9,8 +9,8 @@ export function computeNextRun(taskType: string, cron?: string | null, intervalM
     try {
       const interval = CronExpressionParser.parse(cron);
       return interval.next().toDate();
-    } catch (e) {
-      console.error(`[scheduler] Invalid cron "${cron}":`, e);
+    } catch {
+      console.error('[scheduler] Invalid cron configuration');
       return new Date(Date.now() + 3600_000);
     }
   }

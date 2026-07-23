@@ -22,7 +22,7 @@ function handleError(error: unknown, res: Parameters<RequestHandler>[1]): void {
     res.status(error.status).json({ error: error.message, code: error.code });
     return;
   }
-  console.error('[devices] request failed', error);
+  console.error('[devices] Request failed');
   res.status(500).json({ error: 'Device operation failed', code: 'device_operation_failed' });
 }
 

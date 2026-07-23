@@ -1,5 +1,5 @@
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { loadConfig } from './config.js';
 import type { DeviceService } from './devices/device-service.js';
 import type { DeviceGateway } from './events/device-gateway.js';
@@ -42,9 +42,19 @@ function correlationMiddleware(req: Request, res: Response, next: NextFunction):
 /** Structured request log that never emits auth tokens or body content. */
 function requestLogger(req: Request, res: Response, next: NextFunction): void {
   const cid = (res.locals['correlationId'] as string | undefined) ?? '-';
+  const loggedCid = createHash('sha256').update(cid).digest('hex').slice(0, 12);
   const auth = req.headers.authorization ? '(bearer)' : '(no-auth)';
+  const path = req.path
+    .replace(
+      /\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?=\/|$)/gi,
+      '/:id',
+    )
+    .replace(
+      /\/(tasks|threads|scheduled|notifications|devices|runs|actions)\/[^/]+/gi,
+      '/$1/:id',
+    );
   console.log(
-    `[${new Date().toISOString().slice(0, 19)}Z] ${req.method} ${req.path} ${auth} rid=${cid}`,
+    `[${new Date().toISOString().slice(0, 19)}Z] ${req.method} ${path} ${auth} rid=${loggedCid}`,
   );
   next();
 }

@@ -30,8 +30,6 @@ export function createScheduledRoutes(): Router {
   // List user's scheduled tasks
   router.get('/', requireAuth, async (req, res) => {
     const userId = req.user!.sub;
-    console.log(`[scheduled] GET / userId=${userId}`);
-
     const { data, error } = await supabase
       .from('danotch_scheduled_tasks')
       .select('*')
@@ -48,7 +46,6 @@ export function createScheduledRoutes(): Router {
       schedule_human: scheduleToHuman(t.task_type, t.cron, t.interval_ms),
     }));
 
-    console.log(`[scheduled] → ${tasks.length} tasks`);
     res.json({ tasks });
   });
 
@@ -63,8 +60,6 @@ export function createScheduledRoutes(): Router {
     }
     const updates = validation.updates;
     let nextRunAt: string | undefined;
-
-    console.log(`[scheduled] PATCH /${taskId} userId=${userId}`, updates);
 
     // If re-enabling or changing schedule, recompute next_run_at
     if (updates.enabled === true || updates.cron || updates.interval_ms) {
@@ -136,8 +131,6 @@ export function createScheduledRoutes(): Router {
   router.delete('/:id', requireAuth, async (req, res) => {
     const userId = req.user!.sub;
     const taskId = req.params.id as string;
-    console.log(`[scheduled] DELETE /${taskId} userId=${userId}`);
-
     const { error } = await supabase
       .from('danotch_scheduled_tasks')
       .delete()
@@ -155,8 +148,6 @@ export function createScheduledRoutes(): Router {
   router.post('/:id/run', requireAuth, async (req, res) => {
     const userId = req.user!.sub;
     const taskId = req.params.id as string;
-    console.log(`[scheduled] POST /${taskId}/run userId=${userId}`);
-
     const { error } = await getAdminDb('scheduler')
       .from('danotch_scheduled_tasks')
       .update({

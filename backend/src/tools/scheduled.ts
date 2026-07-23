@@ -187,7 +187,7 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
     .single();
 
   if (error) {
-    console.error('[tools:scheduled] Create failed:', error.message);
+    console.error('[tools:scheduled] Create failed');
     return JSON.stringify({ error: error.message });
   }
   const { error: scheduleError } = await getAdminDb('scheduler')

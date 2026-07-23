@@ -18,7 +18,7 @@ export class NotchBridge {
   }
 
   connect() {
-    console.log(`[NotchBridge] Connecting to ${this.url}...`);
+    console.log('[NotchBridge] Connecting...');
 
     this.ws = new WebSocket(this.url);
 
@@ -45,8 +45,8 @@ export class NotchBridge {
       this.scheduleReconnect();
     });
 
-    this.ws.on('error', (err) => {
-      console.log('[NotchBridge] Connection error:', err.message);
+    this.ws.on('error', () => {
+      console.log('[NotchBridge] Connection error');
       this.ws = null;
       this.scheduleReconnect();
     });
@@ -64,8 +64,6 @@ export class NotchBridge {
     if (msg.type === 'connection_response') {
       const requestId = msg.request_id as string;
       const approved = msg.approved as boolean;
-      console.log(`[NotchBridge] Connection response: ${requestId} → ${approved ? 'approved' : 'denied'}`);
-
       const pending = this.pendingRequests.get(requestId);
       if (pending) {
         clearTimeout(pending.timer);
@@ -90,7 +88,7 @@ export class NotchBridge {
       // Timeout after 120s (OAuth can take a while)
       const timer = setTimeout(() => {
         if (this.pendingRequests.has(requestId)) {
-          console.log(`[NotchBridge] Connection request timed out: ${requestId}`);
+          console.log('[NotchBridge] Connection request timed out');
           this.pendingRequests.delete(requestId);
           resolve(false);
         }

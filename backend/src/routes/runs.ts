@@ -185,6 +185,6 @@ function handleError(error: unknown, res: Parameters<RequestHandler>[1]): void {
     res.status(error.status).json({ error: error.message, code: error.code });
     return;
   }
-  console.error('[runs] request failed', error);
+  console.error('[runs] Request failed');
   res.status(500).json({ error: 'Run operation failed', code: 'run_operation_failed' });
 }

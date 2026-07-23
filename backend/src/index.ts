@@ -112,8 +112,8 @@ if (recoveredRuns > 0) {
 const replayRecovery = new SupabaseReplayStore(getAdminDb('fencing'), fencingQuota);
 await replayRecovery.expireWaitingRuns(new Date().toISOString());
 const waitingExpiryTimer = setInterval(() => {
-  void replayRecovery.expireWaitingRuns(new Date().toISOString()).catch((error) => {
-    console.error('[perch-backend] Waiting-device expiry failed closed', error);
+  void replayRecovery.expireWaitingRuns(new Date().toISOString()).catch(() => {
+    console.error('[perch-backend] Waiting-device expiry failed closed');
   });
 }, config.deviceGateway.waitingExpirySweepMs);
 waitingExpiryTimer.unref();

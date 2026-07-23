@@ -45,8 +45,8 @@ export async function getConnectionStatus(userId: string, toolkitSlug: string): 
     const anyResult = await c.connectedAccounts.list({ userIds: [userId], toolkitSlugs: [toolkitSlug] } as any);
     const pending = anyResult.items?.[0];
     return { connected: false, available: true, status: pending?.status };
-  } catch (err) {
-    console.error(`[composio:${toolkitSlug}] Connection status check failed:`, err);
+  } catch {
+    console.error('[composio] Connection status check failed');
     return { connected: false, available: false, status: 'unknown' };
   }
 }
@@ -65,7 +65,6 @@ export async function initiateConnection(
     // would leave the user disconnected (audit finding).
     const authConfigs = await (c as any).authConfigs.list({ toolkitSlugs: [toolkitSlug] });
     const allConfigs = authConfigs?.items ?? authConfigs ?? [];
-    console.log(`[composio:${toolkitSlug}] Auth configs found:`, allConfigs.map((c: any) => ({ id: c.id, appName: c.appName })));
     const pinnedConfigId = config.composio.authConfigIds[
       appType as keyof typeof config.composio.authConfigIds
     ];
@@ -78,8 +77,6 @@ export async function initiateConnection(
     if (!appConfig?.id) {
       return { error: `No auth config found for ${toolkitSlug}. Set it up in your Composio dashboard first.` };
     }
-    console.log(`[composio:${toolkitSlug}] Using auth config: ${appConfig.id} (appName: ${appConfig.appName})`);
-
     if (!config.publicBaseUrl) {
       return { error: 'PUBLIC_BASE_URL is required to create integration links.' };
     }
@@ -119,7 +116,7 @@ export async function initiateConnection(
 
     return { redirectUrl };
   } catch (err: any) {
-    console.error(`[composio:${toolkitSlug}] Connection initiation failed:`, err);
+    console.error('[composio] Connection initiation failed');
     return { error: err.message || `Failed to initiate ${toolkitSlug} connection` };
   }
 }
@@ -150,8 +147,8 @@ export async function disconnect(userId: string, toolkitSlug: string, appType: s
     invalidateActiveAppsCache(userId);
 
     return true;
-  } catch (err) {
-    console.error(`[composio:${toolkitSlug}] Disconnect failed:`, err);
+  } catch {
+    console.error('[composio] Disconnect failed');
     return false;
   }
 }
@@ -204,10 +201,10 @@ export async function syncConnectionToDb(
         .eq('app_type', appType);
     if (error) return false;
     invalidateActiveAppsCache(userId);
-    console.log(`[composio:${appType}] Synced connection to DB for user ${userId}`);
+    console.log('[composio] Connection synchronized');
     return true;
-  } catch (err) {
-    console.error(`[composio:${appType}] Failed to sync connection to DB:`, err);
+  } catch {
+    console.error('[composio] Failed to synchronize connection');
     return false;
   }
 }
@@ -233,7 +230,7 @@ export async function getActiveApps(userId: string): Promise<string[]> {
     .eq('active', true);
 
   if (error) {
-    console.error('[composio] Failed to query active apps:', error.message);
+    console.error('[composio] Failed to query active apps');
     return [];
   }
 

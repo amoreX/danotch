@@ -12,7 +12,6 @@ export function createTaskRoutes(notch: NotchBridge): Router {
 
   router.get('/tasks', requireAuth, async (req, res) => {
     const tasks = await getAllTasks(req.user!.sub);
-    console.log(`[tasks] GET /tasks → ${tasks.length} tasks`);
     res.json({ tasks });
   });
 
@@ -20,11 +19,9 @@ export function createTaskRoutes(notch: NotchBridge): Router {
     const taskId = req.params.id as string;
     const task = await getTask(req.user!.sub, taskId);
     if (!task) {
-      console.log(`[tasks] GET /tasks/${taskId} → not found`);
       res.status(404).json({ error: 'Task not found' });
       return;
     }
-    console.log(`[tasks] GET /tasks/${taskId} → ${task.status}`);
     res.json({ task });
   });
 
@@ -75,8 +72,6 @@ export function createTaskRoutes(notch: NotchBridge): Router {
       : [];
 
     const userId = req.user!.sub;
-    console.log(`[chat] message="${message.slice(0, 50)}" userId=${userId} conversationId=${conversation_id ?? 'new'} history=${history.length} sessionId=${session_id ?? 'new'}`);
-
     try {
       const task = await runChat(message, notch, {
         sessionId: session_id,
@@ -87,7 +82,7 @@ export function createTaskRoutes(notch: NotchBridge): Router {
         idempotencyKey: typeof session_id === 'string' ? session_id : undefined,
         history,
       });
-      console.log(`[chat] Done → taskId=${task.id} conversationId=${task.threadId} status=${task.status}`);
+      console.log(`[chat] Request completed with status=${task.status}`);
       res.json({
         task: { id: task.id, status: task.status, result: task.result, error: task.error },
         thread_id: task.threadId,
@@ -101,7 +96,7 @@ export function createTaskRoutes(notch: NotchBridge): Router {
         res.status(httpStatus).json({ error: err.message, code: err.code });
         return;
       }
-      console.error(`[chat] Error:`, err);
+      console.error('[chat] Request failed');
       res.status(500).json({ error: 'The request could not be completed.' });
     }
   });
@@ -109,21 +104,16 @@ export function createTaskRoutes(notch: NotchBridge): Router {
   // ── Threads (requires auth) ──
 
   router.get('/threads', requireAuth, async (req, res) => {
-    console.log(`[threads] GET /threads userId=${req.user!.sub}`);
     const threads = await getThreads(req.user!.sub);
-    console.log(`[threads] → ${threads.length} threads`);
     res.json({ threads });
   });
 
   router.get('/threads/:id', requireAuth, async (req, res) => {
-    console.log(`[threads] GET /threads/${req.params.id} userId=${req.user!.sub}`);
     const messages = await getThreadMessages(req.user!.sub, req.params.id as string);
-    console.log(`[threads] → ${messages.length} messages`);
     res.json({ messages });
   });
 
   router.delete('/threads/:id', requireAuth, async (req, res) => {
-    console.log(`[threads] DELETE /threads/${req.params.id} userId=${req.user!.sub}`);
     const ok = await deleteThread(req.user!.sub, req.params.id as string);
     if (!ok) { res.status(500).json({ error: 'Failed to delete' }); return; }
     res.json({ ok: true });

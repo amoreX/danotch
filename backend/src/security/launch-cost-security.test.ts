@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { test } from 'node:test';
+import ts from 'typescript';
+
+async function productionTypeScriptFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return productionTypeScriptFiles(path);
+    return entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts') ? [path] : [];
+  }));
+  return files.flat();
+}
 
 test('trial migration atomically enforces daily tokens, spend, and concurrency', async () => {
   const sql = await readFile(
@@ -62,6 +74,62 @@ test('auth endpoints are rate limited and upstream errors are not returned raw',
   assert.match(auth, /router\.post\('\/refresh', refreshLimiter/);
   assert.match(tasks, /The request could not be completed\./);
   assert.match(runner, /Provider stream interrupted/);
+});
+
+test('production logs cannot include user content, identifiers, or raw errors', async () => {
+  const sourceRoot = new URL('../', import.meta.url).pathname;
+  const files = await productionTypeScriptFiles(sourceRoot);
+  const forbidden = new Set([
+    'message',
+    'prompt',
+    'query',
+    'url',
+    'inputSummary',
+    'resultSummary',
+    'userId',
+    'taskId',
+    'taskName',
+    'paymentId',
+    'conversation_id',
+    'session_id',
+    'payload',
+    'updates',
+    'title',
+    'err',
+    'error',
+  ]);
+
+  for (const file of files) {
+    const sourceText = await readFile(file, 'utf8');
+    const source = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true);
+
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node)
+        && ts.isPropertyAccessExpression(node.expression)
+        && ts.isIdentifier(node.expression.expression)
+        && node.expression.expression.text === 'console'
+        && ['log', 'warn', 'error'].includes(node.expression.name.text)
+      ) {
+        const loggedExpressions = node.arguments.map((argument) => argument.getText(source)).join(' ');
+        const identifiers = new Set<string>();
+        const collectIdentifiers = (argumentNode: ts.Node): void => {
+          if (ts.isIdentifier(argumentNode)) identifiers.add(argumentNode.text);
+          ts.forEachChild(argumentNode, collectIdentifiers);
+        };
+        node.arguments.forEach(collectIdentifiers);
+        const sensitiveIdentifiers = [...identifiers].filter((identifier) => forbidden.has(identifier));
+        assert.deepEqual(
+          sensitiveIdentifiers,
+          [],
+          `${file} logs potentially sensitive expressions (${sensitiveIdentifiers.join(', ')}): ${loggedExpressions}`,
+        );
+      }
+      ts.forEachChild(node, visit);
+    };
+
+    visit(source);
+  }
 });
 
 test('remote migrations verify TLS and support an explicit CA', async () => {

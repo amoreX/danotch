@@ -53,7 +53,6 @@ export async function getProviderForUser(
 
     const apiKey = decrypt(data.api_key_encrypted);
     const modelId = fallbackModelId || data.model_id;
-    console.log(`[provider] User ${userId} → ${data.provider} (${modelId})`);
     return createProvider(data.provider as ProviderType, apiKey, modelId);
   } catch (err) {
     if (err instanceof ProviderLookupError) throw err;
@@ -87,7 +86,6 @@ export async function getActiveProviderForUser(
 
     const apiKey = decrypt(data.api_key_encrypted);
     const modelId = modelOverride || data.model_id;
-    console.log(`[provider] User ${userId} BYOK → ${data.provider} (${modelId})`);
     return createProvider(data.provider as ProviderType, apiKey, modelId);
   } catch (err) {
     if (err instanceof ProviderLookupError) throw err;

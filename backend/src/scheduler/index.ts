@@ -43,7 +43,7 @@ export async function tick(notch: NotchBridge, workerId = schedulerWorkerId) {
     });
 
     if (error) {
-      console.error('[scheduler] Query error:', error.message);
+      console.error('[scheduler] Due-task query failed');
       return;
     }
     if (!dueTasks || dueTasks.length === 0) return;
@@ -51,12 +51,12 @@ export async function tick(notch: NotchBridge, workerId = schedulerWorkerId) {
     console.log(`[scheduler] ${dueTasks.length} due task(s)`);
 
     for (const task of dueTasks) {
-      executeTask(task, notch, workerId).catch((err) => {
-        console.error(`[scheduler] Unhandled error in task ${task.id}:`, err);
+      executeTask(task, notch, workerId).catch(() => {
+        console.error('[scheduler] Unhandled task execution failure');
       });
     }
-  } catch (err) {
-    console.error('[scheduler] Tick error:', err);
+  } catch {
+    console.error('[scheduler] Tick failed');
   }
 }
 
@@ -99,7 +99,7 @@ async function executeTask(
     return;
   }
 
-  console.log(`[scheduler] Running task "${taskName}" (notify=${notifyUser}) for user ${userId}`);
+  console.log(`[scheduler] Running scheduled task (notify=${notifyUser})`);
 
   let resultText = '';
   let status = 'completed';
@@ -167,14 +167,14 @@ async function executeTask(
         : new Date(Date.now() + err.retryAfterSeconds * 1000);
       scheduledNextRun = new Date(Math.max(nextRun.getTime(), resetAt.getTime()));
       console.log(
-        `[scheduler] Task "${taskName}" deferred until ${scheduledNextRun.toISOString()} (daily trial limit)`,
+        `[scheduler] Task deferred until ${scheduledNextRun.toISOString()} (daily trial limit)`,
       );
     } else {
       status = 'failed';
       finishOutcome = 'retry';
       errorMsg = err instanceof Error ? err.message : 'Unknown error';
       resultText = errorMsg;
-      console.error(`[scheduler] Task "${taskName}" failed (${providerName}):`, errorMsg);
+      console.error('[scheduler] Scheduled task failed');
     }
   }
 
@@ -210,12 +210,12 @@ async function executeTask(
   }
 
   if (!notifyUser) {
-    console.log(`[scheduler] Task "${taskName}" ${status} via ${providerName} (silent)`);
+    console.log(`[scheduler] Scheduled task ${status} (silent)`);
     return;
   }
 
   if (!shouldNotify) {
-    console.log(`[scheduler] Task "${taskName}" ${status} via ${providerName} (condition not met)`);
+    console.log(`[scheduler] Scheduled task ${status} (condition not met)`);
     return;
   }
 
@@ -232,7 +232,7 @@ async function executeTask(
     .select('id, created_at')
     .single();
 
-  console.log(`[scheduler] Task "${taskName}" ${status} via ${providerName}, notification + peek`);
+  console.log(`[scheduler] Scheduled task ${status}, notification + peek`);
 
   if (notifData) {
     notch.send({
@@ -261,7 +261,7 @@ function startLeaseHeartbeat(taskId: string, workerId: string, leaseToken: strin
       p_lease_seconds: 180,
     }).then(({ data, error }) => {
       if (error || data !== true) {
-        console.error(`[scheduler] Lease renewal failed for ${taskId}; terminal write will be fenced`);
+        console.error('[scheduler] Lease renewal failed; terminal write will be fenced');
       }
     });
   }, 60_000);
@@ -289,7 +289,7 @@ async function finishSchedule(
     p_last_result: result,
   });
   if (error) {
-    console.error(`[scheduler] Could not finish leased task ${taskId}:`, error.message);
+    console.error('[scheduler] Could not finish leased task');
     return 'error';
   }
   return String(data);

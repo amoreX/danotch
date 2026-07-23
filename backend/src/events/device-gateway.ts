@@ -175,8 +175,8 @@ export class DeviceGateway {
         return false;
       },
     });
-    this.wss.on('error', (error) => {
-      console.error('[device-gateway] server error', error.message);
+    this.wss.on('error', () => {
+      console.error('[device-gateway] Server error');
     });
   }
 

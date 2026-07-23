@@ -168,7 +168,6 @@ export async function executeHostedTool(
 
 async function webSearch(input: Record<string, unknown>): Promise<string> {
   const query = input.query as string;
-  console.log(`[tool:web_search] "${query}"`);
 
   try {
     // Use DuckDuckGo HTML lite for search results
@@ -201,7 +200,6 @@ async function webSearch(input: Record<string, unknown>): Promise<string> {
 
 async function webFetch(input: Record<string, unknown>): Promise<string> {
   const url = input.url as string;
-  console.log(`[tool:web_fetch] ${url}`);
 
   try {
     const { body, contentType } = await secureRequest(url);
