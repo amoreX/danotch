@@ -369,7 +369,6 @@ test('SIGTERM drain deadline: forced exit fires when drain takes too long', asyn
       forcedExit = true;
       resolve();
     }, DEADLINE);
-    drainTimer.unref?.();
     // Do NOT clear the timer — the deadline should fire.
   });
 
@@ -385,7 +384,6 @@ test('SIGTERM drain deadline: does not force exit when drain completes early', a
       forcedExit = true;
       resolve();
     }, DEADLINE);
-    drainTimer.unref?.();
 
     // Simulate all connections closing before deadline.
     setTimeout(() => {

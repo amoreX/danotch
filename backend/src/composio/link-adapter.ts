@@ -15,7 +15,7 @@ export interface ComposioLinkClient {
 }
 
 /**
- * Narrow adapter around the pinned @composio/core 0.6.10 link API. Tests inject
+ * Narrow adapter around the pinned @composio/core link API. Tests inject
  * this interface so initiation can be contract-tested without network access
  * or a destructive connected-account fake.
  */

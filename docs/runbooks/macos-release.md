@@ -10,7 +10,7 @@
 - App-specific password for the Apple ID used for notarytool.
 - Vercel Blob token with `store:rw` scope for the release store.
 - Access to the GitHub repository's **`release`** protected environment (where secrets live).
-- A Mac with Xcode 16+ for local testing; CI uses `macos-15`.
+- A Mac with Xcode 26+ for local testing; CI uses `macos-26`.
 
 ---
 
@@ -26,6 +26,15 @@
 | `VERCEL_BLOB_TOKEN` | Vercel Blob API token |
 
 **Never commit these values. Never share them in Slack or chat. Rotate them immediately if you suspect exposure.**
+
+Configure these non-secret variables in the same protected `release` environment:
+
+| Variable | Description |
+|----------|-------------|
+| `PERCH_API_BASE_URL` | Public production API origin using HTTPS |
+| `PERCH_DEVICE_GATEWAY_URL` | Public production device gateway using WSS |
+
+The release workflow rejects missing, insecure, or reserved example-domain values.
 
 Exporting the cert:
 ```bash
@@ -71,6 +80,8 @@ export NOTARIZE=1
 export APPLE_ID="you@example.com"
 export APPLE_ID_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 export APPLE_TEAM_ID="ABCDE12345"
+export PERCH_API_BASE_URL="https://your-production-api-host"
+export PERCH_DEVICE_GATEWAY_URL="wss://your-production-api-host/api/device-gateway"
 
 cd app
 ./build.sh

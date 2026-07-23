@@ -12,6 +12,8 @@ name: Release macOS
 #   APPLE_ID_PASSWORD           – app-specific password for the Apple ID
 #   APPLE_TEAM_ID               – 10-character Apple Developer Team ID
 #   VERCEL_BLOB_TOKEN           – Vercel Blob API token (store:rw scope)
+#   PERCH_API_BASE_URL           – release environment variable with the HTTPS API origin
+#   PERCH_DEVICE_GATEWAY_URL     – release environment variable with the WSS gateway URL
 #
 # None of these can be substituted with ad-hoc or development credentials.
 # The workflow refuses to produce distributable artifacts if any are absent.
@@ -34,8 +36,11 @@ permissions:
 jobs:
   release:
     name: Sign, notarize, attest, and publish
-    runs-on: macos-15
+    runs-on: macos-26
     environment: release
+    env:
+      PERCH_API_BASE_URL: ${{ vars.PERCH_API_BASE_URL }}
+      PERCH_DEVICE_GATEWAY_URL: ${{ vars.PERCH_DEVICE_GATEWAY_URL }}
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -58,11 +63,29 @@ jobs:
           [[ -z "$APPLE_ID_PASSWORD" ]]           && missing+=(APPLE_ID_PASSWORD)
           [[ -z "$APPLE_TEAM_ID" ]]               && missing+=(APPLE_TEAM_ID)
           [[ -z "$VERCEL_BLOB_TOKEN" ]]            && missing+=(VERCEL_BLOB_TOKEN)
+          [[ -z "$PERCH_API_BASE_URL" ]]            && missing+=(PERCH_API_BASE_URL)
+          [[ -z "$PERCH_DEVICE_GATEWAY_URL" ]]      && missing+=(PERCH_DEVICE_GATEWAY_URL)
           if [[ ${#missing[@]} -gt 0 ]]; then
-            echo "ERROR: Missing required release secrets: ${missing[*]}"
-            echo "Ad-hoc or unnotarized artifacts are REFUSED. Provide real Apple Developer credentials."
+            echo "ERROR: Missing required release secrets or variables: ${missing[*]}"
+            echo "Ad-hoc, unnotarized, or unconfigured artifacts are REFUSED."
             exit 1
           fi
+          [[ "$PERCH_API_BASE_URL" =~ ^https:// ]] || {
+            echo "ERROR: PERCH_API_BASE_URL must be an HTTPS URL."
+            exit 1
+          }
+          [[ "$PERCH_DEVICE_GATEWAY_URL" =~ ^wss:// ]] || {
+            echo "ERROR: PERCH_DEVICE_GATEWAY_URL must be a WSS URL."
+            exit 1
+          }
+          [[ "$PERCH_API_BASE_URL" != *".example"* ]] || {
+            echo "ERROR: PERCH_API_BASE_URL cannot use a reserved example domain."
+            exit 1
+          }
+          [[ "$PERCH_DEVICE_GATEWAY_URL" != *".example"* ]] || {
+            echo "ERROR: PERCH_DEVICE_GATEWAY_URL cannot use a reserved example domain."
+            exit 1
+          }
           echo "All required release credentials are present."
 
       # Import the Developer ID certificate into a temporary per-job Keychain
@@ -116,6 +139,8 @@ jobs:
             -scheme Perch \
             -configuration Release \
             -derivedDataPath "$DERIVED_DATA" \
+            PERCH_API_BASE_URL="$PERCH_API_BASE_URL" \
+            PERCH_DEVICE_GATEWAY_URL="$PERCH_DEVICE_GATEWAY_URL" \
             OTHER_CODE_SIGN_FLAGS="--keychain $KEYCHAIN_PATH" \
             CODE_SIGNING_ALLOWED=NO \
             build

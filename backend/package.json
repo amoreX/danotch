@@ -21,9 +21,9 @@
     "start": "node --permission --allow-fs-read=. dist/index.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
-    "@composio/anthropic": "0.6.10",
-    "@composio/core": "0.6.10",
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@composio/anthropic": "^0.10.1",
+    "@composio/core": "^0.14.0",
     "@supabase/supabase-js": "^2.101.1",
     "@types/jsonwebtoken": "^9.0.10",
     "cron-parser": "^5.5.0",
@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
+    "@types/pg": "^8.20.0",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.13",
     "tsx": "^4.19.0",

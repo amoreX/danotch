@@ -234,12 +234,30 @@ class NotchSettings: ObservableObject {
 }
 
 enum APIConfig {
-    static let baseURL = Bundle.main.object(forInfoDictionaryKey: "PerchAPIBaseURL") as? String
-        ?? ProcessInfo.processInfo.environment["PERCH_API_BASE_URL"]
-        ?? "http://localhost:3001"
-    static let gatewayURL = Bundle.main.object(forInfoDictionaryKey: "PerchDeviceGatewayURL") as? String
-        ?? ProcessInfo.processInfo.environment["PERCH_DEVICE_GATEWAY_URL"]
-        ?? "ws://localhost:3001/api/device-gateway"
+    private static func configuredValue(infoKey: String, environmentKey: String) -> String? {
+        let candidates = [
+            ProcessInfo.processInfo.environment[environmentKey],
+            Bundle.main.object(forInfoDictionaryKey: infoKey) as? String,
+        ]
+        return candidates.compactMap { candidate -> String? in
+            guard let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty,
+                  !value.contains("$("),
+                  !value.contains(".example") else {
+                return nil
+            }
+            return value
+        }.first
+    }
+
+    static let baseURL = configuredValue(
+        infoKey: "PerchAPIBaseURL",
+        environmentKey: "PERCH_API_BASE_URL"
+    ) ?? "http://localhost:3001"
+    static let gatewayURL = configuredValue(
+        infoKey: "PerchDeviceGatewayURL",
+        environmentKey: "PERCH_DEVICE_GATEWAY_URL"
+    ) ?? "ws://localhost:3001/api/device-gateway"
 
     static var baseURLValue: URL {
         validatedURL(baseURL, secureScheme: "https")

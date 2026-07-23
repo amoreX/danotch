@@ -10,7 +10,7 @@ begin
   if exists (select 1 from pg_roles where rolname = 'authenticator') then
     grant danotch_runner to authenticator;
   end if;
-end
+end;
 $$;
 alter role danotch_runner bypassrls;
 grant usage on schema public to danotch_runner;
@@ -247,7 +247,7 @@ begin
       item.table_name || '_immutable_owner', item.table_name, item.column_name
     );
   end loop;
-end
+end;
 $$;
 
 do $$
@@ -268,7 +268,7 @@ begin
       table_name || '_owner_select', table_name
     );
   end loop;
-end
+end;
 $$;
 
 revoke all on public.danotch_devices, public.danotch_runs,
@@ -367,7 +367,7 @@ begin
     );
   end if;
   return created;
-end
+end;
 $$;
 
 create function public.danotch_transition_run(
@@ -494,7 +494,7 @@ begin
     on conflict (run_id) do nothing;
   end if;
   return current_run;
-end
+end;
 $$;
 
 create function public.danotch_recover_interrupted_streams()
@@ -523,7 +523,7 @@ begin
     recovered := recovered + 1;
   end loop;
   return recovered;
-end
+end;
 $$;
 
 create function public.danotch_acknowledge_event(
@@ -559,7 +559,7 @@ begin
   )
   on conflict (event_id, device_id) do nothing;
   return 'acknowledged';
-end
+end;
 $$;
 
 create function public.danotch_decide_local_action(
@@ -621,7 +621,7 @@ begin
     terminal_at = case when p_decision = 'rejected' then now() else null end
   where id = p_action_id and user_id = p_user_id;
   return p_decision;
-end
+end;
 $$;
 
 create function public.danotch_mint_execution_grant(
@@ -674,7 +674,7 @@ begin
   update public.danotch_local_action_requests set state = 'granted'
   where id = p_action_id and user_id = p_user_id and state = 'approved';
   return grant_row;
-end
+end;
 $$;
 
 create function public.danotch_consume_execution_grant(
@@ -719,7 +719,7 @@ begin
   update public.danotch_local_action_requests set state = 'executing'
   where id = p_action_id and user_id = p_user_id and state = 'granted';
   return 'consumed';
-end
+end;
 $$;
 
 create function public.danotch_cancel_run(
@@ -752,7 +752,7 @@ begin
     'cancellation_requested', 'cancellation_requested',
     jsonb_build_object('reason', left(p_reason, 500)), null
   );
-end
+end;
 $$;
 
 create function public.danotch_record_action_result(

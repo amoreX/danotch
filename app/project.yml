@@ -46,8 +46,8 @@ targets:
         INFOPLIST_KEY_LSUIElement: YES
         INFOPLIST_KEY_NSAppleEventsUsageDescription: Perch accesses Apple Music only to display and control the track you are playing.
         INFOPLIST_KEY_NSHighResolutionCapable: YES
-        INFOPLIST_KEY_PerchAPIBaseURL: https://api.perch.example
-        INFOPLIST_KEY_PerchDeviceGatewayURL: wss://api.perch.example/api/device-gateway
+        INFOPLIST_KEY_PerchAPIBaseURL: $(PERCH_API_BASE_URL)
+        INFOPLIST_KEY_PerchDeviceGatewayURL: $(PERCH_DEVICE_GATEWAY_URL)
   PerchExecutor:
     type: tool
     platform: macOS
