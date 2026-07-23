@@ -414,7 +414,7 @@ begin
   if current_run.state in ('completed', 'failed', 'failed_recoverable', 'cancelled', 'expired') then
     raise exception 'late transition for terminal run' using errcode = '55000';
   end if;
-  if p_target_state is distinct from case p_event_type
+  if p_target_state is distinct from (case p_event_type
     when 'provider_stream_started' then 'provider_streaming'
     when 'provider_checkpointed' then 'checkpointed'
     when 'local_action_offered' then 'waiting_for_device'
@@ -425,7 +425,7 @@ begin
     when 'run_cancelled' then 'cancelled'
     when 'run_expired' then 'expired'
     else null
-  end then
+  end) then
     raise exception 'event type does not authorize target state' using errcode = '22023';
   end if;
 
