@@ -1,7 +1,17 @@
 import Foundation
 import SwiftUI
+import AppKit
 
-struct AuthSession: Codable {
+enum AuthLifecycleState: Equatable {
+    case credentials
+    case browserSignup
+    case checkEmail(String)
+    case verificationExpired(String)
+    case crossDeviceVerified(String)
+    case repairProvisioning
+}
+
+struct AuthSession: Codable, Equatable {
     var accessToken: String
     var refreshToken: String
     var expiresAt: Int?
@@ -17,9 +27,13 @@ class AuthManager: ObservableObject {
     @Published var isAuthenticated = false
     @Published var isLoading = false
     @Published var error: String?
+    @Published var lifecycleState: AuthLifecycleState = .credentials
 
-    private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
-    private static let authFile = configDir.appendingPathComponent("auth.json")
+    var onSessionWillChange: ((String?, String?) -> Void)?
+    var onSessionDidChange: ((AuthSession?) -> Void)?
+
+    private let sessionStore: SecureSessionStore
+    private let accountDataStore: AccountDataStore
     private var baseURL: String { APIConfig.baseURL }
 
     var userName: String {
@@ -28,53 +42,34 @@ class AuthManager: ObservableObject {
 
     var accessToken: String? { session?.accessToken }
 
-    init() {
+    init(
+        sessionStore: SecureSessionStore = SecureSessionStore(),
+        accountDataStore: AccountDataStore = AccountDataStore()
+    ) {
+        self.sessionStore = sessionStore
+        self.accountDataStore = accountDataStore
         loadSession()
     }
 
     // MARK: - Signup
 
     func signup(email: String, password: String, fullName: String) async -> Bool {
-        await MainActor.run { isLoading = true; error = nil }
-
-        let body: [String: String] = ["email": email, "password": password, "full_name": fullName]
-        guard let data = await post("/auth/signup", body: body) else {
-            await MainActor.run { isLoading = false }
-            return false
-        }
-
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let sessionObj = json["session"] as? [String: Any],
-              let accessToken = sessionObj["access_token"] as? String,
-              let refreshToken = sessionObj["refresh_token"] as? String,
-              let userObj = json["user"] as? [String: Any],
-              let userId = userObj["id"] as? String else {
-            await MainActor.run {
-                self.error = "Signup failed"
-                isLoading = false
-            }
-            return false
-        }
-
-        let email = (userObj["email"] as? String) ?? email
-        let name = (userObj["full_name"] as? String) ?? fullName
-
-        let authSession = AuthSession(
-            accessToken: accessToken,
-            refreshToken: refreshToken,
-            expiresAt: sessionObj["expires_at"] as? Int,
-            userId: userId,
-            email: email,
-            fullName: name
-        )
-
         await MainActor.run {
-            self.session = authSession
-            self.isAuthenticated = true
-            self.isLoading = false
+            isLoading = false
+            error = nil
+            lifecycleState = .browserSignup
         }
-        saveSession(authSession)
-        return true
+        var components = URLComponents(string: baseURL + "/auth/signup/browser")
+        components?.queryItems = [URLQueryItem(name: "email", value: email)]
+        guard let url = components?.url else {
+            await MainActor.run { error = "Could not open secure signup." }
+            return false
+        }
+        await MainActor.run {
+            NSWorkspace.shared.open(url)
+            lifecycleState = .checkEmail(email)
+        }
+        return false
     }
 
     // MARK: - Login
@@ -95,7 +90,7 @@ class AuthManager: ObservableObject {
               let userObj = json["user"] as? [String: Any],
               let userId = userObj["id"] as? String else {
             await MainActor.run {
-                self.error = "Login failed"
+                self.error = "Unable to sign in. Verify your email and try again."
                 isLoading = false
             }
             return false
@@ -110,21 +105,35 @@ class AuthManager: ObservableObject {
             fullName: (userObj["full_name"] as? String) ?? email.components(separatedBy: "@").first ?? ""
         )
 
-        await MainActor.run {
-            self.session = authSession
-            self.isAuthenticated = true
-            self.isLoading = false
+        let established = await establishSession(authSession)
+        if established {
+            await MainActor.run { lifecycleState = .crossDeviceVerified(authSession.email) }
         }
-        saveSession(authSession)
-        return true
+        return established
+    }
+
+    func reopenBrowserSignup(email: String) {
+        Task { _ = await signup(email: email, password: "", fullName: "") }
+    }
+
+    func returnToSignIn(email: String) {
+        self.error = nil
+        lifecycleState = .credentials
     }
 
     // MARK: - Logout
 
     func logout() {
+        let oldUserID = session?.userId
+        onSessionWillChange?(oldUserID, nil)
         session = nil
         isAuthenticated = false
-        try? FileManager.default.removeItem(at: Self.authFile)
+        do {
+            try sessionStore.delete()
+        } catch {
+            self.error = "Could not remove credentials from Keychain."
+        }
+        onSessionDidChange?(nil)
     }
 
     // MARK: - Token Refresh
@@ -174,36 +183,69 @@ class AuthManager: ObservableObject {
                 fullName: session.fullName
             )
 
-            await MainActor.run {
-                self.session = updated
-                self.isAuthenticated = true
+            do {
+                try sessionStore.rotate(from: session.userId, to: updated)
+                await MainActor.run {
+                    guard self.session?.userId == session.userId else { return }
+                    self.session = updated
+                    self.isAuthenticated = true
+                    self.onSessionDidChange?(updated)
+                }
+            } catch {
+                await MainActor.run {
+                    self.error = "Credential rotation failed. Please sign in again."
+                    self.logout()
+                }
             }
-            saveSession(updated)
             print("[AuthManager] Token refreshed successfully")
         } catch {
             print("[AuthManager] Refresh error: \(error.localizedDescription)")
+            await MainActor.run {
+                self.error = "Session refresh failed. Please sign in again."
+                self.logout()
+            }
         }
     }
 
     // MARK: - Persistence
 
-    private func saveSession(_ session: AuthSession) {
+    private func establishSession(_ newSession: AuthSession) async -> Bool {
         do {
-            try FileManager.default.createDirectory(at: Self.configDir, withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(session)
-            try data.write(to: Self.authFile)
+            let previousUserID = await MainActor.run { session?.userId }
+            await MainActor.run { onSessionWillChange?(previousUserID, newSession.userId) }
+            try sessionStore.save(newSession)
+            // Legacy import is allowed only after the matching session is
+            // durably present in Keychain.
+            try? accountDataStore.migrateLegacyData(
+                activeSession: newSession,
+                sessionStore: sessionStore
+            )
+            await MainActor.run {
+                session = newSession
+                isAuthenticated = true
+                isLoading = false
+                onSessionDidChange?(newSession)
+            }
+            return true
         } catch {
-            print("[AuthManager] Failed to save session: \(error)")
+            await MainActor.run {
+                session = nil
+                isAuthenticated = false
+                isLoading = false
+                self.error = "Could not secure this session in Keychain."
+                onSessionDidChange?(nil)
+            }
+            return false
         }
     }
 
     private func loadSession() {
-        guard let data = try? Data(contentsOf: Self.authFile),
-              let session = try? JSONDecoder().decode(AuthSession.self, from: data) else {
+        guard let session = try? sessionStore.load() else {
             return
         }
         self.session = session
         self.isAuthenticated = true
+        onSessionDidChange?(session)
 
         // Refresh token on startup if needed
         Task { await ensureValidToken() }
@@ -225,7 +267,17 @@ class AuthManager: ObservableObject {
             if let httpResponse, httpResponse.statusCode >= 400 {
                 if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    let errMsg = json["error"] as? String {
-                    await MainActor.run { self.error = errMsg }
+                    await MainActor.run {
+                        self.error = errMsg
+                        switch json["code"] as? String {
+                        case "email_verification_required":
+                            self.lifecycleState = .checkEmail("")
+                        case "provisioning_retry_required":
+                            self.lifecycleState = .repairProvisioning
+                        default:
+                            break
+                        }
+                    }
                 }
                 return nil
             }

@@ -1,7 +1,30 @@
 export type TaskStatus = 'running' | 'completed' | 'failed';
+export type DurableRunStatus =
+  | 'queued'
+  | 'provider_streaming'
+  | 'checkpointed'
+  | 'waiting_for_device'
+  | 'cancellation_requested'
+  | 'completed'
+  | 'failed'
+  | 'failed_recoverable'
+  | 'cancelled'
+  | 'expired';
+
+export interface DurableRun {
+  id: string;
+  readonly ownerId: string;
+  readonly deviceId: string | null;
+  protocolVersion: 1;
+  status: DurableRunStatus;
+  revision: number;
+  input: Record<string, unknown>;
+  checkpoint: Record<string, unknown> | null;
+}
 
 export interface Task {
   id: string;
+  readonly ownerId: string;
   task: string;
   description?: string;
   status: TaskStatus;

@@ -17,6 +17,107 @@ struct DraftCard: Codable {
     let recipient: String?
 }
 
+enum LocalConsentConfirmation: String, Codable, CaseIterable, Hashable {
+    case shell
+    case write
+    case sensitiveRead
+    case sensitiveDisclosure
+    case resultUpload
+}
+
+enum LocalConsentCardState: String, Codable {
+    case pending
+    case approving
+    case approved
+    case rejected
+    case unavailable
+    case failed
+}
+
+struct LocalExecutionConsentCard: Codable, Equatable {
+    let actionID: String
+    let registryVersion: String
+    let actionType: String
+    let actionHash: String
+    let parametersHash: String
+    let normalizedParametersJSON: Data
+    let capabilitiesJSON: Data
+    let workspaceBookmarkID: String
+    let command: [String]
+    let workspaceMode: String
+    let egressDestinations: [String]
+    let sensitiveFileAccess: Bool
+    let sensitiveDisclosure: Bool
+    let resultUpload: Bool
+    let expiresAt: Date
+    var selectedWorkspacePath: String?
+    var confirmations: Set<LocalConsentConfirmation>
+    var state: LocalConsentCardState
+    var error: String?
+
+    var requiredConfirmations: Set<LocalConsentConfirmation> {
+        var required: Set<LocalConsentConfirmation> = []
+        if actionType == "shell.execute" { required.insert(.shell) }
+        if workspaceMode == "read_write" { required.insert(.write) }
+        if sensitiveFileAccess { required.insert(.sensitiveRead) }
+        if sensitiveDisclosure { required.insert(.sensitiveDisclosure) }
+        if resultUpload { required.insert(.resultUpload) }
+        return required
+    }
+
+    var canApprove: Bool {
+        state == .pending
+            && selectedWorkspacePath != nil
+            && egressDestinations.isEmpty
+            && confirmations.isSuperset(of: requiredConfirmations)
+            && expiresAt > Date()
+    }
+}
+
+enum LocalConsentCardEvent {
+    case selectedWorkspace(String)
+    case toggled(LocalConsentConfirmation)
+    case approve
+    case approved
+    case reject
+    case failed(String)
+}
+
+struct LocalConsentCardReducer {
+    func reduce(
+        _ card: LocalExecutionConsentCard,
+        event: LocalConsentCardEvent
+    ) -> LocalExecutionConsentCard {
+        var next = card
+        switch event {
+        case .selectedWorkspace(let path):
+            guard card.state == .pending else { return card }
+            next.selectedWorkspacePath = path
+        case .toggled(let confirmation):
+            guard card.state == .pending,
+                  card.requiredConfirmations.contains(confirmation) else { return card }
+            if next.confirmations.contains(confirmation) {
+                next.confirmations.remove(confirmation)
+            } else {
+                next.confirmations.insert(confirmation)
+            }
+        case .approve:
+            guard card.canApprove else { return card }
+            next.state = .approving
+        case .approved:
+            guard card.state == .approving else { return card }
+            next.state = .approved
+        case .reject:
+            guard card.state == .pending || card.state == .approving else { return card }
+            next.state = .rejected
+        case .failed(let error):
+            next.state = .failed
+            next.error = error
+        }
+        return next
+    }
+}
+
 struct ChatMessage: Identifiable, Codable {
     let id: String
     let role: String
@@ -25,6 +126,7 @@ struct ChatMessage: Identifiable, Codable {
     var toolInput: String?
     var toolOutput: String?
     let draftCard: DraftCard?
+    var localExecutionCard: LocalExecutionConsentCard?
     let timestamp: Date
 
     init(
@@ -35,6 +137,7 @@ struct ChatMessage: Identifiable, Codable {
         toolInput: String? = nil,
         toolOutput: String? = nil,
         draftCard: DraftCard? = nil,
+        localExecutionCard: LocalExecutionConsentCard? = nil,
         timestamp: Date
     ) {
         self.id = id
@@ -44,6 +147,7 @@ struct ChatMessage: Identifiable, Codable {
         self.toolInput = toolInput
         self.toolOutput = toolOutput
         self.draftCard = draftCard
+        self.localExecutionCard = localExecutionCard
         self.timestamp = timestamp
     }
 }

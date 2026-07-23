@@ -1,4 +1,6 @@
-import { supabase } from '../lib/supabase.js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { userDb } from '../lib/user-db.js';
+import { getAdminDb } from '../lib/admin-db.js';
 import { getActiveProviderForUser, getFallbackProvider } from '../providers/factory.js';
 import type { LLMProvider } from '../providers/types.js';
 
@@ -39,8 +41,11 @@ export class EntitlementError extends Error {
 // Payment recording outcomes returned by the danotch_record_payment RPC.
 export type PaymentOutcome = 'granted' | 'duplicate' | 'unknown_profile' | 'rejected';
 
-export async function getBillingStatus(userId: string): Promise<BillingStatus> {
-  const { data: profile, error } = await supabase
+export async function getBillingStatus(
+  userId: string,
+  db: SupabaseClient = userDb,
+): Promise<BillingStatus> {
+  const { data: profile, error } = await db
     .from('danotch_user_profiles')
     .select('id, trial_started_at, trial_ends_at, lifetime_purchased_at, billing_status')
     .eq('id', userId)
@@ -60,22 +65,11 @@ export async function getBillingStatus(userId: string): Promise<BillingStatus> {
   }
 
   const now = new Date();
-  let trialStartedAt = parseDate(profile.trial_started_at) ?? now;
-  let trialEndsAt = parseDate(profile.trial_ends_at) ?? addDays(trialStartedAt, TRIAL_DAYS);
+  const trialStartedAt = parseDate(profile.trial_started_at) ?? now;
+  const trialEndsAt = parseDate(profile.trial_ends_at) ?? addDays(trialStartedAt, TRIAL_DAYS);
   const lifetimePurchasedAt = parseDate(profile.lifetime_purchased_at);
 
-  const missingTrialDates = !profile.trial_started_at || !profile.trial_ends_at;
-  if (missingTrialDates) {
-    await supabase
-      .from('danotch_user_profiles')
-      .update({
-        trial_started_at: trialStartedAt.toISOString(),
-        trial_ends_at: trialEndsAt.toISOString(),
-      })
-      .eq('id', userId);
-  }
-
-  const { data: activeProvider } = await supabase
+  const { data: activeProvider } = await db
     .from('danotch_provider_configs')
     .select('provider')
     .eq('user_id', userId)
@@ -89,13 +83,6 @@ export async function getBillingStatus(userId: string): Promise<BillingStatus> {
   const trialDaysRemaining = trialActive
     ? Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / 86_400_000))
     : 0;
-
-  if (profile.billing_status !== billingStatus) {
-    await supabase
-      .from('danotch_user_profiles')
-      .update({ billing_status: billingStatus })
-      .eq('id', userId);
-  }
 
   return {
     userId,
@@ -134,7 +121,7 @@ export async function createCheckoutRecord(
     environment: string;
   },
 ): Promise<string> {
-  const { data, error } = await supabase
+  const { data, error } = await getAdminDb('webhook')
     .from('danotch_checkout_records')
     .insert({
       user_id: userId,
@@ -154,7 +141,7 @@ export async function createCheckoutRecord(
 }
 
 export async function attachCheckoutSession(recordId: string, dodoSessionId: string): Promise<void> {
-  await supabase
+  await getAdminDb('webhook')
     .from('danotch_checkout_records')
     .update({ dodo_session_id: dodoSessionId })
     .eq('id', recordId);
@@ -177,7 +164,7 @@ export async function recordPayment(params: {
   currency: string | null;
   productId: string | null;
 }): Promise<PaymentOutcome> {
-  const { data, error } = await supabase.rpc('danotch_record_payment', {
+  const { data, error } = await getAdminDb('webhook').rpc('danotch_record_payment', {
     p_delivery_id: params.deliveryId,
     p_payment_id: params.paymentId,
     p_claimed_user_id: params.claimedUserId,
@@ -198,9 +185,10 @@ export async function recordPayment(params: {
 export async function resolveProviderForUser(
   userId: string,
   modelOverride?: string,
+  db: SupabaseClient = userDb,
 ): Promise<{ provider: LLMProvider; billingStatus: BillingStatus; source: 'byok' | 'trial_server_key' }> {
   const byokProvider = await getActiveProviderForUser(userId, modelOverride);
-  const billingStatus = await getBillingStatus(userId);
+  const billingStatus = await getBillingStatus(userId, db);
 
   if (byokProvider) {
     return { provider: byokProvider, billingStatus, source: 'byok' };

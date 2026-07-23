@@ -91,7 +91,7 @@ function FeatureRow({
           </span>
           <span
             className="mt-3 block max-w-[470px] text-[14px] leading-7 transition-colors duration-200"
-            style={{ color: active ? '#52525b' : '#a1a1aa' }}
+            style={{ color: active ? '#52525b' : '#71717a' }}
           >
             {feature.body}
           </span>

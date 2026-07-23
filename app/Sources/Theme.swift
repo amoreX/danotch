@@ -145,26 +145,41 @@ func relativeTimeString(_ date: Date, fallbackFormat: String = "MMM d") -> Strin
 //   - never hand-paint sheens, gradient strokes, or borders — the material does that
 //   - neighboring glass surfaces must share a GlassEffectContainer
 //
-// `liquidGlass()` is a thin passthrough to `.glassEffect()` for the few remaining
-// call sites that previously used the custom modifier. New code should call
-// `.glassEffect(...)` directly with the proper shape.
-
 extension View {
+    @ViewBuilder
+    func perchGlass<S: Shape>(
+        tint: Color? = nil,
+        in shape: S
+    ) -> some View {
+        if #available(macOS 26.0, *) {
+            if let tint {
+                glassEffect(Glass.regular.tint(tint), in: shape)
+            } else {
+                glassEffect(.regular, in: shape)
+            }
+        } else {
+            background(
+                (tint ?? Color.white).opacity(tint == nil ? 0.08 : 0.18),
+                in: shape
+            )
+            .overlay(shape.stroke(Color.white.opacity(0.12), lineWidth: 0.5))
+        }
+    }
+
     func liquidGlass(
         cornerRadius: CGFloat = 14,
         tint: Color? = nil,
         intensity: Double = 1.0,
         elevated: Bool = false
     ) -> some View {
-        let glass: Glass = tint.map { Glass.regular.tint($0.opacity(0.6)) } ?? Glass.regular
-        return self.glassEffect(
-            glass,
+        perchGlass(
+            tint: tint?.opacity(0.6),
             in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         )
     }
 
     func glassCell(cornerRadius: CGFloat = 14) -> some View {
-        glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        perchGlass(in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 
     /// Plain content card — flat dark fill, no glass. Per Apple's Liquid Glass
@@ -192,7 +207,17 @@ private struct SmartScrollFade: ViewModifier {
     @State private var fadeTop: Bool = false
     @State private var fadeBottom: Bool = true
 
+    @ViewBuilder
     func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            tracked(content: content)
+        } else {
+            content
+        }
+    }
+
+    @available(macOS 15.0, *)
+    private func tracked(content: Content) -> some View {
         content
             .onScrollGeometryChange(for: ScrollEdges.self) { geo in
                 let off = geo.contentOffset.y

@@ -1,0 +1,53 @@
+services:
+  - type: web
+    name: perch-backend
+    runtime: docker
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PUBLIC_SIGNUP_ENABLED
+        value: "false"
+      - key: COSTLY_INTEGRATIONS_ENABLED
+        value: "false"
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: DEVICE_GATEWAY_URL
+        sync: false
+      - key: DEVICE_TICKET_SIGNING_SECRET
+        sync: false
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DEVICE_ALLOWED_ORIGINS
+        value: "perch://app"
+      - key: JSON_BODY_LIMIT_BYTES
+        value: "65536"
+      - key: DEVICE_FRESH_AUTH_MAX_AGE_MS
+        value: "300000"
+      - key: DEVICE_CHALLENGE_TTL_MS
+        value: "60000"
+      - key: DEVICE_TICKET_TTL_MS
+        value: "30000"
+      - key: DEVICE_MAX_PER_USER
+        value: "3"
+      - key: DEVICE_MAX_PAYLOAD_BYTES
+        value: "65536"
+      - key: DEVICE_MAX_MESSAGES_PER_WINDOW
+        value: "120"
+      - key: DEVICE_MAX_BYTES_PER_WINDOW
+        value: "524288"
+      - key: DEVICE_RATE_WINDOW_MS
+        value: "60000"
+      - key: DEVICE_MAX_CONNECTION_BYTES
+        value: "16777216"
+      - key: DEVICE_MAX_BUFFERED_BYTES
+        value: "262144"
+      - key: DEVICE_HEARTBEAT_INTERVAL_MS
+        value: "20000"
+      - key: DEVICE_HEARTBEAT_TIMEOUT_MS
+        value: "60000"
+      - key: DEVICE_HANDSHAKE_TIMEOUT_MS
+        value: "5000"

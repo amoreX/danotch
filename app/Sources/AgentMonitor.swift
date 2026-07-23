@@ -16,19 +16,38 @@ class AgentMonitor: ObservableObject {
 
     private var timer: Timer?
 
-    init() {
-        refresh()
-        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            self?.refresh()
+    init(enabled: Bool = true) {
+        if enabled {
+            start()
         }
     }
 
     deinit { timer?.invalidate() }
 
+    func setEnabled(_ enabled: Bool) {
+        enabled ? start() : stop()
+    }
+
+    private func start() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+        refresh()
+    }
+
+    private func stop() {
+        timer?.invalidate()
+        timer = nil
+        agents = []
+    }
+
     func refresh() {
+        guard timer != nil else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let detected = Self.scanAgents()
             DispatchQueue.main.async {
+                guard self?.timer != nil else { return }
                 withAnimation(.easeOut(duration: 0.2)) {
                     self?.agents = detected
                 }

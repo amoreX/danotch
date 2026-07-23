@@ -362,7 +362,7 @@ private struct TodayPage: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: .capsule)
+        .perchGlass(in: Capsule())
         .contentShape(Rectangle())
         // `simultaneousGesture` (not `.onTapGesture`) so this still fires even
         // though the TextField above already claims its own tap — otherwise
@@ -377,7 +377,7 @@ private struct TodayPage: View {
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
             .frame(width: 24, height: 24)
-            .glassEffect(enabled ? Glass.regular.tint(DN.activeAccent) : Glass.regular, in: .circle)
+            .perchGlass(tint: enabled ? DN.activeAccent : nil, in: Circle())
             .opacity(enabled ? 1 : 0.55)
             .contentShape(.circle)
             .onTapGesture { if enabled { submit() } }
@@ -787,7 +787,7 @@ struct IconActionButton: View {
             Image(systemName: icon)
                 .symbolRenderingMode(.hierarchical)
         }
-        .buttonStyle(.glass)
+        .buttonStyle(.bordered)
         .controlSize(.small)
         .tint(.clear)
         .help(label)
@@ -1133,14 +1133,38 @@ class NowPlayingMonitor: ObservableObject {
         return String(format: "%d:%02d", m, s)
     }
 
-    init() {
-        poll()
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            self?.poll()
+    init(enabled: Bool = true) {
+        if enabled {
+            start()
         }
     }
 
     deinit { timer?.invalidate() }
+
+    func setEnabled(_ enabled: Bool) {
+        enabled ? start() : stop()
+    }
+
+    private func start() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.poll()
+        }
+        poll()
+    }
+
+    private func stop() {
+        timer?.invalidate()
+        timer = nil
+        source = nil
+        track = nil
+        artist = nil
+        isPlaying = false
+        position = 0
+        duration = 0
+        artworkImage = nil
+        lastTrackKey = nil
+    }
 
     /// Send a transport command to the currently-active source. We resolve the
     /// app at call time rather than at construction so switching from Apple
@@ -1181,6 +1205,7 @@ class NowPlayingMonitor: ObservableObject {
 
             guard musicRunning || spotifyRunning else {
                 DispatchQueue.main.async {
+                    guard self?.timer != nil else { return }
                     guard self?.track != nil || self?.source != nil else { return }
                     self?.source = nil
                     self?.track = nil
@@ -1208,6 +1233,7 @@ class NowPlayingMonitor: ObservableObject {
             if chosen.result.track == nil { artwork = nil }
 
             DispatchQueue.main.async {
+                guard self?.timer != nil else { return }
                 self?.source = chosen.source
                 self?.track = chosen.result.track
                 self?.artist = chosen.result.artist

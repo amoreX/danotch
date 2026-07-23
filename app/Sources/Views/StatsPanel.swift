@@ -498,7 +498,7 @@ struct ProcessListPanel: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.white)
                     .frame(width: 26, height: 22)
-                    .glassEffect(.regular, in: .capsule)
+                    .perchGlass(in: Capsule())
                     .contentShape(.capsule)
                     .onTapGesture { monitor.refreshProcesses() }
             }
@@ -530,10 +530,7 @@ struct ProcessListPanel: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .frame(height: 22)
-            .glassEffect(
-                active ? Glass.regular.tint(DN.activeAccent) : Glass.regular,
-                in: .capsule
-            )
+            .perchGlass(tint: active ? DN.activeAccent : nil, in: Capsule())
             .contentShape(.capsule)
             .onTapGesture {
                 withAnimation(.easeOut(duration: 0.15)) { sortBy = field }
@@ -587,7 +584,7 @@ struct ProcessListPanel: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12)
                         .frame(height: 22)
-                        .glassEffect(Glass.regular.tint(.red), in: .capsule)
+                        .perchGlass(tint: .red, in: Capsule())
                         .contentShape(.capsule)
                         .onTapGesture { monitor.forceKillProcess(pid: proc.pid) }
                 }

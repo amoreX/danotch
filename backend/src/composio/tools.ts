@@ -117,7 +117,12 @@ async function getToolsForApp(userId: string, toolActions: string[]): Promise<An
 
 export async function executeComposioTool(
   userId: string,
-  toolCall: { id: string; name: string; input: Record<string, unknown> },
+  toolCall: {
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+    strictDelivery?: boolean;
+  },
 ): Promise<string> {
   try {
     const c = getComposio();
@@ -145,9 +150,11 @@ export async function executeComposioTool(
       const content = r?.content ?? r;
       return typeof content === 'string' ? content : JSON.stringify(content);
     }
+    if (toolCall.strictDelivery) throw new Error('Provider returned no reconcilable result');
     return JSON.stringify({ error: 'No result from tool execution' });
   } catch (err: any) {
     console.error(`[composio] Tool execution failed (${toolCall.name}):`, err);
+    if (toolCall.strictDelivery) throw err;
     return JSON.stringify({ error: err.message || 'Composio tool execution failed' });
   }
 }

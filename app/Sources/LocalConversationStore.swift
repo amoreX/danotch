@@ -13,9 +13,6 @@ struct LocalConversationRecord: Codable, Identifiable {
 }
 
 final class LocalConversationStore {
-    private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
-    private static let storeFile = configDir.appendingPathComponent("conversations.json")
-
     // All reads/writes go through this serial queue. `upsert` is a
     // read-modify-write over the whole file and gets called synchronously from
     // the main actor on every tool_start/tool_result/text_flush/done WebSocket
@@ -23,7 +20,7 @@ final class LocalConversationStore {
     // write on the main thread multiple times a second, which shows up as UI
     // stutter. Moving it to a background serial queue keeps the writes
     // ordered (no lost updates) without blocking the UI thread.
-    private static let ioQueue = DispatchQueue(label: "com.danotch.conversationstore", qos: .utility)
+    private let ioQueue = DispatchQueue(label: "engineering.super.Perch.conversationstore", qos: .utility)
 
     private struct StoreFile: Codable {
         var conversations: [LocalConversationRecord]
@@ -31,8 +28,12 @@ final class LocalConversationStore {
 
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    private let accountDataStore: AccountDataStore
+    private var activeUserID: String?
+    private var generation = 0
 
-    init() {
+    init(accountDataStore: AccountDataStore = AccountDataStore()) {
+        self.accountDataStore = accountDataStore
         encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
@@ -41,8 +42,16 @@ final class LocalConversationStore {
         decoder.dateDecodingStrategy = .iso8601
     }
 
+    func activate(userID: String?) {
+        ioQueue.sync {
+            activeUserID = userID
+            generation += 1
+        }
+    }
+
     func loadAll() -> [LocalConversationRecord] {
-        guard let data = try? Data(contentsOf: Self.storeFile),
+        guard let url = currentStoreURL(),
+              let data = try? Data(contentsOf: url),
               let file = try? decoder.decode(StoreFile.self, from: data) else {
             return []
         }
@@ -57,7 +66,9 @@ final class LocalConversationStore {
     /// (main actor) don't block on disk I/O. Writes for the same store are
     /// strictly ordered since they all funnel through `ioQueue`.
     func upsert(_ record: LocalConversationRecord) {
-        Self.ioQueue.async { [self] in
+        let scheduledGeneration = ioQueue.sync { generation }
+        ioQueue.async { [self] in
+            guard scheduledGeneration == generation, activeUserID != nil else { return }
             var records = loadAll()
             if let idx = records.firstIndex(where: { $0.id == record.id }) {
                 records[idx] = record
@@ -69,7 +80,8 @@ final class LocalConversationStore {
     }
 
     func markInProgressInterrupted() {
-        Self.ioQueue.sync { [self] in
+        ioQueue.sync { [self] in
+            guard activeUserID != nil else { return }
             var records = loadAll()
             var changed = false
             let now = Date()
@@ -97,13 +109,18 @@ final class LocalConversationStore {
 
     private func save(_ records: [LocalConversationRecord]) {
         do {
-            try FileManager.default.createDirectory(at: Self.configDir, withIntermediateDirectories: true, attributes: nil)
+            guard let url = currentStoreURL() else { return }
             let file = StoreFile(conversations: records.sorted { $0.updatedAt > $1.updatedAt })
             let data = try encoder.encode(file)
-            try data.write(to: Self.storeFile, options: [.atomic])
+            try accountDataStore.writeSecurely(data, to: url)
         } catch {
             print("[Perch] LocalConversationStore save failed: \(error.localizedDescription)")
         }
+    }
+
+    private func currentStoreURL() -> URL? {
+        guard let activeUserID else { return nil }
+        return try? accountDataStore.conversationsURL(for: activeUserID)
     }
 }
 

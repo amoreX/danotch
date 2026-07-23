@@ -1,42 +1,18 @@
-// Which Composio tool calls require explicit user approval before executing.
-//
-// Read-only actions (fetch/list/get/search/read) run directly. Actions that
-// create external side effects a user would want to review — sending mail,
-// posting, deleting, modifying resources — become pending draft actions that
-// only execute after the user approves the exact stored payload.
-
-const MUTATING_VERBS = [
-  'SEND',
-  'CREATE',
-  'DELETE',
-  'UPDATE',
-  'REMOVE',
-  'ADD',
-  'REPLY',
-  'FORWARD',
-  'MERGE',
-  'CLOSE',
-  'DRAFT',
-  'POST',
-  'MOVE',
-  'TRASH',
-  'MODIFY',
-];
-
-const READ_VERBS = ['FETCH', 'LIST', 'GET', 'SEARCH', 'READ', 'RETRIEVE', 'FIND'];
+import { ACTION_REGISTRY_VERSION, classifyAction } from './registry.js';
 
 /**
- * A Composio action requires approval when its name contains a mutating verb
- * token and no purely-read verb. Tool names look like GMAIL_SEND_EMAIL,
- * GITHUB_CREATE_ISSUE, GMAIL_FETCH_EMAILS.
+ * Compatibility helper for callers that only need the approval bit. Unknown
+ * actions throw instead of silently becoming read-only.
  */
 export function requiresApproval(toolName: string): boolean {
-  const tokens = toolName.toUpperCase().split('_');
-  const hasMutating = tokens.some((t) => MUTATING_VERBS.includes(t));
-  if (!hasMutating) return false;
-  // "GET_DRAFT" style read that happens to include a read verb is not mutating.
-  const hasRead = tokens.some((t) => READ_VERBS.includes(t));
-  return !hasRead;
+  const decision = classifyAction(toolName, {
+    registryVersion: ACTION_REGISTRY_VERSION,
+    metadataValidated: true,
+  });
+  if (decision.kind === 'deny') {
+    throw new Error(`External action denied: ${decision.reason}`);
+  }
+  return decision.kind === 'approval';
 }
 
 /**

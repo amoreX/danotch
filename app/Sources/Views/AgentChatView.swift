@@ -95,7 +95,7 @@ struct AgentChatView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 10)
             .frame(height: 24)
-            .glassEffect(.regular, in: .capsule)
+            .perchGlass(in: Capsule())
             .contentShape(.capsule)
             .onTapGesture {
                 withAnimation(DN.transition) {
@@ -189,6 +189,28 @@ struct AgentChatView: View {
                 )
             }
 
+        case "local_execution_consent":
+            if let card = msg.localExecutionCard {
+                LocalExecutionConsentView(
+                    card: card,
+                    onChooseWorkspace: {
+                        viewModel.chooseExecutionWorkspace(actionID: msg.id)
+                    },
+                    onToggle: {
+                        viewModel.toggleExecutionConfirmation(
+                            actionID: msg.id,
+                            confirmation: $0
+                        )
+                    },
+                    onApprove: {
+                        viewModel.approveLocalExecution(actionID: msg.id)
+                    },
+                    onReject: {
+                        viewModel.rejectLocalExecution(actionID: msg.id)
+                    }
+                )
+            }
+
         default:
             EmptyView()
         }
@@ -233,7 +255,7 @@ struct AgentChatView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .frame(height: 26)
-                        .glassEffect(Glass.regular.tint(DN.activeAccent), in: .capsule)
+                        .perchGlass(tint: DN.activeAccent, in: Capsule())
                         .contentShape(.capsule)
                         .onTapGesture { viewModel.approveConnectionRequest(requestId) }
 
@@ -242,7 +264,7 @@ struct AgentChatView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .frame(height: 26)
-                        .glassEffect(.regular, in: .capsule)
+                        .perchGlass(in: Capsule())
                         .contentShape(.capsule)
                         .onTapGesture { viewModel.denyConnectionRequest(requestId) }
                 }
@@ -319,7 +341,7 @@ struct AgentChatView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .glassEffect(.regular, in: .capsule)
+        .perchGlass(in: Capsule())
         .contentShape(.capsule)
         .onTapGesture { isMessageFocused = true }
     }
@@ -330,10 +352,7 @@ struct AgentChatView: View {
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
             .frame(width: 24, height: 24)
-            .glassEffect(
-                enabled ? Glass.regular.tint(DN.activeAccent) : Glass.regular,
-                in: .circle
-            )
+            .perchGlass(tint: enabled ? DN.activeAccent : nil, in: Circle())
             .opacity(enabled ? 1.0 : 0.55)
             .contentShape(.circle)
             .onTapGesture { if enabled { sendMessage() } }
@@ -344,6 +363,160 @@ struct AgentChatView: View {
         guard !text.isEmpty else { return }
         messageText = ""
         viewModel.sendChat(message: text, sessionId: taskId)
+    }
+}
+
+private struct LocalExecutionConsentView: View {
+    let card: LocalExecutionConsentCard
+    let onChooseWorkspace: () -> Void
+    let onToggle: (LocalConsentConfirmation) -> Void
+    let onApprove: () -> Void
+    let onReject: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: "lock.shield")
+                    .foregroundStyle(DN.warning)
+                Text("LOCAL VM EXECUTION")
+                    .font(DN.label(10))
+                    .foregroundStyle(DN.textPrimary)
+                Spacer()
+                Text(card.state.rawValue.uppercased())
+                    .font(DN.label(8))
+                    .foregroundStyle(statusColor)
+            }
+            Text(card.command.map(shellQuote).joined(separator: " "))
+                .font(DN.mono(10))
+                .foregroundStyle(DN.textSecondary)
+                .lineLimit(4)
+                .textSelection(.enabled)
+
+            consentLine(
+                icon: card.workspaceMode == "read_only" ? "lock" : "pencil",
+                text: card.workspaceMode == "read_only"
+                    ? "Selected workspace snapshot: read-only"
+                    : "Selected workspace snapshot: read/write"
+            )
+            consentLine(icon: "network.slash", text: "Network: entirely unavailable")
+            consentLine(
+                icon: card.sensitiveFileAccess ? "doc.badge.ellipsis" : "doc",
+                text: card.sensitiveFileAccess
+                    ? "Sensitive file reads requested"
+                    : "Sensitive files are not approved"
+            )
+            consentLine(
+                icon: card.sensitiveDisclosure ? "exclamationmark.triangle" : "eye.slash",
+                text: card.sensitiveDisclosure
+                    ? "Sensitive output may leave the VM"
+                    : "Sensitive output is redacted"
+            )
+            consentLine(
+                icon: card.resultUpload ? "arrow.up.circle" : "internaldrive",
+                text: card.resultUpload
+                    ? "Bounded result will be uploaded"
+                    : "Execution output remains on this Mac"
+            )
+
+            Button(action: onChooseWorkspace) {
+                HStack {
+                    Image(systemName: "folder")
+                    Text(card.selectedWorkspacePath ?? "SELECT WORKSPACE…")
+                        .lineLimit(1)
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+            .font(DN.label(9))
+            .foregroundStyle(DN.textPrimary)
+            .padding(8)
+            .background(DN.surfaceRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .disabled(card.state != .pending)
+
+            ForEach(
+                LocalConsentConfirmation.allCases.filter {
+                    card.requiredConfirmations.contains($0)
+                },
+                id: \.self
+            ) { confirmation in
+                Button {
+                    onToggle(confirmation)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: card.confirmations.contains(confirmation)
+                            ? "checkmark.square.fill"
+                            : "square")
+                        Text(confirmationLabel(confirmation))
+                            .font(DN.body(10))
+                        Spacer()
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(card.confirmations.contains(confirmation)
+                    ? DN.warning
+                    : DN.textSecondary)
+                .disabled(card.state != .pending)
+            }
+
+            if let error = card.error {
+                Text(error)
+                    .font(DN.body(9))
+                    .foregroundStyle(DN.accent)
+            }
+
+            if card.state == .pending {
+                HStack {
+                    Button("DENY", action: onReject)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(DN.textSecondary)
+                    Spacer()
+                    Button("RUN ONCE", action: onApprove)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(card.canApprove ? DN.warning : DN.textDisabled)
+                        .disabled(!card.canApprove)
+                }
+                .font(DN.label(9))
+            }
+        }
+        .padding(12)
+        .background(DN.surface)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(DN.borderVisible, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var statusColor: Color {
+        switch card.state {
+        case .approved: return DN.success
+        case .rejected, .failed, .unavailable: return DN.accent
+        default: return DN.warning
+        }
+    }
+
+    private func consentLine(icon: String, text: String) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: icon).frame(width: 12)
+            Text(text)
+        }
+        .font(DN.body(9))
+        .foregroundStyle(DN.textSecondary)
+    }
+
+    private func confirmationLabel(_ value: LocalConsentConfirmation) -> String {
+        switch value {
+        case .shell: return "Approve this exact shell command once"
+        case .write: return "Allow writes to the disposable snapshot"
+        case .sensitiveRead: return "Allow sensitive file reads for this action"
+        case .sensitiveDisclosure: return "Allow sensitive output disclosure"
+        case .resultUpload: return "Allow this bounded result upload"
+        }
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        value.contains(" ") ? "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'" : value
     }
 }
 
@@ -413,7 +586,7 @@ private struct ThinkingBubble: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .glassEffect(.regular, in: .capsule)
+        .perchGlass(in: Capsule())
         .onAppear {
             Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { _ in
                 withAnimation(.easeInOut(duration: 0.25)) {
@@ -440,7 +613,7 @@ private struct ToolBubble: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(DN.accent.opacity(0.8))
                     .frame(width: 22, height: 22)
-                    .glassEffect(.regular, in: .circle)
+                    .perchGlass(in: Circle())
 
                 Text(toolCompletedText(name))
                     .font(.system(size: 11, weight: .semibold))
@@ -482,7 +655,7 @@ private struct ToolBubble: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .perchGlass(in: RoundedRectangle(cornerRadius: 12))
         .contentShape(.rect(cornerRadius: 12))
         .onTapGesture {
             guard hasOutput else { return }
@@ -741,7 +914,7 @@ struct DraftCardView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .frame(height: 24)
-                    .glassEffect(.regular, in: .capsule)
+                    .perchGlass(in: Capsule())
                     .contentShape(.capsule)
                     .onTapGesture { onReject() }
 
@@ -750,7 +923,7 @@ struct DraftCardView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12)
                     .frame(height: 24)
-                    .glassEffect(Glass.regular.tint(DN.activeAccent), in: .capsule)
+                    .perchGlass(tint: DN.activeAccent, in: Capsule())
                     .contentShape(.capsule)
                     .onTapGesture { onApprove() }
             }

@@ -1,3 +1,7 @@
+import AppKit
+#if canImport(ExecutorCore)
+import ExecutorCore
+#endif
 import Foundation
 import SwiftUI
 import Combine
@@ -59,6 +63,7 @@ enum PinnedWidget: String, CaseIterable, Codable {
 class NotchSettings: ObservableObject {
     private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
     private static let configFile = configDir.appendingPathComponent("settings.json")
+    private static let onboardingConfigFile = configDir.appendingPathComponent("onboarding.json")
 
     // Chat behavior
     @Published var openChatOnSend: Bool        { didSet { save() } }
@@ -73,6 +78,11 @@ class NotchSettings: ObservableObject {
     // Agents
     @Published var showAgentLiveState: Bool    { didSet { save() } }
     @Published var compactAgentRows: Bool      { didSet { save() } }
+
+    // Privacy / local access
+    @Published var agentMonitoringEnabled: Bool { didSet { save() } }
+    @Published var musicControlsEnabled: Bool   { didSet { save() } }
+    @Published var systemNotificationsEnabled: Bool { didSet { save() } }
 
     // Widget sizing: rawValue → "half" | "full"
     @Published var widgetSizes: [String: String] = [:] { didSet { save() } }
@@ -132,6 +142,9 @@ class NotchSettings: ObservableObject {
         showBattery = true
         showAgentLiveState = true
         compactAgentRows = false
+        agentMonitoringEnabled = false
+        musicControlsEnabled = false
+        systemNotificationsEnabled = false
         collapsedGroups = []
         widgetSizes = [:]
 
@@ -149,6 +162,9 @@ class NotchSettings: ObservableObject {
             "showBattery": showBattery,
             "showAgentLiveState": showAgentLiveState,
             "compactAgentRows": compactAgentRows,
+            "agentMonitoringEnabled": agentMonitoringEnabled,
+            "musicControlsEnabled": musicControlsEnabled,
+            "systemNotificationsEnabled": systemNotificationsEnabled,
             "collapsedGroups": Array(collapsedGroups),
             "widgetSizes": widgetSizes,
         ]
@@ -185,13 +201,82 @@ class NotchSettings: ObservableObject {
         if let v = json["showBattery"] as? Bool { showBattery = v }
         if let v = json["showAgentLiveState"] as? Bool { showAgentLiveState = v }
         if let v = json["compactAgentRows"] as? Bool { compactAgentRows = v }
+        if let v = json["agentMonitoringEnabled"] as? Bool { agentMonitoringEnabled = v }
+        if let v = json["musicControlsEnabled"] as? Bool { musicControlsEnabled = v }
+        if let v = json["systemNotificationsEnabled"] as? Bool { systemNotificationsEnabled = v }
+        migrateOnboardingPrivacySettingsIfNeeded(currentSettings: json)
         if let v = json["collapsedGroups"] as? [String] { collapsedGroups = Set(v) }
         if let v = json["widgetSizes"] as? [String: String] { widgetSizes = v }
+    }
+
+    private func migrateOnboardingPrivacySettingsIfNeeded(currentSettings: [String: Any]) {
+        guard currentSettings["agentMonitoringEnabled"] == nil
+                || currentSettings["musicControlsEnabled"] == nil
+                || currentSettings["systemNotificationsEnabled"] == nil,
+              let data = try? Data(contentsOf: Self.onboardingConfigFile),
+              let onboarding = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+
+        if currentSettings["agentMonitoringEnabled"] == nil,
+           let value = onboarding["agent_monitoring"] as? Bool {
+            agentMonitoringEnabled = value
+        }
+        if currentSettings["musicControlsEnabled"] == nil,
+           let value = onboarding["music_controls"] as? Bool {
+            musicControlsEnabled = value
+        }
+        if currentSettings["systemNotificationsEnabled"] == nil,
+           let value = onboarding["system_notifications"] as? Bool {
+            systemNotificationsEnabled = value
+        }
     }
 }
 
 enum APIConfig {
-    static let baseURL = "http://localhost:3001"
+    private static func configuredValue(infoKey: String, environmentKey: String) -> String? {
+        let candidates = [
+            ProcessInfo.processInfo.environment[environmentKey],
+            Bundle.main.object(forInfoDictionaryKey: infoKey) as? String,
+        ]
+        return candidates.compactMap { candidate -> String? in
+            guard let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty,
+                  !value.contains("$("),
+                  !value.contains(".example") else {
+                return nil
+            }
+            return value
+        }.first
+    }
+
+    static let baseURL = configuredValue(
+        infoKey: "PerchAPIBaseURL",
+        environmentKey: "PERCH_API_BASE_URL"
+    ) ?? "http://localhost:3001"
+    static let gatewayURL = configuredValue(
+        infoKey: "PerchDeviceGatewayURL",
+        environmentKey: "PERCH_DEVICE_GATEWAY_URL"
+    ) ?? "ws://localhost:3001/api/device-gateway"
+
+    static var baseURLValue: URL {
+        validatedURL(baseURL, secureScheme: "https")
+    }
+
+    static var gatewayURLValue: URL {
+        validatedURL(gatewayURL, secureScheme: "wss")
+    }
+
+    private static func validatedURL(_ value: String, secureScheme: String) -> URL {
+        guard let url = URL(string: value),
+              url.user == nil, url.password == nil,
+              url.scheme == secureScheme
+                || ((url.host == "localhost" || url.host == "127.0.0.1")
+                    && (url.scheme == "http" || url.scheme == "ws")) else {
+            fatalError("Perch endpoint must use \(secureScheme) outside local development")
+        }
+        return url
+    }
 }
 
 private enum CachedFormatters {
@@ -219,6 +304,10 @@ class NotchViewModel: ObservableObject {
     var lastViewBeforeCollapse: NotchViewState = .overview
 
     var authManager: AuthManager?
+    let deviceConnection: DeviceConnection
+    @Published var connectionState: DeviceConnectionState = .signedOut
+    @Published var connectionAnnouncement = ""
+    private var activeUserID: String?
 
     // App connection states (keyed by app_type: gmail, googlecalendar, googledocs, github)
     @Published var appConnected: [String: Bool] = [:]
@@ -244,22 +333,20 @@ class NotchViewModel: ObservableObject {
     private var checkoutPollAttempts = 0
     private let checkoutPollMaxAttempts = 40 // ~2 min at 3s intervals
 
-    // WebSocket send callback (set by WebSocketServer)
-    var wsSend: (([String: Any]) -> Void)?
-
     // Pending connection requests from agent (requestId → metadata)
     @Published var pendingConnectionRequests: [String: PendingConnectionRequest] = [:]
 
-    @Published var settings = NotchSettings()
-    @Published var agentMonitor = AgentMonitor()
-    @Published var nowPlaying = NowPlayingMonitor()
+    @Published var settings: NotchSettings
+    @Published var agentMonitor: AgentMonitor
+    @Published var nowPlaying: NowPlayingMonitor
     let statsMonitor = SystemStatsMonitor()
-    private let localConversationStore = LocalConversationStore()
+    private let localConversationStore: LocalConversationStore
     private var clockTimer: Timer?
     private var shimmerTimer: Timer?
     private var agentMonitorCancellable: AnyCancellable?
     private var settingsCancellable: AnyCancellable?
     private var cancellables: Set<AnyCancellable> = []
+    private var selectedExecutionWorkspaces: [String: URL] = [:]
 
     var timeString: String { CachedFormatters.time.string(from: currentTime) }
     var periodString: String { CachedFormatters.period.string(from: currentTime) }
@@ -267,7 +354,16 @@ class NotchViewModel: ObservableObject {
     var shortDateString: String { CachedFormatters.shortDate.string(from: currentTime) }
     var shortTimeString: String { CachedFormatters.shortTime.string(from: currentTime) }
 
-    init() {
+    init(
+        localConversationStore: LocalConversationStore = LocalConversationStore(),
+        deviceConnection: DeviceConnection = DeviceConnection()
+    ) {
+        let settings = NotchSettings()
+        self.settings = settings
+        self.agentMonitor = AgentMonitor(enabled: settings.agentMonitoringEnabled)
+        self.nowPlaying = NowPlayingMonitor(enabled: settings.musicControlsEnabled)
+        self.localConversationStore = localConversationStore
+        self.deviceConnection = deviceConnection
         startClock()
         startShimmerCycle()
         // Forward agent monitor changes to trigger view updates
@@ -279,6 +375,28 @@ class NotchViewModel: ObservableObject {
         }.store(in: &cancellables)
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
+        }
+        settings.$agentMonitoringEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                self?.agentMonitor.setEnabled(enabled)
+            }
+            .store(in: &cancellables)
+        settings.$musicControlsEnabled
+            .removeDuplicates()
+            .sink { [weak self] enabled in
+                self?.nowPlaying.setEnabled(enabled)
+            }
+            .store(in: &cancellables)
+        deviceConnection.$state.sink { [weak self] state in
+            self?.connectionState = state
+        }.store(in: &cancellables)
+        deviceConnection.onStateAnnouncement = { [weak self] message in
+            self?.connectionAnnouncement = message
+        }
+        deviceConnection.onEvent = { [weak self] userID, event in
+            guard let self, self.activeUserID == userID else { return }
+            self.processEvent(event)
         }
     }
 
@@ -331,6 +449,41 @@ class NotchViewModel: ObservableObject {
 
     @Published var threadHistory: [ThreadSummary] = []
     @Published var isLoadingHistory = false
+
+    func switchAccount(to session: AuthSession?) {
+        // Fence queued disk writes and clear every user-derived in-memory
+        // collection before loading the next partition.
+        activeUserID = nil
+        localConversationStore.activate(userID: nil)
+        tasks = []
+        threadHistory = []
+        notifications = []
+        unreadCount = 0
+        scheduledTasks = []
+        pendingConnectionRequests = [:]
+        appConnected = [:]
+        providerConfigs = []
+        billingStatus = nil
+        viewState = .overview
+        dismissPeek()
+        deviceConnection.logout()
+        guard let session else { return }
+        activeUserID = session.userId
+        localConversationStore.activate(userID: session.userId)
+        deviceConnection.start(session: session)
+    }
+
+    func retryDeviceConnection() {
+        deviceConnection.retry()
+    }
+
+    func cancelDeviceConnection() {
+        deviceConnection.cancel()
+    }
+
+    func reenrollDevice() {
+        deviceConnection.reenroll()
+    }
 
     func loadThreadHistory() {
         let records = localConversationStore.loadAll()
@@ -481,7 +634,7 @@ class NotchViewModel: ObservableObject {
     @Published var unreadCount: Int = 0
 
     func loadNotifications() {
-        guard let auth = authManager else { return }
+        guard let auth = authManager, let requestUserID = auth.session?.userId else { return }
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else { return }
@@ -508,6 +661,7 @@ class NotchViewModel: ObservableObject {
             }
 
             await MainActor.run {
+                guard self.activeUserID == requestUserID else { return }
                 self.notifications = parsed
                 self.unreadCount = parsed.filter { !$0.read }.count
             }
@@ -515,7 +669,7 @@ class NotchViewModel: ObservableObject {
     }
 
     func loadUnreadCount() {
-        guard let auth = authManager else { return }
+        guard let auth = authManager, let requestUserID = auth.session?.userId else { return }
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else { return }
@@ -527,7 +681,10 @@ class NotchViewModel: ObservableObject {
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let count = json["count"] as? Int else { return }
 
-            await MainActor.run { self.unreadCount = count }
+            await MainActor.run {
+                guard self.activeUserID == requestUserID else { return }
+                self.unreadCount = count
+            }
         }
     }
 
@@ -597,7 +754,7 @@ class NotchViewModel: ObservableObject {
     @Published var scheduledTasks: [ScheduledTask] = []
 
     func loadScheduledTasks() {
-        guard let auth = authManager else { return }
+        guard let auth = authManager, let requestUserID = auth.session?.userId else { return }
         Task {
             await auth.ensureValidToken()
             guard let token = auth.accessToken else { return }
@@ -634,6 +791,7 @@ class NotchViewModel: ObservableObject {
             }
 
             await MainActor.run {
+                guard self.activeUserID == requestUserID else { return }
                 self.scheduledTasks = parsed
                 print("[Perch] loadScheduledTasks: \(parsed.count) tasks")
             }
@@ -709,7 +867,7 @@ class NotchViewModel: ObservableObject {
     // MARK: - App Connections (Generic)
 
     func checkAppStatus(_ appType: String) {
-        guard let auth = authManager else { return }
+        guard let auth = authManager, let requestUserID = auth.session?.userId else { return }
         appLoading[appType] = true
         appError[appType] = nil          // clear any stale error from a previous connect attempt
         Task {
@@ -728,6 +886,7 @@ class NotchViewModel: ObservableObject {
                 return
             }
             await MainActor.run {
+                guard self.activeUserID == requestUserID else { return }
                 self.appConnected[appType] = connected
                 self.appLoading[appType] = false
             }
@@ -736,6 +895,10 @@ class NotchViewModel: ObservableObject {
 
     func connectApp(_ appType: String) {
         guard let auth = authManager else { return }
+        guard case .connected(let deviceID) = deviceConnection.state else {
+            appError[appType] = "Connect this Mac before linking an app."
+            return
+        }
         appLoading[appType] = true
         appError[appType] = nil
         Task {
@@ -751,6 +914,10 @@ class NotchViewModel: ObservableObject {
             request.httpMethod = "POST"
             request.addValue("application/json", forHTTPHeaderField: "Content-Type")
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: [
+                "device_id": deviceID,
+                "replace": self.appConnected[appType] == true,
+            ])
 
             guard let (data, _) = try? await URLSession.shared.data(for: request),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -778,14 +945,20 @@ class NotchViewModel: ObservableObject {
             }
 
             if let redirectUrl = json["redirectUrl"] as? String,
-               let url = URL(string: redirectUrl) {
+               let url = URL(string: redirectUrl),
+               let attemptID = json["attempt_id"] as? String {
                 await MainActor.run {
                     NSWorkspace.shared.open(url)
                 }
                 // Poll for connection until OAuth completes (up to 2 minutes)
                 for _ in 0..<40 {
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    var statusReq = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/apps/\(appType)/status")!)
+                    var statusComponents = URLComponents(string: "\(APIConfig.baseURL)/api/apps/\(appType)/status")!
+                    statusComponents.queryItems = [
+                        URLQueryItem(name: "attempt_id", value: attemptID),
+                        URLQueryItem(name: "device_id", value: deviceID),
+                    ]
+                    var statusReq = URLRequest(url: statusComponents.url!)
                     statusReq.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                     if let (sData, _) = try? await URLSession.shared.data(for: statusReq),
                        let sJson = try? JSONSerialization.jsonObject(with: sData) as? [String: Any],
@@ -852,7 +1025,8 @@ class NotchViewModel: ObservableObject {
     // MARK: - Billing
 
     func loadBillingStatus() {
-        guard let auth = authManager, auth.accessToken != nil else { return }
+        guard let auth = authManager, auth.accessToken != nil,
+              let requestUserID = auth.session?.userId else { return }
         billingLoading = true
         billingError = nil
 
@@ -902,6 +1076,7 @@ class NotchViewModel: ObservableObject {
             )
 
             await MainActor.run {
+                guard self.activeUserID == requestUserID else { return }
                 self.billingStatus = parsed
                 self.billingLoading = false
                 self.billingError = nil
@@ -978,7 +1153,8 @@ class NotchViewModel: ObservableObject {
     // MARK: - Provider Config (BYOK)
 
     func loadProviderConfigs() {
-        guard let auth = authManager, let token = auth.accessToken else { return }
+        guard let auth = authManager, let token = auth.accessToken,
+              let requestUserID = auth.session?.userId else { return }
         providerLoading = true
 
         Task {
@@ -1007,6 +1183,7 @@ class NotchViewModel: ObservableObject {
             }
 
             await MainActor.run {
+                guard self.activeUserID == requestUserID else { return }
                 self.providerConfigs = parsed
                 self.providerLoading = false
                 if let active = parsed.first(where: { $0.isActive }) {
@@ -1021,7 +1198,8 @@ class NotchViewModel: ObservableObject {
     }
 
     func loadProviderModels() {
-        guard let auth = authManager, let token = auth.accessToken else {
+        guard let auth = authManager, let token = auth.accessToken,
+              let requestUserID = auth.session?.userId else {
             let provider = activeProviderType
             activeModelProvider = provider
             modelOptions = fallbackModelOptions(for: provider)
@@ -1064,6 +1242,7 @@ class NotchViewModel: ObservableObject {
             }
 
             await MainActor.run {
+                guard self.activeUserID == requestUserID else { return }
                 self.isLoadingModels = false
                 self.activeModelProvider = provider
                 self.modelOptions = models.isEmpty ? self.fallbackModelOptions(for: provider) : models
@@ -1275,6 +1454,7 @@ class NotchViewModel: ObservableObject {
     // MARK: - Event Processing
 
     func processEvent(_ json: [String: Any]) {
+        guard activeUserID != nil else { return }
         guard let type = json["type"] as? String else { return }
         switch type {
         case "subagent_event": processSubagentEvent(json)
@@ -1283,7 +1463,217 @@ class NotchViewModel: ObservableObject {
         case "peek_notification": processPeekNotification(json)
         case "connection_request": processConnectionRequest(json)
         case "pending_action": processPendingAction(json)
+        case "local_action_offered": processLocalActionOffer(json)
         default: break
+        }
+    }
+
+    private func processLocalActionOffer(_ json: [String: Any]) {
+        guard let actionID = json["action_id"] as? String,
+              UUID(uuidString: actionID) != nil,
+              let sessionID = (json["session_id"] ?? json["run_id"]) as? String,
+              let registryVersion = json["registry_version"] as? String,
+              let actionType = json["action_type"] as? String,
+              let actionHash = json["action_hash"] as? String,
+              let parametersHash = json["parameters_hash"] as? String,
+              let parametersValue = json["normalized_parameters"],
+              let capabilitiesValue = json["capabilities"],
+              let workspaceBookmarkID = json["workspace_bookmark_id"] as? String,
+              let expiresValue = json["expires_at"] as? String,
+              let expiresAt = ISO8601DateFormatter().date(from: expiresValue),
+              let taskIndex = tasks.firstIndex(where: {
+                  $0.id == sessionID || $0.threadId == sessionID
+              }),
+              !tasks[taskIndex].chatHistory.contains(where: { $0.id == actionID }),
+              let parametersJSON = try? JSONSerialization.data(
+                  withJSONObject: parametersValue,
+                  options: [.sortedKeys, .withoutEscapingSlashes]
+              ),
+              let capabilitiesJSON = try? JSONSerialization.data(
+                  withJSONObject: capabilitiesValue,
+                  options: [.sortedKeys, .withoutEscapingSlashes]
+              ),
+              let parameters = try? ExecutorJSON(any: parametersValue),
+              let capabilities = try? ExecutionCapabilities(
+                  json: ExecutorJSON(any: capabilitiesValue)
+              ),
+              let action = try? LocalActionRegistry.shared.resolve(
+                  registryVersion: registryVersion,
+                  name: actionType,
+                  parameters: parameters,
+                  capabilities: capabilities
+              ) else {
+            return
+        }
+        let networkUnavailable = !capabilities.egressDestinations.isEmpty
+        let executorUnavailable = executorUnavailableReason
+        let unavailable = networkUnavailable || executorUnavailable != nil
+        let card = LocalExecutionConsentCard(
+            actionID: actionID.lowercased(),
+            registryVersion: registryVersion,
+            actionType: actionType,
+            actionHash: actionHash,
+            parametersHash: parametersHash,
+            normalizedParametersJSON: parametersJSON,
+            capabilitiesJSON: capabilitiesJSON,
+            workspaceBookmarkID: workspaceBookmarkID,
+            command: [action.executable] + action.arguments,
+            workspaceMode: capabilities.workspaceMode.rawValue,
+            egressDestinations: capabilities.egressDestinations,
+            sensitiveFileAccess: capabilities.sensitiveFileAccess,
+            sensitiveDisclosure: capabilities.sensitiveOutputDisclosure,
+            resultUpload: capabilities.resultUpload,
+            expiresAt: expiresAt,
+            selectedWorkspacePath: nil,
+            confirmations: [],
+            state: unavailable ? .unavailable : .pending,
+            error: networkUnavailable
+                ? "Network access is unavailable; this executor always runs offline."
+                : executorUnavailable
+        )
+        tasks[taskIndex].chatHistory.append(ChatMessage(
+            id: actionID,
+            role: "local_execution_consent",
+            content: action.displayName,
+            localExecutionCard: card,
+            timestamp: Date()
+        ))
+        tasks[taskIndex].status = .awaitingApproval
+        persistTask(at: taskIndex)
+    }
+
+    private var executorUnavailableReason: String? {
+        switch deviceConnection.executorCapabilityState {
+        case .available:
+            return nil
+        case .unsupportedOS:
+            return "Local VM execution requires macOS 26 or newer."
+        case .unsupportedArchitecture:
+            return "Local VM execution requires Apple silicon."
+        case .artifactsUnavailable:
+            return "The signed executor or its pinned VM artifacts are not verified."
+        case .virtualizationUnavailable:
+            return "The signed executor does not have the required virtualization entitlement."
+        }
+    }
+
+    func chooseExecutionWorkspace(actionID: String) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.prompt = "Select Workspace"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        selectedExecutionWorkspaces[actionID] = url
+        updateLocalConsent(actionID) {
+            LocalConsentCardReducer().reduce($0, event: .selectedWorkspace(url.path))
+        }
+    }
+
+    func toggleExecutionConfirmation(
+        actionID: String,
+        confirmation: LocalConsentConfirmation
+    ) {
+        updateLocalConsent(actionID) {
+            LocalConsentCardReducer().reduce($0, event: .toggled(confirmation))
+        }
+    }
+
+    func approveLocalExecution(actionID: String) {
+        guard let workspace = selectedExecutionWorkspaces[actionID] else { return }
+        updateLocalConsent(actionID) {
+            LocalConsentCardReducer().reduce($0, event: .approve)
+        }
+        guard let card = localConsentCard(actionID),
+              card.state == .approving,
+              let actionUUID = UUID(uuidString: card.actionID),
+              let capabilitiesObject = try? JSONSerialization.jsonObject(
+                  with: card.capabilitiesJSON
+              ),
+              let capabilities = try? ExecutionCapabilities(
+                  json: ExecutorJSON(any: capabilitiesObject)
+              ) else { return }
+        Task {
+            do {
+                try await deviceConnection.decideLocalAction(
+                    actionID: actionUUID,
+                    actionHash: card.actionHash,
+                    parametersHash: card.parametersHash,
+                    capabilities: capabilities,
+                    workspaceURL: workspace,
+                    workspaceBookmarkID: card.workspaceBookmarkID,
+                    highRiskShell: card.actionType == "shell.execute",
+                    expiresAt: card.expiresAt,
+                    approved: true
+                )
+                await MainActor.run {
+                    self.updateLocalConsent(actionID) {
+                        LocalConsentCardReducer().reduce($0, event: .approved)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.updateLocalConsent(actionID) {
+                        LocalConsentCardReducer().reduce(
+                            $0,
+                            event: .failed(error.localizedDescription)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    func rejectLocalExecution(actionID: String) {
+        guard let card = localConsentCard(actionID),
+              let actionUUID = UUID(uuidString: card.actionID),
+              let capabilitiesObject = try? JSONSerialization.jsonObject(
+                  with: card.capabilitiesJSON
+              ),
+              let capabilities = try? ExecutionCapabilities(
+                  json: ExecutorJSON(any: capabilitiesObject)
+              ) else { return }
+        updateLocalConsent(actionID) {
+            LocalConsentCardReducer().reduce($0, event: .reject)
+        }
+        Task {
+            try? await deviceConnection.decideLocalAction(
+                actionID: actionUUID,
+                actionHash: card.actionHash,
+                parametersHash: card.parametersHash,
+                capabilities: capabilities,
+                workspaceURL: nil,
+                workspaceBookmarkID: card.workspaceBookmarkID,
+                highRiskShell: card.actionType == "shell.execute",
+                expiresAt: card.expiresAt,
+                approved: false
+            )
+        }
+    }
+
+    private func localConsentCard(_ actionID: String) -> LocalExecutionConsentCard? {
+        for task in tasks {
+            if let message = task.chatHistory.first(where: { $0.id == actionID }) {
+                return message.localExecutionCard
+            }
+        }
+        return nil
+    }
+
+    private func updateLocalConsent(
+        _ actionID: String,
+        transform: (LocalExecutionConsentCard) -> LocalExecutionConsentCard
+    ) {
+        for taskIndex in tasks.indices {
+            guard let messageIndex = tasks[taskIndex].chatHistory.firstIndex(
+                where: { $0.id == actionID }
+            ), let card = tasks[taskIndex].chatHistory[messageIndex].localExecutionCard else {
+                continue
+            }
+            tasks[taskIndex].chatHistory[messageIndex].localExecutionCard = transform(card)
+            persistTask(at: taskIndex)
+            return
         }
     }
 
@@ -1411,11 +1801,6 @@ class NotchViewModel: ObservableObject {
                     await MainActor.run {
                         self.pendingConnectionRequests[requestId]?.status = .approved
                         self.updateConnectionRequestMessage(requestId, status: .approved)
-                        self.wsSend?([
-                            "type": "connection_response",
-                            "request_id": requestId,
-                            "approved": true,
-                        ])
                     }
                     return
                 }
@@ -1425,11 +1810,6 @@ class NotchViewModel: ObservableObject {
             await MainActor.run {
                 self.pendingConnectionRequests[requestId]?.status = .denied
                 self.updateConnectionRequestMessage(requestId, status: .denied)
-                self.wsSend?([
-                    "type": "connection_response",
-                    "request_id": requestId,
-                    "approved": false,
-                ])
             }
         }
     }
@@ -1441,11 +1821,6 @@ class NotchViewModel: ObservableObject {
 
         updateConnectionRequestMessage(requestId, status: .denied)
 
-        wsSend?([
-            "type": "connection_response",
-            "request_id": requestId,
-            "approved": false,
-        ])
     }
 
     private func updateConnectionRequestMessage(_ requestId: String, status: ConnectionRequestStatus) {
@@ -1859,9 +2234,12 @@ class NotchViewModel: ObservableObject {
 
         // POST to backend (refresh token first if needed)
         let auth = authManager
+        let requestUserID = auth?.session?.userId
         let historyForRequest = recentHistoryPayload(for: sid, currentMessage: message)
         Task {
             await auth?.ensureValidToken()
+            guard requestUserID != nil, auth?.session?.userId == requestUserID,
+                  self.activeUserID == requestUserID else { return }
             guard let url = URL(string: "\(APIConfig.baseURL)/api/chat") else { return }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -1881,6 +2259,7 @@ class NotchViewModel: ObservableObject {
             URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
                 guard let self = self,
+                      self.activeUserID == requestUserID,
                       let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
                 if let error = error {
                     withAnimation(.snappy(duration: 0.3)) {

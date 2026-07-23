@@ -1,0 +1,88 @@
+version: 2
+
+updates:
+  # Backend Node.js dependencies
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
+    reviewers: []
+    labels:
+      - dependencies
+      - backend
+    groups:
+      typescript-ecosystem:
+        patterns:
+          - "typescript"
+          - "tsx"
+          - "@types/*"
+      supabase:
+        patterns:
+          - "@supabase/*"
+      anthropic:
+        patterns:
+          - "@anthropic-ai/*"
+      openai:
+        patterns:
+          - "openai"
+      composio:
+        patterns:
+          - "@composio/*"
+
+  # Site Node.js dependencies
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - site
+    groups:
+      react-ecosystem:
+        patterns:
+          - "react"
+          - "react-dom"
+          - "@types/react*"
+          - "@vitejs/*"
+          - "vite"
+      tailwind:
+        patterns:
+          - "tailwindcss"
+          - "@tailwindcss/*"
+      testing:
+        patterns:
+          - "@playwright/*"
+          - "@axe-core/*"
+          - "playwright"
+
+  # GitHub Actions — pins SHAs; Dependabot updates SHA + comment together
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+      - ci
+
+  # Swift Package Manager
+  # Note: Dependabot Swift support requires a Package.swift at the
+  # configured directory; if not present this entry is ignored gracefully.
+  - package-ecosystem: swift
+    directory: /app
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - swift

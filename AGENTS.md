@@ -25,11 +25,15 @@ swift build -c release     # Build release
 
 ### Backend
 
+Requires **Node 24 LTS** (`"node": ">=24 <25"` in `backend/package.json`).
+
 ```bash
 cd backend
 npm install
 npm run dev                # Starts on :3001
 ```
+
+Copy `backend/.env.example` to `backend/.env`. Required vars in all environments: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` (or `SUPABASE_ANON_KEY`). Production additionally requires `PROVIDER_KEY_SECRET` (≥32 chars), `PUBLIC_BASE_URL` (HTTPS), `DEVICE_GATEWAY_URL` (WSS), `TRUST_PROXY`, `DEVICE_TICKET_SIGNING_SECRET` (≥32 bytes), `CAPTCHA_SECRET`, `CAPTCHA_SITE_KEY`, `CAPTCHA_EXPECTED_HOSTNAME`.
 
 ### Site
 
@@ -39,7 +43,23 @@ npm install
 npm run dev                # Vite dev server
 ```
 
-No unit tests in any package.
+### Tests
+
+```bash
+# Backend — unit and contract tests (no DB required)
+cd backend && npm test
+
+# Backend — Node permission model verification
+cd backend && npm run test:runtime-policy
+
+# Backend — DB integration tests (requires SUPABASE_DB_URL)
+cd backend && npm run test:db
+
+# Backend — TypeScript type check
+cd backend && npm run build
+```
+
+No Swift or site tests at this time.
 
 ## App Architecture
 
@@ -382,7 +402,9 @@ backend/src/
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/health` | No | Health check + notch connection status |
+| `GET` | `/health/live` | No | Process liveness (always 200 while running; no downstream checks) |
+| `GET` | `/health/ready` | No | Readiness (200 = all checks pass; 503 = migration/DB/gateway/provider check failed) |
+| `GET` | `/health` | No | Legacy alias for existing monitoring integrations |
 | `POST` | `/auth/signup` | No | Create account (email+password) |
 | `POST` | `/auth/login` | No | Sign in |
 | `POST` | `/auth/refresh` | No | Refresh JWT tokens |
@@ -425,7 +447,7 @@ Multi-provider LLM support via `providers/` directory. Users can bring their own
 2. `getFallbackProvider()` — uses server-side `ANTHROPIC_API_KEY` with `config.api.model`
 3. `createProvider(type, apiKey, model)` — factory for Anthropic/OpenAI/OpenRouter instances
 
-**Key encryption**: AES-256-GCM via `PROVIDER_KEY_SECRET` env var. Keys encrypted before DB storage, decrypted on use.
+**Key encryption**: AES-256-GCM via `PROVIDER_KEY_SECRET` env var (required in all environments; production startup fails if missing or shorter than 32 characters). Keys encrypted before DB storage, decrypted on use.
 
 **Default BYOK models**: anthropic → `claude-sonnet-4-6`, openai → `gpt-5`, openrouter → `anthropic/claude-sonnet-4-6`.
 
@@ -527,21 +549,37 @@ Both modes also store tasks in-memory (`Map<string, Task>`) and push status/prog
 
 ### Request Logging
 
-All requests logged with timestamp, method, path, and auth status. Route handlers log detailed info (message preview, userId, threadId, result status).
+All requests logged with timestamp, method, path, auth presence, and correlation ID (`rid=<uuid>`). Logs never emit raw tokens, API keys, or request bodies. Route handlers log message previews, userId, and result status.
+
+### Security Headers
+
+Every response includes: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy: camera=(), microphone=(), geolocation=()`, `Cache-Control: no-store`, `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`. Production additionally sets `Strict-Transport-Security`.
+
+### Correlation IDs
+
+Every request receives an `X-Request-ID` header. If the client sends a valid ID (8–64 word characters), it is echoed; otherwise a new UUID v4 is generated. The ID is available in `res.locals.correlationId` for downstream handlers.
+
+### Graceful SIGTERM Drain
+
+On SIGTERM or SIGINT: (1) stop accepting new connections (`server.close()`), (2) set `Connection: close` on any new requests that slip through, (3) close the device gateway (fences all WebSocket sessions), (4) force-exit after `DRAIN_DEADLINE_MS` (default 10 000 ms) if sockets remain open.
 
 ### Config (`config.ts`)
 
-All settings env-overridable:
+All settings env-overridable. **Production startup rejects** HTTP origins, WS gateway URLs, localhost endpoints, wildcard origins, short signing secrets, missing TRUST_PROXY, and missing required vars. See `backend/.env.example` for the full list.
+
+Key vars:
 - `PORT` — server port (default: 3001)
-- `NOTCH_WS_URL` — notch app WebSocket (default: ws://localhost:7778/ws)
-- `CLAUDE_MODEL` — fallback Anthropic model when using server key (default: claude-sonnet-4-6)
-- `MAX_TOKENS` — API max tokens (default: 4096)
-- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET` — Supabase credentials (in `.env`, gitignored)
-- `SUPABASE_DB_URL` / `DATABASE_URL` — Supabase Postgres connection string for schema migrations; run `cd backend && npm run db:billing` to apply billing entitlement columns
+- `PUBLIC_BASE_URL` — HTTPS origin for OAuth callbacks (required in production)
+- `DEVICE_GATEWAY_URL` — WSS URL for the authenticated device gateway (required in production)
+- `NOTCH_WS_URL` — dev-only legacy WebSocket bridge (default: ws://localhost:7778/ws; ignored in production)
+- `TRUST_PROXY` — explicit proxy hop count 1–10 (required in production)
+- `DEVICE_TICKET_SIGNING_SECRET` — ≥32-byte HMAC key for gateway tickets (required in production)
+- `PROVIDER_KEY_SECRET` — ≥32-char AES key for BYOK API key encryption (**required in production; no dev fallback — throws at startup if missing in production**)
+- `CAPTCHA_SECRET`, `CAPTCHA_SITE_KEY`, `CAPTCHA_EXPECTED_HOSTNAME` — required in production
 - `ANTHROPIC_API_KEY` — fallback LLM key during active trials
-- `DODO_PAYMENTS_API_KEY`, `DODO_PAYMENTS_WEBHOOK_KEY`, `DODO_PAYMENTS_PRODUCT_ID`, `DODO_PAYMENTS_RETURN_URL` — one-time purchase checkout/webhook configuration
-- `COMPOSIO_API_KEY` — Composio integration API key
-- `PROVIDER_KEY_SECRET` — AES key derivation for encrypting BYOK API keys (falls back to dev key with console warning if missing)
+- `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` — Supabase credentials
+- `SUPABASE_DB_URL` / `DATABASE_URL` — Postgres connection string for `npm run db:migrate`
+- `DRAIN_DEADLINE_MS` — graceful shutdown deadline (default: 10000)
 
 ## Landing Page Site
 

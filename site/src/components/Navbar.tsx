@@ -284,6 +284,7 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
         <NotchRailShoulder side="left" />
         <a
           href="/"
+          aria-label="Perch home"
           className="h-10 w-[88px] inline-flex items-center justify-center rounded-full bg-white no-underline"
           style={{
             background: '#ffffff',

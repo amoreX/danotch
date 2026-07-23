@@ -1,11 +1,12 @@
 import { Router } from 'express';
-import { rateLimit } from 'express-rate-limit';
 import { requireAuth } from '../middleware/auth.js';
-import { supabase } from '../lib/supabase.js';
+import { userDb as supabase } from '../lib/user-db.js';
+import { getAdminDb } from '../lib/admin-db.js';
 import { encrypt, decrypt } from '../providers/crypto.js';
 import { createProvider } from '../providers/factory.js';
 import { config } from '../config.js';
 import type { ProviderType } from '../providers/types.js';
+import { SupabaseQuotaStore, requestQuotaSubject } from '../security/quota-store.js';
 
 const VALID_PROVIDERS: ProviderType[] = ['anthropic', 'openai', 'openrouter'];
 
@@ -19,6 +20,23 @@ type ModelOption = {
 
 export function createProviderRoutes(): Router {
   const router = Router();
+  const providerQuota = new SupabaseQuotaStore(getAdminDb('provider'));
+  router.use(requireAuth);
+  router.use(async (req, res, next) => {
+    if (req.method === 'GET' && req.path !== '/models') {
+      next();
+      return;
+    }
+    try {
+      await providerQuota.consume({
+        capability: 'provider',
+        subject: requestQuotaSubject({ userId: req.user!.sub }),
+      });
+      next();
+    } catch {
+      res.status(503).json({ error: 'Provider operations are temporarily unavailable.' });
+    }
+  });
 
   // Get all provider configs for user (keys masked)
   router.get('/', requireAuth, async (req, res) => {
@@ -44,7 +62,7 @@ export function createProviderRoutes(): Router {
     const userId = req.user!.sub;
     console.log(`[provider] GET /models userId=${userId}`);
 
-    const { data, error } = await supabase
+    const { data, error } = await getAdminDb('provider')
       .from('danotch_provider_configs')
       .select('provider, api_key_encrypted, model_id')
       .eq('user_id', userId)
@@ -143,15 +161,7 @@ export function createProviderRoutes(): Router {
   });
 
   // Verify a provider key with a minimal test call
-  const verifyLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    limit: 10,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many verification attempts, please slow down.' },
-  });
-
-  router.post('/verify', verifyLimiter, requireAuth, async (req, res) => {
+  router.post('/verify', requireAuth, async (req, res) => {
     const { provider, api_key, model_id } = req.body;
 
     if (!provider || !VALID_PROVIDERS.includes(provider)) {
@@ -177,7 +187,7 @@ export function createProviderRoutes(): Router {
       // This prevents marking a stored key as verified when the user was testing a
       // different raw key in the verify form.
       const userId = req.user!.sub;
-      const { data: savedConfig } = await supabase
+      const { data: savedConfig } = await getAdminDb('provider')
         .from('danotch_provider_configs')
         .select('api_key_encrypted')
         .eq('user_id', userId)
@@ -195,7 +205,7 @@ export function createProviderRoutes(): Router {
       }
 
       if (matchesStored) {
-        await supabase
+        await getAdminDb('provider')
           .from('danotch_provider_configs')
           .update({ verified_at: new Date().toISOString() })
           .eq('user_id', userId)

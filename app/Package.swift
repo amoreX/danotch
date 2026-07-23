@@ -5,25 +5,33 @@ import PackageDescription
 let package = Package(
     name: "Perch",
     platforms: [
-        .macOS(.v26)
+        .macOS(.v14)
     ],
-    dependencies: [
-        .package(url: "https://github.com/httpswift/swifter.git", from: "1.5.0")
-    ],
+    // SwiftPM has one deployment floor for the whole package. The macOS 26
+    // executor and its exact Containerization dependency are therefore wired
+    // only in Perch.xcodeproj; raising this package would silently drop the
+    // main app's macOS 14 support.
+    dependencies: [],
     targets: [
+        .target(
+            name: "ExecutorCore",
+            path: "Sources/Executor",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
+        ),
         .executableTarget(
             name: "Perch",
-            dependencies: [
-                .product(name: "Swifter", package: "swifter")
-            ],
+            dependencies: ["ExecutorCore"],
             path: "Sources",
+            exclude: ["Executor", "ExecutorService"],
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]
         ),
         .testTarget(
             name: "PerchTests",
-            dependencies: ["Perch"],
+            dependencies: ["Perch", "ExecutorCore"],
             path: "Tests/PerchTests",
             swiftSettings: [
                 .swiftLanguageMode(.v5)

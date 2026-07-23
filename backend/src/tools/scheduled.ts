@@ -1,6 +1,11 @@
 import type { CanonicalTool } from '../providers/types.js';
-import { supabase } from '../lib/supabase.js';
+import { userDb as supabase } from '../lib/user-db.js';
+import { getAdminDb } from '../lib/admin-db.js';
 import { computeNextRun, isValidCron, cronToHuman, scheduleToHuman } from '../scheduler/compute-next.js';
+import { config } from '../config.js';
+import { SupabaseQuotaStore, requestQuotaSubject } from '../security/quota-store.js';
+
+const scheduleQuota = new SupabaseQuotaStore(getAdminDb('scheduler'));
 
 // ── Tool Definitions ──
 
@@ -38,8 +43,17 @@ export const scheduledTaskTools: CanonicalTool[] = [
           type: 'boolean',
           description: 'If true, Claude will decide each run whether to actually notify the user (for conditional alerts like "tell me when stock hits X", "notify me if new email from Y"). If false (default), runs silently — results saved but no notification/peek. Set true when user says "notify me when...", "alert me if...", "let me know when...".',
         },
+        execution_location: {
+          type: 'string',
+          enum: ['hosted', 'device_local'],
+          description: 'hosted only generates provider output and cannot execute commands. device_local queues work for one explicitly bound Mac.',
+        },
+        bound_device_id: {
+          type: 'string',
+          description: 'Required UUID for device_local tasks. Local work never fails over to another device.',
+        },
       },
-      required: ['name', 'prompt', 'task_type'],
+      required: ['name', 'prompt', 'task_type', 'execution_location'],
     },
   },
   {
@@ -86,6 +100,19 @@ export async function executeScheduledTool(
   input: Record<string, unknown>,
   userId: string
 ): Promise<string> {
+  if (toolName !== 'list_scheduled_tasks') {
+    try {
+      await scheduleQuota.consume({
+        capability: 'scheduler',
+        subject: requestQuotaSubject({
+          userId,
+          deviceId: typeof input.bound_device_id === 'string' ? input.bound_device_id : undefined,
+        }),
+      });
+    } catch {
+      return JSON.stringify({ error: 'Scheduling quota is temporarily unavailable' });
+    }
+  }
   switch (toolName) {
     case 'create_scheduled_task':
       return createTask(input, userId);
@@ -101,6 +128,12 @@ export async function executeScheduledTool(
 }
 
 async function createTask(input: Record<string, unknown>, userId: string): Promise<string> {
+  if (!config.containment.costlyIntegrationsEnabled) {
+    return JSON.stringify({
+      error: 'New scheduled tasks are temporarily unavailable.',
+      code: 'costly_integrations_frozen',
+    });
+  }
   const name = input.name as string;
   const prompt = input.prompt as string;
   const taskType = input.task_type as string;
@@ -108,10 +141,21 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
   const intervalMs = input.interval_ms as number | undefined;
   const targetApp = input.target_app as string | undefined;
   const notifyUser = (input.notify_user as boolean) ?? false;
+  const executionLocation = input.execution_location as string;
+  const boundDeviceId = input.bound_device_id as string | undefined;
 
   // Validate
   if (!name || !prompt || !taskType) {
     return JSON.stringify({ error: 'name, prompt, and task_type are required' });
+  }
+  if (!['hosted', 'device_local'].includes(executionLocation)) {
+    return JSON.stringify({ error: 'execution_location must be hosted or device_local' });
+  }
+  if (executionLocation === 'device_local' && !boundDeviceId) {
+    return JSON.stringify({ error: 'device_local tasks require bound_device_id' });
+  }
+  if (executionLocation === 'hosted' && boundDeviceId) {
+    return JSON.stringify({ error: 'hosted tasks cannot bind a local execution device' });
   }
   if (taskType === 'scheduled' && (!cron || !isValidCron(cron))) {
     return JSON.stringify({ error: `Invalid or missing cron expression: "${cron}"` });
@@ -121,7 +165,6 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
   }
 
   const nextRunAt = computeNextRun(taskType, cron, intervalMs);
-
   const { data, error } = await supabase
     .from('danotch_scheduled_tasks')
     .insert({
@@ -134,14 +177,24 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
       target_app: targetApp ?? null,
       notify_user: notifyUser,
       enabled: true,
-      next_run_at: nextRunAt.toISOString(),
+      execution_location: executionLocation,
+      bound_device_id: boundDeviceId ?? null,
     })
-    .select('id, name, next_run_at')
+    .select('id, name, next_run_at, execution_location, bound_device_id')
     .single();
 
   if (error) {
     console.error('[tools:scheduled] Create failed:', error.message);
     return JSON.stringify({ error: error.message });
+  }
+  const { error: scheduleError } = await getAdminDb('scheduler')
+    .from('danotch_scheduled_tasks')
+    .update({ next_run_at: nextRunAt.toISOString() })
+    .eq('id', data.id)
+    .eq('user_id', userId);
+  if (scheduleError) {
+    await supabase.from('danotch_scheduled_tasks').delete().eq('id', data.id);
+    return JSON.stringify({ error: 'Task could not be scheduled' });
   }
 
   const schedule = taskType === 'scheduled' && cron
@@ -155,6 +208,8 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
     schedule,
     next_run: nextRunAt.toISOString(),
     notify_user: notifyUser,
+    execution_location: executionLocation,
+    bound_device_id: boundDeviceId ?? null,
     message: `Scheduled task "${name}" created. ${schedule}. ${notifyUser ? 'Will notify you when condition is met.' : 'Runs silently.'} Next run: ${nextRunAt.toLocaleString()}.`,
   });
 }
@@ -162,7 +217,7 @@ async function createTask(input: Record<string, unknown>, userId: string): Promi
 async function listTasks(userId: string): Promise<string> {
   const { data, error } = await supabase
     .from('danotch_scheduled_tasks')
-    .select('id, name, prompt, task_type, cron, interval_ms, enabled, notify_user, last_run_at, next_run_at, run_count, last_result')
+    .select('id, name, prompt, task_type, cron, interval_ms, enabled, notify_user, execution_location, bound_device_id, run_state, last_run_at, next_run_at, run_count, last_result')
     .eq('user_id', userId)
     .order('created_at', { ascending: false });
 
@@ -179,6 +234,9 @@ async function listTasks(userId: string): Promise<string> {
     last_run: t.last_run_at,
     next_run: t.next_run_at,
     run_count: t.run_count,
+    execution_location: t.execution_location,
+    bound_device_id: t.bound_device_id,
+    run_state: t.run_state,
     last_status: (t.last_result as Record<string, unknown>)?.status ?? null,
   }));
 
@@ -201,6 +259,7 @@ async function updateTask(input: Record<string, unknown>, userId: string): Promi
   }
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  let nextRunAt: string | undefined;
   if (input.enabled !== undefined) updates.enabled = input.enabled;
   if (input.name) updates.name = input.name;
   if (input.prompt) updates.prompt = input.prompt;
@@ -209,11 +268,11 @@ async function updateTask(input: Record<string, unknown>, userId: string): Promi
       return JSON.stringify({ error: `Invalid cron: "${input.cron}"` });
     }
     updates.cron = input.cron;
-    updates.next_run_at = computeNextRun('scheduled', input.cron as string).toISOString();
+    nextRunAt = computeNextRun('scheduled', input.cron as string).toISOString();
   }
   if (input.interval_ms) {
     updates.interval_ms = input.interval_ms;
-    updates.next_run_at = computeNextRun('poll', null, input.interval_ms as number).toISOString();
+    nextRunAt = computeNextRun('poll', null, input.interval_ms as number).toISOString();
   }
 
   const { error } = await supabase
@@ -224,6 +283,14 @@ async function updateTask(input: Record<string, unknown>, userId: string): Promi
 
   if (error) {
     return JSON.stringify({ error: error.message });
+  }
+  if (nextRunAt) {
+    const { error: scheduleError } = await getAdminDb('scheduler')
+      .from('danotch_scheduled_tasks')
+      .update({ next_run_at: nextRunAt })
+      .eq('id', id)
+      .eq('user_id', userId);
+    if (scheduleError) return JSON.stringify({ error: 'Task updated but could not be rescheduled' });
   }
 
   return JSON.stringify({ success: true, message: `Task updated.` });

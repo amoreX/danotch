@@ -1,10 +1,14 @@
 import type { Request, Response, NextFunction } from 'express';
-import { supabase } from '../lib/supabase.js';
+import { supabaseAuth } from '../lib/supabase.js';
+import { runWithUserDb } from '../lib/user-db.js';
 
 interface AuthUser {
   sub: string;   // user_id (UUID)
   email: string;
   role: string;
+  // Supabase's last_sign_in_at represents an account-authentication event.
+  // Refresh-token issuance must not make an old login fresh for enrollment.
+  authTime?: number;
 }
 
 // Extend Express Request to include user
@@ -25,8 +29,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
   const token = header.slice(7);
 
-  // Use Supabase admin to verify — works with both HS256 and ES256 tokens
-  supabase.auth.getUser(token).then(({ data, error }) => {
+  // Supabase Auth verifies the caller token; the same token is then propagated
+  // to PostgREST so authenticated database work is constrained by RLS.
+  supabaseAuth.auth.getUser(token).then(({ data, error }) => {
     if (error || !data.user) {
       console.log(`[auth] Token verification failed: ${error?.message ?? 'no user'}`);
       res.status(401).json({ error: 'Invalid or expired token' });
@@ -36,8 +41,11 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
       sub: data.user.id,
       email: data.user.email ?? '',
       role: data.user.role ?? 'authenticated',
+      authTime: data.user.last_sign_in_at
+        ? new Date(data.user.last_sign_in_at).getTime()
+        : undefined,
     };
-    next();
+    runWithUserDb(token, next);
   });
 }
 
@@ -46,7 +54,7 @@ export async function extractUserId(header: string | undefined): Promise<string 
   if (!header?.startsWith('Bearer ')) return undefined;
   const token = header.slice(7);
   try {
-    const { data, error } = await supabase.auth.getUser(token);
+    const { data, error } = await supabaseAuth.auth.getUser(token);
     if (error || !data.user) return undefined;
     return data.user.id;
   } catch {

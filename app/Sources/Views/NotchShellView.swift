@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UserNotifications
 
 struct NotchShellView: View {
     @ObservedObject var viewModel: NotchViewModel
@@ -157,7 +158,7 @@ struct NotchShellView: View {
 
         // Liquid glass base
         let glass = Color.clear
-            .glassEffect(Glass.regular.tint(Color.black.opacity(0.18)), in: shape)
+            .perchGlass(tint: Color.black.opacity(0.18), in: shape)
             .clipShape(shape)
 
         // Black-to-transparent gradient overlaid on top so the physical notch
@@ -230,18 +231,27 @@ struct NotchShellView: View {
 
     @ViewBuilder
     private var expandedContent: some View {
-        switch viewModel.viewState {
-        case .overview, .taskList, .agentChat, .agents:
-            NotchContentView(viewModel: viewModel)
-        case .stats:
-            StatsPanel(viewModel: viewModel)
-        case .processList:
-            ProcessListPanel(viewModel: viewModel)
-        case .settings:
-            SettingsPanel(viewModel: viewModel)
-        case .notifications:
-            NotificationsPanel(viewModel: viewModel)
+        VStack(spacing: 6) {
+            if viewModel.connectionState.needsAttention {
+                DeviceConnectionBanner(viewModel: viewModel)
+            }
+            Group {
+                switch viewModel.viewState {
+                case .overview, .taskList, .agentChat, .agents:
+                    NotchContentView(viewModel: viewModel)
+                case .stats:
+                    StatsPanel(viewModel: viewModel)
+                case .processList:
+                    ProcessListPanel(viewModel: viewModel)
+                case .settings:
+                    SettingsPanel(viewModel: viewModel)
+                case .notifications:
+                    NotificationsPanel(viewModel: viewModel)
+                }
+            }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(viewModel.connectionAnnouncement)
     }
 
     @ViewBuilder
@@ -322,7 +332,7 @@ struct NotchShellView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6)
                 .frame(height: 16)
-                .glassEffect(.regular, in: .capsule)
+                .perchGlass(in: Capsule())
             Text(caption)
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
@@ -392,10 +402,7 @@ struct NotchShellView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .frame(height: 22)
-            .glassEffect(
-                isActive ? Glass.regular.tint(DN.activeAccent) : Glass.regular,
-                in: .capsule
-            )
+            .perchGlass(tint: isActive ? DN.activeAccent : nil, in: Capsule())
             .contentShape(.capsule)
             .onTapGesture(perform: action)
     }
@@ -408,10 +415,7 @@ struct NotchShellView: View {
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.white)
             .frame(width: 26, height: 22)
-            .glassEffect(
-                isActive ? Glass.regular.tint(DN.activeAccent) : Glass.regular,
-                in: .capsule
-            )
+            .perchGlass(tint: isActive ? DN.activeAccent : nil, in: Capsule())
             .contentShape(.capsule)
             .onTapGesture(perform: action)
             .overlay(alignment: .topTrailing) {
@@ -512,6 +516,123 @@ struct NotchShoulder: Shape {
     }
 }
 
+private struct DeviceConnectionBanner: View {
+    @ObservedObject var viewModel: NotchViewModel
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: viewModel.connectionState.icon)
+            Text(viewModel.connectionState.title)
+                .font(.system(size: 10, weight: .semibold))
+            Spacer()
+            if viewModel.connectionState.canRetry {
+                Button("Retry") { viewModel.retryDeviceConnection() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            if viewModel.connectionState.canCancel {
+                Button("Cancel") { viewModel.cancelDeviceConnection() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10))
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(Color.orange.opacity(0.24), in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(viewModel.connectionState.announcement)
+    }
+}
+
+extension DeviceConnectionState {
+    var needsAttention: Bool {
+        switch self {
+        case .offline, .expired, .revoked, .interrupted,
+             .reenrollmentRequired, .unsupportedProtocol:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var canRetry: Bool {
+        switch self {
+        case .offline, .expired, .interrupted, .reenrollmentRequired, .cancelled:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var canCancel: Bool {
+        switch self {
+        case .enrolling, .connecting, .offline, .expired, .interrupted:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var canReenroll: Bool {
+        switch self {
+        case .revoked, .reenrollmentRequired:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .signedOut: return "Signed out"
+        case .enrolling: return "Enrolling this Mac"
+        case .connecting: return "Connecting"
+        case .connected: return "Securely connected"
+        case .offline: return "Offline"
+        case .expired: return "Session expired"
+        case .revoked: return "Device revoked"
+        case .interrupted: return "Connection interrupted"
+        case .reenrollmentRequired: return "Re-enrollment required"
+        case .unsupportedProtocol: return "Update required"
+        case .cancelled: return "Connection cancelled"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .offline(let reason), .revoked(let reason),
+             .interrupted(let reason), .reenrollmentRequired(let reason):
+            return reason
+        case .connected(let deviceID):
+            return "Authenticated outbound device channel · \(deviceID)"
+        case .connecting(let attempt):
+            return "Requesting a one-use gateway ticket · attempt \(attempt + 1)"
+        case .expired:
+            return "The one-use ticket or account session expired."
+        case .unsupportedProtocol:
+            return "This app cannot safely connect to the server protocol."
+        case .enrolling:
+            return "Creating a non-exportable device identity and binding it to this account."
+        case .signedOut:
+            return "Sign in to connect this Mac."
+        case .cancelled:
+            return "Automatic reconnection is paused."
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .connected: return "lock.shield.fill"
+        case .connecting, .enrolling: return "arrow.triangle.2.circlepath"
+        case .signedOut, .cancelled: return "pause.circle"
+        case .unsupportedProtocol: return "arrow.down.app"
+        case .revoked: return "xmark.shield"
+        default: return "wifi.exclamationmark"
+        }
+    }
+}
+
 // MARK: - Notifications Panel
 
 struct NotificationsPanel: View {
@@ -559,7 +680,7 @@ struct NotificationsPanel: View {
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 10)
                                 .frame(height: 20)
-                                .glassEffect(.regular, in: .capsule)
+                                .perchGlass(in: Capsule())
                         }
                         .buttonStyle(.plain)
                     }
@@ -767,6 +888,10 @@ struct SettingsPanel: View {
                     settingsToggle("Keep open in chat", $viewModel.settings.keepOpenInChat)
                 }
 
+                section(title: "Device Connection") {
+                    deviceConnectionSection
+                }
+
                 section(title: "Billing") {
                     billingSection
                 }
@@ -783,6 +908,12 @@ struct SettingsPanel: View {
                     ForEach(PinnedWidget.allCases, id: \.rawValue) { widget in
                         widgetToggleRow(widget)
                     }
+                }
+
+                section(title: "Privacy & Access") {
+                    settingsToggle("Agent monitoring", $viewModel.settings.agentMonitoringEnabled)
+                    settingsToggle("Music controls", $viewModel.settings.musicControlsEnabled)
+                    settingsToggle("System notifications", systemNotificationsBinding)
                 }
 
                 section(title: "Agents") {
@@ -807,7 +938,61 @@ struct SettingsPanel: View {
         }
     }
 
+    private var systemNotificationsBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.settings.systemNotificationsEnabled },
+            set: { enabled in
+                viewModel.settings.systemNotificationsEnabled = enabled
+                guard enabled, Bundle.main.bundleIdentifier != nil else { return }
+                UNUserNotificationCenter.current()
+                    .requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                        guard !granted else { return }
+                        DispatchQueue.main.async {
+                            viewModel.settings.systemNotificationsEnabled = false
+                        }
+                    }
+            }
+        )
+    }
+
     // MARK: - Integrations grid
+
+    private var deviceConnectionSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(
+                viewModel.connectionState.title,
+                systemImage: viewModel.connectionState.icon
+            )
+            .font(.system(size: 12, weight: .semibold))
+            Text(viewModel.connectionState.detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let email = viewModel.authManager?.session?.email {
+                Text("Active account: \(email)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                if viewModel.connectionState.canReenroll {
+                    Button("Re-enroll") { viewModel.reenrollDevice() }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+                if viewModel.connectionState.canRetry {
+                    Button("Retry") { viewModel.retryDeviceConnection() }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+                if viewModel.connectionState.canCancel {
+                    Button("Cancel") { viewModel.cancelDeviceConnection() }
+                        .buttonStyle(.bordered).controlSize(.small)
+                }
+                Button("Switch Account") { viewModel.authManager?.logout() }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(viewModel.connectionState.announcement)
+    }
 
     private var integrationsSection: some View {
         let apps: [(type: String, name: String, icon: String)] = [
@@ -901,13 +1086,13 @@ struct SettingsPanel: View {
 
             HStack(spacing: 8) {
                 Button("Refresh") { viewModel.loadBillingStatus() }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(.clear)
 
                 if viewModel.billingStatus?.requiresPurchase == true {
                     Button("Buy $5") { viewModel.startCheckout() }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(DN.accent)
                 }
@@ -997,7 +1182,7 @@ struct SettingsPanel: View {
             } else {
                 if serverKeyAllowed {
                     Button("Use") { viewModel.deactivateAllProviders() }
-                        .buttonStyle(.glass).controlSize(.small).tint(.clear)
+                        .buttonStyle(.bordered).controlSize(.small).tint(.clear)
                 } else {
                     Text("Trial ended")
                         .font(.caption)
@@ -1095,7 +1280,7 @@ struct ProviderRow: View {
                     Button("Use") {
                         viewModel.activateProviderConfig(provider: providerType)
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
                     .tint(.clear)
                 }
@@ -1116,7 +1301,7 @@ struct ProviderRow: View {
                         .textFieldStyle(.plain)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
-                        .glassEffect(.regular, in: .capsule)
+                        .perchGlass(in: Capsule())
 
                     Picker("Model", selection: Binding(
                         get: { modelId.isEmpty ? defaultModel : modelId },
@@ -1135,7 +1320,7 @@ struct ProviderRow: View {
                             let model = modelId.isEmpty ? defaultModel : modelId
                             viewModel.verifyProviderKey(provider: providerType, apiKey: apiKey, modelId: model)
                         }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.clear)
                         .disabled(apiKey.isEmpty || isVerifying)
@@ -1146,7 +1331,7 @@ struct ProviderRow: View {
                             viewModel.saveProviderConfig(provider: providerType, apiKey: apiKey, modelId: model)
                             apiKey = ""
                         }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(DN.activeAccent)
                         .foregroundStyle(.white)
@@ -1160,7 +1345,7 @@ struct ProviderRow: View {
                                 apiKey = ""
                                 modelId = defaultModel
                             }
-                            .buttonStyle(.glass)
+                            .buttonStyle(.bordered)
                             .controlSize(.small)
                             .tint(.clear)
                         }
@@ -1223,10 +1408,10 @@ struct AppConnectionTile: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 90, alignment: .topLeading)
-        .glassEffect(
-            isConnected
-                ? Glass.regular.tint(Color.green.opacity(0.15))
-                : (error != nil ? Glass.regular.tint(Color.orange.opacity(0.12)) : Glass.regular),
+        .perchGlass(
+            tint: isConnected
+                ? Color.green.opacity(0.15)
+                : (error != nil ? Color.orange.opacity(0.12) : nil),
             in: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
         .animation(DN.transition, value: isConnected)
@@ -1256,7 +1441,7 @@ struct AppConnectionTile: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 10)
                 .frame(height: 22)
-                .glassEffect(.regular, in: .capsule)
+                .perchGlass(in: Capsule())
                 .buttonStyle(.plain)
         } else {
             Button(error != nil ? "Retry" : "Connect") {
@@ -1267,11 +1452,9 @@ struct AppConnectionTile: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 10)
             .frame(height: 22)
-            .glassEffect(
-                error != nil
-                    ? Glass.regular.tint(Color.orange.opacity(0.4))
-                    : Glass.regular.tint(DN.activeAccent),
-                in: .capsule
+            .perchGlass(
+                tint: error != nil ? Color.orange.opacity(0.4) : DN.activeAccent,
+                in: Capsule()
             )
             .buttonStyle(.plain)
         }
