@@ -11,7 +11,7 @@ create table public.danotch_capability_quota_config (
     'signup', 'trial', 'provider', 'enrollment', 'oauth', 'scheduler',
     'action', 'replay', 'storage'
   )),
-  window_seconds integer not null check (window_seconds between 1 and 86400),
+  window_seconds integer not null check (window_seconds between 1 and 2592000),
   capacity integer not null check (capacity > 0),
   enabled boolean not null default true,
   updated_at timestamptz not null default now()
