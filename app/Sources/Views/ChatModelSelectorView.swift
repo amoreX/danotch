@@ -20,9 +20,10 @@ struct ChatModelSelectorView: View {
     var body: some View {
         modelSelector
         .onAppear {
-            if viewModel.modelOptions.isEmpty {
-                viewModel.loadProviderModels()
-            }
+            // Provider state in the daemon is authoritative. Refresh it before
+            // presenting models so a newly saved DeepSeek/OpenAI configuration
+            // cannot briefly fall back to Anthropic.
+            viewModel.loadProviderConfigs()
         }
     }
 

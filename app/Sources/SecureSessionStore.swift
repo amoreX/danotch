@@ -16,13 +16,12 @@ protocol KeychainDataClient {
     func delete(service: String, account: String) throws
 }
 
-struct DataProtectionKeychainClient: KeychainDataClient {
+struct SystemKeychainDataClient: KeychainDataClient {
     private func query(service: String, account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecUseDataProtectionKeychain as String: true,
         ]
     }
 

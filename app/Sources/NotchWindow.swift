@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Combine
 import SwiftUI
 
@@ -61,6 +62,8 @@ class NotchWindowController: NSObject {
     var scrollMonitor: Any?
     var keyboardMonitor: Any?
     var localKeyboardMonitor: Any?
+    private var hotKeyRef: EventHotKeyRef?
+    private var hotKeyHandlerRef: EventHandlerRef?
     var collapseTimer: Timer?
     var swipeAccumulator: CGFloat = 0
     private var peekCancellable: AnyCancellable?
@@ -107,6 +110,8 @@ class NotchWindowController: NSObject {
         if let monitor = scrollMonitor { NSEvent.removeMonitor(monitor); scrollMonitor = nil }
         if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor); keyboardMonitor = nil }
         if let monitor = localKeyboardMonitor { NSEvent.removeMonitor(monitor); localKeyboardMonitor = nil }
+        if let hotKeyRef { UnregisterEventHotKey(hotKeyRef); self.hotKeyRef = nil }
+        if let hotKeyHandlerRef { RemoveEventHandler(hotKeyHandlerRef); self.hotKeyHandlerRef = nil }
         collapseTimer?.invalidate()
         collapseTimer = nil
         peekCancellable?.cancel()
@@ -204,29 +209,77 @@ class NotchWindowController: NSObject {
     // MARK: - Global Keyboard Shortcut (Cmd+Shift+Space)
 
     private func startKeyboardShortcut() {
-        let checkShortcut: (NSEvent) -> Bool = { event in
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            return flags.contains([.command, .shift]) && event.keyCode == 49
-        }
+        registerSystemHotKey()
 
-        // Global monitor: fires when app is NOT key
-        keyboardMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if checkShortcut(event) {
-                self?.handleGlobalShortcut()
-            }
-        }
-        // Local monitor: fires when app IS key (panel has focus)
+        // Escape remains a local shortcut while the panel has focus. The
+        // Command-Shift-Space hotkey is handled by Carbon both locally and
+        // globally, avoiding Input Monitoring/Accessibility requirements.
         localKeyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            if checkShortcut(event) {
-                self?.handleGlobalShortcut()
-                return nil
-            }
-            // Escape to collapse
             if event.keyCode == 53 && self?.viewModel.isExpanded == true {
                 self?.collapse()
                 return nil
             }
             return event
+        }
+    }
+
+    private func registerSystemHotKey() {
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let handlerStatus = InstallEventHandler(
+            GetApplicationEventTarget(),
+            { _, event, userData -> OSStatus in
+                guard let event, let userData else { return OSStatus(eventNotHandledErr) }
+                var hotKeyID = EventHotKeyID()
+                let status = GetEventParameter(
+                    event,
+                    EventParamName(kEventParamDirectObject),
+                    EventParamType(typeEventHotKeyID),
+                    nil,
+                    MemoryLayout<EventHotKeyID>.size,
+                    nil,
+                    &hotKeyID
+                )
+                guard status == noErr,
+                      hotKeyID.signature == 0x50524348,
+                      hotKeyID.id == 1 else {
+                    return OSStatus(eventNotHandledErr)
+                }
+                let controller = Unmanaged<NotchWindowController>
+                    .fromOpaque(userData)
+                    .takeUnretainedValue()
+                DispatchQueue.main.async {
+                    controller.handleGlobalShortcut()
+                }
+                return noErr
+            },
+            1,
+            &eventType,
+            Unmanaged.passUnretained(self).toOpaque(),
+            &hotKeyHandlerRef
+        )
+        guard handlerStatus == noErr else {
+            print("[Perch] Could not install global hotkey handler: \(handlerStatus)")
+            return
+        }
+
+        let hotKeyID = EventHotKeyID(signature: 0x50524348, id: 1) // "PRCH"
+        let registrationStatus = RegisterEventHotKey(
+            UInt32(kVK_Space),
+            UInt32(cmdKey | shiftKey),
+            hotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &hotKeyRef
+        )
+        if registrationStatus != noErr {
+            print("[Perch] Could not register Command-Shift-Space: \(registrationStatus)")
+            if let hotKeyHandlerRef {
+                RemoveEventHandler(hotKeyHandlerRef)
+                self.hotKeyHandlerRef = nil
+            }
         }
     }
 
@@ -380,8 +433,9 @@ class NotchWindowController: NSObject {
                 viewModel.isChatInputActive = false
                 viewModel.shouldFocusChatInput = false
             }
-            // Don't auto-collapse if in a chat and setting is on
-            if case .agentChat = viewModel.viewState, viewModel.settings.keepOpenInChat {
+            // Settings stays open so controls remain usable. Chats respect the
+            // user's keep-open preference; all other pages auto-collapse.
+            if shouldKeepCurrentViewOpen {
                 return
             }
             // Don't auto-collapse while an app connection is in progress
@@ -451,10 +505,33 @@ class NotchWindowController: NSObject {
         collapseTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             self.collapseTimer = nil
-            if !self.viewModel.mouseInContent && !self.viewModel.isChatInputActive
-                && !self.viewModel.isDraggingWidget {
+            guard !self.shouldKeepCurrentViewOpen,
+                  !self.viewModel.isChatInputActive,
+                  !self.viewModel.isDraggingWidget,
+                  !self.viewModel.appLoading.values.contains(true) else { return }
+
+            // `mouseInContent` is reported by the full transparent hosting
+            // view, which is intentionally larger than the visible notch.
+            // Re-check the actual shape instead so invisible margins cannot
+            // keep Today, Agents, Stats, or Notifications open forever.
+            let mouse = NSEvent.mouseLocation
+            let isInsideVisibleShape = self.screenForMouse().map {
+                self.currentInteractiveRect(on: $0).contains(mouse)
+            } ?? false
+            if !isInsideVisibleShape {
                 self.collapse()
             }
+        }
+    }
+
+    private var shouldKeepCurrentViewOpen: Bool {
+        switch viewModel.viewState {
+        case .settings:
+            return true
+        case .agentChat:
+            return viewModel.settings.keepOpenInChat
+        default:
+            return false
         }
     }
 

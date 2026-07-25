@@ -82,7 +82,7 @@ final class DeviceIdentityStore: DeviceIdentityProviding {
     private let factory: HardwareDeviceKeyFactory
 
     init(
-        keychain: KeychainDataClient = DataProtectionKeychainClient(),
+        keychain: KeychainDataClient = SystemKeychainDataClient(),
         factory: HardwareDeviceKeyFactory = SecureEnclaveDeviceKeyFactory()
     ) {
         self.keychain = keychain

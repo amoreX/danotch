@@ -347,7 +347,7 @@ struct SecurityInstallationSecretReader: LocalInstallationSecretReading {
 
     private let keychain: KeychainDataClient
 
-    init(keychain: KeychainDataClient = DataProtectionKeychainClient()) {
+    init(keychain: KeychainDataClient = SystemKeychainDataClient()) {
         self.keychain = keychain
     }
 

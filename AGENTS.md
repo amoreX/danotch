@@ -33,6 +33,11 @@ scripts/   installer verification and shared shell logic
 Use Node 24 for `backend/`.
 
 ```bash
+# Build and start the app, authenticated daemon, and website together
+npm run dev
+```
+
+```bash
 cd backend
 npm ci
 npm run build

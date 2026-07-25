@@ -76,10 +76,6 @@ private struct TodayPage: View {
             ForEach(widgetRows.indices, id: \.self) { rowIndex in
                 let row = widgetRows[rowIndex]
 
-                if scrollBoundaryRow == rowIndex {
-                    scrollBoundaryLine
-                }
-
                 if row.count == 1, let widget = row.first {
                     widgetGridCell(widget)
                         .frame(maxWidth: .infinity)
@@ -105,36 +101,6 @@ private struct TodayPage: View {
         }
         .animation(DN.transition, value: pinned)
         .animation(DN.transition, value: isEditMode)
-    }
-
-    // Row where scrolling begins (nil if everything fits)
-    private var scrollBoundaryRow: Int? {
-        guard widgetRows.count > 1 else { return nil }
-        var cumH: CGFloat = 0
-        for (index, row) in widgetRows.enumerated() {
-            let rowH = (row.map { $0.gridHeight }.max() ?? 0) + spacing
-            cumH += rowH
-            if cumH > Self.widgetVisibleH {
-                return index
-            }
-        }
-        return nil
-    }
-
-    private var scrollBoundaryLine: some View {
-        HStack(spacing: 6) {
-            Rectangle()
-                .fill(Color.white.opacity(0.12))
-                .frame(height: 1)
-            Text("scroll")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(Color.white.opacity(0.25))
-                .fixedSize()
-            Rectangle()
-                .fill(Color.white.opacity(0.12))
-                .frame(height: 1)
-        }
-        .padding(.vertical, 2)
     }
 
     private var addWidgetHint: some View {
@@ -263,7 +229,9 @@ private struct TodayPage: View {
             return AnyView(view.gesture(
                 DragGesture(minimumDistance: 4, coordinateSpace: .named(WidgetGridLayout.coordinateSpaceName))
                     .onChanged { value in updateDrag(widget: widget, value: value) }
-                    .onEnded { _ in finishDrag() }
+                    .onEnded { value in
+                        finishDrag(widget: widget, at: value.location)
+                    }
             ))
         } else {
             return AnyView(view.simultaneousGesture(
@@ -277,7 +245,14 @@ private struct TodayPage: View {
                             break
                         }
                     }
-                    .onEnded { _ in finishDrag() }
+                    .onEnded { value in
+                        switch value {
+                        case .second(true, let drag?):
+                            finishDrag(widget: widget, at: drag.location)
+                        default:
+                            cancelDrag()
+                        }
+                    }
             ))
         }
     }
@@ -298,7 +273,6 @@ private struct TodayPage: View {
         }
 
         dragLocation = value.location
-        attemptGridReorder(widget, at: value.location)
     }
 
     private func attemptGridReorder(_ widget: PinnedWidget, at location: CGPoint) {
@@ -320,7 +294,15 @@ private struct TodayPage: View {
         }
     }
 
-    private func finishDrag() {
+    private func finishDrag(widget: PinnedWidget, at location: CGPoint) {
+        // Commit only once, after the drag ends. Reordering during onChanged
+        // invalidates the preference frames while SwiftUI is still animating
+        // them, which can make subsequent hit tests jump between stale rows.
+        attemptGridReorder(widget, at: location)
+        cancelDrag()
+    }
+
+    private func cancelDrag() {
         viewModel.isDraggingWidget = false
         withAnimation(DN.transition) {
             draggingWidget = nil

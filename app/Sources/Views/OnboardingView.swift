@@ -1,5 +1,4 @@
 import SwiftUI
-import UserNotifications
 
 enum OnboardingCompletionStore {
     private static let fileURL = FileManager.default.urls(
@@ -40,18 +39,20 @@ enum OnboardingCompletionStore {
             // Completion is convenience state, never secret material.
         }
     }
+
+    static func reset() {
+        try? FileManager.default.removeItem(at: fileURL)
+    }
 }
 
 private enum LocalOnboardingStep: Int, CaseIterable {
     case welcome
     case provider
-    case localAccess
 
     var title: String {
         switch self {
         case .welcome: return "Welcome"
         case .provider: return "Provider"
-        case .localAccess: return "Local access"
         }
     }
 }
@@ -62,14 +63,15 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var step: LocalOnboardingStep = .welcome
+    @State private var userName = ""
     @State private var provider = "anthropic"
     @State private var apiKey = ""
     @State private var model = ProviderConfig.defaultModels["anthropic"] ?? ""
     @State private var baseURL = ""
     @State private var composioKey = ""
-    @State private var notifications = true
+    @State private var isSavingProvider = false
 
-    private let size = CGSize(width: 620, height: 480)
+    private let size = CGSize(width: 620, height: 430)
 
     var body: some View {
         HStack(spacing: 0) {
@@ -90,14 +92,22 @@ struct OnboardingView: View {
         }
         .onAppear {
             onWindowSizeChange(size)
+            userName = viewModel.settings.userName
             viewModel.loadProviderConfigs()
             viewModel.loadComposioState()
         }
+        .onReceive(viewModel.$providerConfigs) { configs in
+            guard let active = configs.first(where: \.isActive) else { return }
+            provider = active.provider
+            model = active.modelId
+            baseURL = active.baseURL ?? ""
+        }
         .onChange(of: provider) { _, newProvider in
-            model = ProviderConfig.defaultModels[newProvider] ?? ""
-            if newProvider == "deepseek", baseURL.isEmpty {
-                baseURL = "https://api.deepseek.com"
-            } else if newProvider != "custom" && newProvider != "deepseek" {
+            if let saved = viewModel.providerConfigs.first(where: { $0.provider == newProvider }) {
+                model = saved.modelId
+                baseURL = saved.baseURL ?? ""
+            } else {
+                model = ProviderConfig.defaultModels[newProvider] ?? "default"
                 baseURL = ""
             }
         }
@@ -134,12 +144,14 @@ struct OnboardingView: View {
         switch step {
         case .welcome:
             VStack(alignment: .leading, spacing: 18) {
-                Text("Your assistant,\non this Mac.")
+                Text("Welcome to Perch.")
                     .font(.system(size: 38, weight: .light, design: .rounded))
-                Text("Perch talks to a local daemon over an authenticated loopback session. Conversations stay partitioned by this installation and no cloud relay is required.")
+                Text("Everything runs on this Mac. What should Perch call you?")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                TextField("Your name", text: $userName)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 15))
                 Label(viewModel.connectionState.detail, systemImage: viewModel.connectionState.icon)
                     .font(.system(size: 12))
                     .foregroundStyle(connectionColor)
@@ -149,7 +161,10 @@ struct OnboardingView: View {
             }
         case .provider:
             VStack(alignment: .leading, spacing: 14) {
-                pageHeader("Connect a model", "Credentials go directly to the authenticated local daemon. Perch never writes them to settings or files.")
+                pageHeader(
+                    "Connect a provider",
+                    "Choose a provider and enter its API key. Perch uses a recommended default model; you can change models later in Settings."
+                )
                 Picker("Provider", selection: $provider) {
                     Text("Anthropic").tag("anthropic")
                     Text("OpenAI").tag("openai")
@@ -160,15 +175,22 @@ struct OnboardingView: View {
                 .pickerStyle(.segmented)
                 SecureField("API key", text: $apiKey)
                     .textFieldStyle(.roundedBorder)
-                TextField("Model", text: $model)
-                    .textFieldStyle(.roundedBorder)
-                if provider == "custom" || provider == "deepseek" {
-                    TextField("Base URL", text: $baseURL)
+                if provider == "custom" {
+                    TextField("OpenAI-compatible base URL", text: $baseURL)
                         .textFieldStyle(.roundedBorder)
                 }
                 SecureField("Composio API key (optional)", text: $composioKey)
                     .textFieldStyle(.roundedBorder)
-                if let error = viewModel.providerError[provider] ?? nil {
+                if let active = viewModel.providerConfigs.first(where: {
+                    $0.provider == provider && $0.isActive
+                }) {
+                    Label(
+                        "Using saved \(active.displayName) configuration",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(DN.success)
+                } else if let error = viewModel.providerError[provider] ?? nil {
                     Label(error, systemImage: "exclamationmark.triangle")
                         .font(.caption)
                         .foregroundStyle(DN.accent)
@@ -178,35 +200,14 @@ struct OnboardingView: View {
                         .foregroundStyle(DN.success)
                 }
             }
-        case .localAccess:
-            VStack(alignment: .leading, spacing: 16) {
-                pageHeader("Choose local access", "You can change these later in Settings.")
-                permissionToggle(
-                    "Agent monitoring",
-                    detail: "See active coding-agent sessions and local resource use.",
-                    isOn: $viewModel.settings.agentMonitoringEnabled
-                )
-                permissionToggle(
-                    "Music controls",
-                    detail: "Read and control Apple Music for the notch widget.",
-                    isOn: $viewModel.settings.musicControlsEnabled
-                )
-                permissionToggle(
-                    "Native notifications",
-                    detail: "Show scheduled-task results through macOS.",
-                    isOn: $notifications
-                )
-            }
         }
     }
 
     private var footer: some View {
         HStack {
-            if step != .welcome {
-                Button("Back") {
-                    step = LocalOnboardingStep(rawValue: step.rawValue - 1) ?? .welcome
-                }
-                .buttonStyle(.bordered)
+            if step == .provider {
+                Button("Back") { step = .welcome }
+                    .buttonStyle(.bordered)
             }
             Spacer()
             if step == .provider {
@@ -219,28 +220,41 @@ struct OnboardingView: View {
                     )
                 }
                 .buttonStyle(.bordered)
-                .disabled(apiKey.isEmpty || model.isEmpty || viewModel.providerVerifying[provider] == true)
+                .disabled(
+                    apiKey.isEmpty
+                        || (provider == "custom" && normalizedBaseURL == nil)
+                        || viewModel.providerVerifying[provider] == true
+                )
             }
-            Button(step == .localAccess ? "Open Perch" : "Continue") {
+            Button(
+                step == .provider
+                    ? (isSavingProvider ? "Saving…" : "Open Perch")
+                    : "Continue"
+            ) {
                 advance()
             }
             .buttonStyle(.borderedProminent)
             .tint(DN.activeAccent)
-            .disabled(!canContinue)
+            .disabled(!canContinue || isSavingProvider)
         }
     }
 
     private var canContinue: Bool {
         switch step {
         case .welcome:
+            guard !trimmedName.isEmpty else { return false }
             if case .connected = viewModel.connectionState { return true }
             return false
         case .provider:
             return viewModel.providerVerified[provider] == true
-                || viewModel.providerConfigs.contains(where: { $0.isActive })
-        case .localAccess:
-            return true
+                || viewModel.providerConfigs.contains {
+                    $0.provider == provider && $0.isActive
+                }
         }
+    }
+
+    private var trimmedName: String {
+        userName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var normalizedBaseURL: String? {
@@ -257,38 +271,39 @@ struct OnboardingView: View {
     private func advance() {
         switch step {
         case .welcome:
+            viewModel.settings.userName = trimmedName
             step = .provider
         case .provider:
-            if !apiKey.isEmpty, viewModel.providerVerified[provider] == true {
-                viewModel.saveProviderConfig(
-                    provider: provider,
-                    apiKey: apiKey,
-                    modelId: model,
-                    baseURL: normalizedBaseURL
-                )
-                apiKey = ""
+            if viewModel.providerConfigs.contains(where: {
+                $0.provider == provider && $0.isActive
+            }), apiKey.isEmpty {
+                finishOnboarding()
+                return
             }
+            guard !apiKey.isEmpty, viewModel.providerVerified[provider] == true else { return }
+            isSavingProvider = true
+            let submittedKey = apiKey
+            viewModel.saveProviderConfig(
+                provider: provider,
+                apiKey: submittedKey,
+                modelId: model,
+                baseURL: normalizedBaseURL
+            ) { saved in
+                isSavingProvider = false
+                guard saved else { return }
+                apiKey = ""
+                finishOnboarding()
+            }
+        }
+    }
+
+    private func finishOnboarding() {
             if !composioKey.isEmpty {
                 viewModel.configureComposio(apiKey: composioKey)
                 composioKey = ""
             }
-            step = .localAccess
-        case .localAccess:
-            viewModel.settings.systemNotificationsEnabled = notifications
-            if notifications, Bundle.main.bundleIdentifier != nil {
-                UNUserNotificationCenter.current().requestAuthorization(
-                    options: [.alert, .sound, .badge]
-                ) { granted, _ in
-                    if !granted {
-                        DispatchQueue.main.async {
-                            viewModel.settings.systemNotificationsEnabled = false
-                        }
-                    }
-                }
-            }
             OnboardingCompletionStore.markComplete()
             onComplete()
-        }
     }
 
     private func pageHeader(_ title: String, _ detail: String) -> some View {
@@ -299,21 +314,5 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    private func permissionToggle(
-        _ title: String,
-        detail: String,
-        isOn: Binding<Bool>
-    ) -> some View {
-        Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 13, weight: .medium))
-                Text(detail).font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .toggleStyle(.switch)
-        .padding(12)
-        .contentCard(cornerRadius: 14)
     }
 }

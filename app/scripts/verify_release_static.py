@@ -46,6 +46,9 @@ forbid("app/Package.swift", ["Sparkle"])
 
 require("app/DaemonHost/main.swift", [
     "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly",
+    "SecTrustedApplicationCreateFromPath",
+    "SecAccessCreate",
+    "kSecAttrAccess",
     "SecRandomCopyBytes",
     "SecStaticCodeCreateWithPath",
     "SecStaticCodeCheckValidityWithErrors",
@@ -76,6 +79,7 @@ require("app/build.sh", [
     '"$NPM_BINARY" run --prefix "$BACKEND_DIR" build',
     '"$NPM_BINARY" ci --prefix "$STAGING_DIR" --omit=dev',
     "release build requires a non-empty executor manifest signature",
+    "NodeRuntime.entitlements",
     "codesign --force --options runtime --sign - \"$BUNDLE_DIR/Helpers/PerchDaemonHost\"",
 ])
 forbid("app/build.sh", [
@@ -97,6 +101,12 @@ forbid("app/Resources/Info.plist", [
     "PerchDeviceGatewayURL",
     "SUFeedURL",
     "SUPublicEDKey",
+])
+require("app/NodeRuntime.entitlements", [
+    "com.apple.security.cs.allow-jit",
+    "com.apple.security.cs.allow-unsigned-executable-memory",
+    "com.apple.security.cs.disable-executable-page-protection",
+    "com.apple.security.cs.disable-library-validation",
 ])
 
 print("Local source-distribution invariants verified.")

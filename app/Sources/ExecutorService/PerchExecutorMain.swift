@@ -14,11 +14,7 @@ struct PerchExecutorMain {
         fail("unsupported: Perch Executor requires Apple silicon")
         #else
         do {
-            #if SWIFT_PACKAGE
-            let resourceBundle = Bundle.module
-            #else
             let resourceBundle = Bundle.main
-            #endif
             let adjacentManifestURL = URL(fileURLWithPath: CommandLine.arguments[0])
                 .standardizedFileURL
                 .deletingLastPathComponent()

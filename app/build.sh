@@ -116,7 +116,12 @@ ditto "$STAGING_DIR" "$BUNDLE_DIR/Resources/Daemon"
 # distribution intentionally uses only ad-hoc signatures.
 while IFS= read -r -d '' candidate; do
   if file "$candidate" | grep -q "Mach-O"; then
-    codesign --force --options runtime --sign - "$candidate"
+    if [[ "$candidate" == "$BUNDLE_DIR/Resources/DaemonRuntime/bin/node" ]]; then
+      codesign --force --options runtime \
+        --entitlements "$SCRIPT_DIR/NodeRuntime.entitlements" --sign - "$candidate"
+    else
+      codesign --force --options runtime --sign - "$candidate"
+    fi
   fi
 done < <(find "$BUNDLE_DIR/Resources/DaemonRuntime" "$BUNDLE_DIR/Resources/Daemon" -type f -print0)
 

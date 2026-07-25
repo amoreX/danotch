@@ -2,6 +2,10 @@ import SwiftUI
 import AppKit
 import QuartzCore
 
+extension Notification.Name {
+    static let perchLogoutRequested = Notification.Name("engineering.super.Perch.logoutRequested")
+}
+
 @main
 struct PerchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
@@ -30,6 +34,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         applyAppIcon()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleLogoutRequest),
+            name: .perchLogoutRequested,
+            object: nil
+        )
         viewModel.activateLocalInstallation()
         viewModel.interruptInProgressConversations()
 
@@ -71,7 +81,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Load initial data
         viewModel.loadThreadHistory()
-        viewModel.loadProviderConfigs()
+        viewModel.loadProviderConfigs { [weak self] configs in
+            guard configs.first(where: \.isActive) == nil,
+                  OnboardingCompletionStore.isComplete else { return }
+            self?.requireProviderSetup()
+        }
         viewModel.loadProviderModels()
         viewModel.loadUnreadCount()
 
@@ -155,7 +169,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.isExpanded = false
     }
 
+    private func requireProviderSetup() {
+        OnboardingCompletionStore.reset()
+        stopNotch()
+        viewModel.activateLocalInstallation()
+        showOnboarding()
+    }
+
+    func logOut() {
+        OnboardingCompletionStore.reset()
+        viewModel.settings.userName = ""
+        stopNotch()
+        viewModel.activateLocalInstallation()
+        showOnboarding()
+    }
+
+    @objc private func handleLogoutRequest() {
+        // Let the Settings button finish its event dispatch before tearing
+        // down the SwiftUI hierarchy that contains it.
+        DispatchQueue.main.async { [weak self] in
+            self?.logOut()
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
+        NotificationCenter.default.removeObserver(self)
         viewModel.interruptInProgressConversations()
         viewModel.cancelDaemonConnection()
     }

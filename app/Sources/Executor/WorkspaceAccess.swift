@@ -72,10 +72,16 @@ public struct SecurityScopedBookmarkResolver: WorkspaceBookmarkResolving {
     public func stopAccessing(_ url: URL) { url.stopAccessingSecurityScopedResource() }
 }
 
-struct WorkspaceAccess: @unchecked Sendable {
+public struct WorkspaceAccess: @unchecked Sendable {
     private let bookmarks: WorkspaceBookmarkResolving
     private let fileManager: FileManager
     private let snapshotter: WorkspaceSnapshotter
+
+    public init() {
+        self.bookmarks = SecurityScopedBookmarkResolver()
+        self.fileManager = .default
+        self.snapshotter = WorkspaceSnapshotter()
+    }
 
     init(
         bookmarks: WorkspaceBookmarkResolving = SecurityScopedBookmarkResolver(),
@@ -87,7 +93,7 @@ struct WorkspaceAccess: @unchecked Sendable {
         self.snapshotter = snapshotter
     }
 
-    func open(
+    public func open(
         bookmark: WorkspaceBookmark,
         mode: ExecutionCapabilities.WorkspaceMode,
         quota: WorkspaceSnapshotQuota = .init(

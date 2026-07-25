@@ -719,10 +719,10 @@ function providerPayload(provider: ProviderPreference): Record<string, unknown> 
 
 function modelOptions(provider: ExternalProvider, configured?: string): Record<string, unknown>[] {
   const defaults: Record<ExternalProvider, string[]> = {
-    anthropic: ['claude-sonnet-4-6', 'claude-opus-4-6'],
+    anthropic: ['claude-haiku-4-5', 'claude-sonnet-5', 'claude-opus-5'],
     openai: ['gpt-5', 'gpt-5-mini'],
-    openrouter: ['anthropic/claude-sonnet-4-6'],
-    deepseek: ['deepseek-chat', 'deepseek-reasoner'],
+    openrouter: ['deepseek/deepseek-v4-pro'],
+    deepseek: ['deepseek-v4-pro', 'deepseek-v4-flash'],
     custom_openai: [],
   };
   const ids = [...defaults[provider]];

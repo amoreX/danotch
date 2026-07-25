@@ -71,6 +71,7 @@ class NotchSettings: ObservableObject {
     @Published var restoreLastView: Bool       { didSet { save() } }
     @Published var keepOpenInChat: Bool        { didSet { save() } }
     @Published var selectedDefaultModel: String { didSet { save() } }
+    @Published var userName: String            { didSet { save() } }
 
     // Display — pinned widgets
     @Published var pinnedWidgets: [PinnedWidget] { didSet { save() } }
@@ -131,7 +132,7 @@ class NotchSettings: ObservableObject {
     // UI state (persisted across restarts)
     @Published var collapsedGroups: Set<String> { didSet { save() } }
 
-    static let defaultAnthropicModel = "claude-sonnet-4-6"
+    static let defaultAnthropicModel = "claude-haiku-4-5"
 
     init() {
         // Set defaults first
@@ -139,6 +140,7 @@ class NotchSettings: ObservableObject {
         restoreLastView = false
         keepOpenInChat = true
         selectedDefaultModel = Self.defaultAnthropicModel
+        userName = ""
         pinnedWidgets = [.calendar, .music]
         showBattery = true
         showAgentLiveState = true
@@ -159,6 +161,7 @@ class NotchSettings: ObservableObject {
             "keepOpenInChat": keepOpenInChat,
             "restoreLastView": restoreLastView,
             "selectedDefaultModel": selectedDefaultModel,
+            "userName": userName,
             "pinnedWidgets": pinnedWidgets.map { $0.rawValue },
             "showBattery": showBattery,
             "showAgentLiveState": showAgentLiveState,
@@ -186,6 +189,7 @@ class NotchSettings: ObservableObject {
         if let v = json["keepOpenInChat"] as? Bool { keepOpenInChat = v }
         if let v = json["restoreLastView"] as? Bool { restoreLastView = v }
         if let v = json["selectedDefaultModel"] as? String, !v.isEmpty { selectedDefaultModel = v }
+        if let v = json["userName"] as? String { userName = v }
         if let v = json["pinnedWidgets"] as? [String] {
             pinnedWidgets = v.compactMap { PinnedWidget(rawValue: $0) }
         } else {
@@ -1010,7 +1014,7 @@ class NotchViewModel: ObservableObject {
         }
     }
 
-    func loadProviderConfigs() {
+    func loadProviderConfigs(completion: (([ProviderConfig]) -> Void)? = nil) {
         providerLoading = true
         Task {
             do {
@@ -1018,8 +1022,9 @@ class NotchViewModel: ObservableObject {
                 let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
                 let configs = json?["providers"] as? [[String: Any]] ?? []
                 let parsed = configs.compactMap { value -> ProviderConfig? in
-                    guard let provider = value["provider"] as? String,
+                    guard let rawProvider = value["provider"] as? String,
                           let model = value["model_id"] as? String else { return nil }
+                    let provider = rawProvider == "custom_openai" ? "custom" : rawProvider
                     return ProviderConfig(
                         id: value["id"] as? String ?? provider,
                         provider: provider,
@@ -1036,6 +1041,7 @@ class NotchViewModel: ObservableObject {
                         self.activeModelProvider = active.provider
                         self.settings.selectedDefaultModel = active.modelId
                     }
+                    completion?(parsed)
                     self.loadProviderModels()
                 }
             } catch {
@@ -1056,7 +1062,8 @@ class NotchViewModel: ObservableObject {
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return
             }
-            let remoteProvider = json["provider"] as? String ?? provider
+            let rawRemoteProvider = json["provider"] as? String ?? provider
+            let remoteProvider = rawRemoteProvider == "custom_openai" ? "custom" : rawRemoteProvider
             let models: [ProviderModelOption] = (json["models"] as? [[String: Any]] ?? []).compactMap {
                 guard let id = $0["id"] as? String else { return nil }
                 return ProviderModelOption(
@@ -1156,9 +1163,13 @@ class NotchViewModel: ObservableObject {
         provider: String,
         apiKey: String,
         modelId: String,
-        baseURL: String? = nil
+        baseURL: String? = nil,
+        completion: ((Bool) -> Void)? = nil
     ) {
-        guard !apiKey.isEmpty else { return }
+        guard !apiKey.isEmpty else {
+            completion?(false)
+            return
+        }
         Task {
             do {
                 var body: [String: Any] = [
@@ -1167,14 +1178,26 @@ class NotchViewModel: ObservableObject {
                     "model_id": modelId,
                 ]
                 if let baseURL { body["base_url"] = baseURL }
-                _ = try await daemonConnection.request(
+                let data = try await daemonConnection.request(
                     "/v1/config/providers",
                     method: "PUT",
                     json: body
                 )
-                await MainActor.run { self.loadProviderConfigs() }
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let saved = json?["saved"] as? Bool == true
+                await MainActor.run {
+                    if saved {
+                        self.activeModelProvider = provider
+                        self.settings.selectedDefaultModel = modelId
+                    }
+                    self.loadProviderConfigs()
+                    completion?(saved)
+                }
             } catch {
-                await MainActor.run { self.providerError[provider] = error.localizedDescription }
+                await MainActor.run {
+                    self.providerError[provider] = error.localizedDescription
+                    completion?(false)
+                }
             }
         }
     }

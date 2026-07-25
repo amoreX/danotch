@@ -813,6 +813,30 @@ struct SettingsPanel: View {
                     settingsToggle("Keep open in chat", $viewModel.settings.keepOpenInChat)
                 }
 
+                section(
+                    title: "Local Profile",
+                    footer: "Logging out returns to local onboarding. Saved providers, conversations, and settings remain on this Mac."
+                ) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(viewModel.settings.userName.isEmpty ? "Perch user" : viewModel.settings.userName)
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Stored locally")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Log Out", role: .destructive) {
+                            NotificationCenter.default.post(
+                                name: .perchLogoutRequested,
+                                object: nil
+                            )
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+
                 section(title: "Local Daemon") {
                     localDaemonSection
                 }
@@ -821,6 +845,25 @@ struct SettingsPanel: View {
                     title: "Providers",
                     footer: "Secrets are sent only through the authenticated loopback session and are never saved by the app."
                 ) {
+                    if let active = activeProviderConfig {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("Active: \(active.displayName)")
+                                .font(.system(size: 12, weight: .semibold))
+                            Spacer()
+                            Text(active.modelId)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .padding(.bottom, 4)
+                    } else if !viewModel.providerLoading {
+                        Label("No active provider", systemImage: "exclamationmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.bottom, 4)
+                    }
                     ForEach(["anthropic", "openai", "openrouter", "deepseek", "custom"], id: \.self) { providerType in
                         Divider().background(Color.white.opacity(0.08))
                         ProviderRow(viewModel: viewModel, providerType: providerType)
@@ -916,6 +959,10 @@ struct SettingsPanel: View {
         .onChange(of: viewModel.composioState) { _, state in
             applyComposioMetadata(state)
         }
+    }
+
+    private var activeProviderConfig: ProviderConfig? {
+        viewModel.providerConfigs.first(where: \.isActive)
     }
 
     private var systemNotificationsBinding: Binding<Bool> {
@@ -1269,7 +1316,7 @@ struct ProviderRow: View {
                         .tint(.clear)
                         .disabled(apiKey.isEmpty || isVerifying)
 
-                        Button("Save") {
+                        Button(isConfigured ? "Update & Use" : "Save & Use") {
                             guard !apiKey.isEmpty else { return }
                             let model = modelId.isEmpty ? defaultModel : modelId
                             viewModel.saveProviderConfig(

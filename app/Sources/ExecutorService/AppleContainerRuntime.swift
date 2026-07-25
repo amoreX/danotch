@@ -1,6 +1,9 @@
 #if canImport(Containerization)
 import Containerization
 import ContainerizationArchive
+#if canImport(ExecutorCore)
+import ExecutorCore
+#endif
 import Foundation
 
 @available(macOS 26.0, *)

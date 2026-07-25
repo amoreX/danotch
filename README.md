@@ -66,6 +66,12 @@ stored in macOS Keychain. They are not stored in SQLite, app settings, logs,
 URLs, or process arguments. Conversations can select a configured model, and
 each scheduled task pins its own provider, model, and optional custom endpoint.
 
+First-run onboarding asks for a local display name and one provider key, then
+selects that provider's recommended model. Provider and model changes remain
+available in Settings. **Command-Shift-Space** opens or closes the quick prompt
+globally. Local logout returns to onboarding while preserving saved providers,
+conversations, and settings on the Mac.
+
 Perch continues to use existing on-Mac conversation and display settings. It
 does not import hosted account data.
 
@@ -98,7 +104,21 @@ See [SECURITY.md](SECURITY.md) for the trust model.
 
 ## Development
 
-The backend requires Node 24:
+With Xcode Command Line Tools providing Swift 6.2, run the complete local stack
+from the repository root:
+
+```bash
+npm run dev
+```
+
+This builds the real app and daemon bundle, starts the native Keychain-backed
+daemon host, opens Perch, and serves the website at
+`http://127.0.0.1:5173`. Press Control-C to stop the daemon and website.
+`npm start` is an alias for the same command. The launcher automatically
+downloads and verifies the repository's pinned Node 24 runtime when the active
+Node version is older; it does not replace the system Node installation.
+
+To verify components independently, the backend requires Node 24:
 
 ```bash
 cd backend

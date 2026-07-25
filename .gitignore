@@ -2,6 +2,7 @@
 app/.build/
 app/.swiftpm/
 app/Danotch.app/
+app/Perch.app/
 *.xcodeproj
 !app/Perch.xcodeproj/
 !app/Perch.xcodeproj/**

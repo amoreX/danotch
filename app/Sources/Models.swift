@@ -455,11 +455,11 @@ struct ProviderConfig: Identifiable {
     var isVerified: Bool { verifiedAt != nil }
 
     static let defaultModels: [String: String] = [
-        "anthropic": "claude-sonnet-4-6",
+        "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5",
-        "openrouter": "anthropic/claude-sonnet-4-6",
-        "deepseek": "deepseek-chat",
-        "custom": "",
+        "openrouter": "deepseek/deepseek-v4-pro",
+        "deepseek": "deepseek-v4-pro",
+        "custom": "default",
     ]
 
     /// Fallback choices only. The chat selector fetches live provider models when possible.
@@ -479,14 +479,15 @@ struct ProviderConfig: Identifiable {
             ("gpt-4o",     "GPT-4o"),
         ],
         "openrouter": [
+            ("deepseek/deepseek-v4-pro",       "DeepSeek V4 Pro"),
             ("anthropic/claude-sonnet-4-6", "Sonnet 4.6"),
             ("anthropic/claude-opus-4-8",   "Opus 4.8"),
             ("anthropic/claude-haiku-4-5",  "Haiku 4.5"),
             ("openai/gpt-5",                "GPT-5"),
         ],
         "deepseek": [
-            ("deepseek-chat", "DeepSeek Chat"),
-            ("deepseek-reasoner", "DeepSeek Reasoner"),
+            ("deepseek-v4-pro", "DeepSeek V4 Pro"),
+            ("deepseek-v4-flash", "DeepSeek V4 Flash"),
         ],
         "custom": [],
     ]

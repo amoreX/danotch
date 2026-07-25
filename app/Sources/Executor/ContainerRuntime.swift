@@ -234,6 +234,26 @@ public struct LocalActionOffer: Sendable {
     public let capabilities: ExecutionCapabilities
     public let imageDigest: String
     public let expiresAt: Date
+
+    public init(
+        actionID: UUID,
+        registryVersion: String,
+        actionName: String,
+        normalizedParameters: ExecutorJSON,
+        parametersHash: String,
+        capabilities: ExecutionCapabilities,
+        imageDigest: String,
+        expiresAt: Date
+    ) {
+        self.actionID = actionID
+        self.registryVersion = registryVersion
+        self.actionName = actionName
+        self.normalizedParameters = normalizedParameters
+        self.parametersHash = parametersHash
+        self.capabilities = capabilities
+        self.imageDigest = imageDigest
+        self.expiresAt = expiresAt
+    }
 }
 
 public struct ExecutionGrant: Sendable {
@@ -250,6 +270,36 @@ public struct ExecutionGrant: Sendable {
     public let fence: Int
     public let expiresAt: Date
     public let transitionID: UUID
+
+    public init(
+        grantID: UUID,
+        actionID: UUID,
+        grantToken: String,
+        grantSignature: String,
+        actionHash: String,
+        parametersHash: String,
+        normalizedParameters: ExecutorJSON,
+        capabilities: ExecutionCapabilities,
+        imageDigest: String,
+        deviceID: UUID,
+        fence: Int,
+        expiresAt: Date,
+        transitionID: UUID
+    ) {
+        self.grantID = grantID
+        self.actionID = actionID
+        self.grantToken = grantToken
+        self.grantSignature = grantSignature
+        self.actionHash = actionHash
+        self.parametersHash = parametersHash
+        self.normalizedParameters = normalizedParameters
+        self.capabilities = capabilities
+        self.imageDigest = imageDigest
+        self.deviceID = deviceID
+        self.fence = fence
+        self.expiresAt = expiresAt
+        self.transitionID = transitionID
+    }
 }
 
 public struct ExecutionGrantAuthorization: Sendable {
@@ -299,16 +349,21 @@ public struct ValidatedExecution: Sendable {
     public let workspace: WorkspaceScope
 }
 
-struct ExecutionGrantValidator: Sendable {
+public struct ExecutionGrantValidator: Sendable {
     let registry: LocalActionRegistry
     let approvedImageDigest: String
 
-    init(registry: LocalActionRegistry = .shared, approvedImageDigest: String) {
+    public init(approvedImageDigest: String) {
+        self.registry = .shared
+        self.approvedImageDigest = approvedImageDigest.lowercased()
+    }
+
+    init(registry: LocalActionRegistry, approvedImageDigest: String) {
         self.registry = registry
         self.approvedImageDigest = approvedImageDigest.lowercased()
     }
 
-    func validate(
+    public func validate(
         offer: LocalActionOffer,
         grant: ExecutionGrant,
         connectedDeviceID: UUID,

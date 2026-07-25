@@ -9,7 +9,12 @@ let package = Package(
     ],
     // Source distributions are arm64-only. Invoke SwiftPM with
     // `--triple arm64-apple-macosx26.0`; build.sh enforces the same Xcode arch.
-    dependencies: [],
+    dependencies: [
+        .package(
+            url: "https://github.com/apple/containerization.git",
+            exact: "0.33.3"
+        )
+    ],
     targets: [
         .target(
             name: "ExecutorCore",
@@ -33,6 +38,15 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("Security")
             ]
+        ),
+        .executableTarget(
+            name: "PerchExecutor",
+            dependencies: [
+                "ExecutorCore",
+                .product(name: "Containerization", package: "containerization"),
+                .product(name: "ContainerizationArchive", package: "containerization"),
+            ],
+            path: "Sources/ExecutorService"
         ),
         .testTarget(
             name: "PerchTests",

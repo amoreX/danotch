@@ -110,6 +110,34 @@ private struct RPCRequest {
 }
 
 private final class KeychainStore {
+    private let sharedAccess: SecAccess
+
+    init(appBundle: URL) throws {
+        let trustedPaths = [
+            CommandLine.arguments[0],
+            appBundle.appendingPathComponent("Contents/MacOS/Perch").path,
+        ]
+        var trustedApplications: [SecTrustedApplication] = []
+        for path in trustedPaths {
+            var application: SecTrustedApplication?
+            let status = SecTrustedApplicationCreateFromPath(path, &application)
+            guard status == errSecSuccess, let application else {
+                throw HostError.keychain(status)
+            }
+            trustedApplications.append(application)
+        }
+        var access: SecAccess?
+        let status = SecAccessCreate(
+            "Perch local credentials" as CFString,
+            trustedApplications as CFArray,
+            &access
+        )
+        guard status == errSecSuccess, let access else {
+            throw HostError.keychain(status)
+        }
+        sharedAccess = access
+    }
+
     static func isValidInstallationSecret(_ encoded: Data) -> Bool {
         guard let decodedValue = Data(base64Encoded: encoded, options: []),
               decodedValue.count == 32
@@ -154,6 +182,7 @@ private final class KeychainStore {
         let attributes: [CFString: Any] = [
             kSecValueData: data,
             kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            kSecAttrAccess: sharedAccess,
         ]
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess {
@@ -187,9 +216,9 @@ private final class KeychainStore {
         if var existing = try get(HostConstants.installationSecret) {
             defer { existing.resetBytes(in: 0..<existing.count) }
             if Self.isValidInstallationSecret(existing) {
-                // Re-apply the non-synchronizing accessibility class in case a
-                // valid item predates this host.
-                try set(existing, credential: HostConstants.installationSecret)
+                // Do not rewrite access control on startup. Replacing an ACL
+                // causes macOS to request the login-keychain password on every
+                // development launch.
                 return Data(existing)
             }
             // Malformed legacy material cannot authenticate a session. Remove it
@@ -482,7 +511,7 @@ private func run() throws {
     let layout = try BundleLayout.resolve()
     _ = umask(0o077)
     try secureDaemonDirectories()
-    let store = KeychainStore()
+    let store = try KeychainStore(appBundle: layout.appBundle)
     var installationSecret = try store.installationSecret()
     defer { installationSecret.resetBytes(in: 0..<installationSecret.count) }
     var installationSecretString = String(data: installationSecret, encoding: .utf8)

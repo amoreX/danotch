@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(ExecutorCore)
+import ExecutorCore
+#endif
 
 @available(macOS 26.0, *)
 struct ExecutorRequestDecoder {
