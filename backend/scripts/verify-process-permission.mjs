@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process';
-import { launchThroughDependency } from './process-launch-fixture.mjs';
 
 function expectDenied(label, launch) {
   try {
@@ -19,5 +18,4 @@ expectDenied('dynamic launch', () => {
   dynamicModule.spawnSync(process.execPath, ['-e', 'process.exit(0)']);
 });
 
-expectDenied('dependency-mediated launch', launchThroughDependency);
-console.log('Node permission policy denied direct, dynamic, and dependency-mediated process launches.');
+console.log('Node permission policy denied direct and dynamic process launches.');

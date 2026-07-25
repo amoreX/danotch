@@ -1,21 +1,21 @@
 import { CronExpressionParser } from 'cron-parser';
 
-export function computeNextRun(taskType: string, cron?: string | null, intervalMs?: number | null): Date {
-  if (taskType === 'poll' && intervalMs) {
-    return new Date(Date.now() + intervalMs);
+export function computeNextRun(input: {
+  cron?: string | null;
+  intervalMs?: number | null;
+  from?: Date;
+}): Date {
+  const from = input.from ?? new Date();
+  if (input.intervalMs) {
+    return new Date(from.getTime() + input.intervalMs);
   }
 
-  if (taskType === 'scheduled' && cron) {
-    try {
-      const interval = CronExpressionParser.parse(cron);
-      return interval.next().toDate();
-    } catch {
-      console.error('[scheduler] Invalid cron configuration');
-      return new Date(Date.now() + 3600_000);
-    }
+  if (input.cron) {
+    const interval = CronExpressionParser.parse(input.cron, { currentDate: from });
+    return interval.next().toDate();
   }
 
-  return new Date(Date.now() + 3600_000);
+  throw new Error('A cron or interval is required');
 }
 
 export function isValidCron(cron: string): boolean {

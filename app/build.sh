@@ -1,177 +1,131 @@
 #!/bin/bash
-# Build, sign, and optionally notarize Perch.app.
-#
-# DEVELOPER ID SIGNING (production):
-#   Export your Developer ID Application cert as a .p12, decode to $RUNNER_TEMP/cert.p12,
-#   and import into the Keychain before calling this script. Then set:
-#     DEVELOPER_ID_CERT=<40-char SHA-1 of the identity, or the Common Name>
-#     APPLE_ID, APPLE_ID_PASSWORD, APPLE_TEAM_ID  — required for notarization
-#     NOTARIZE=1                                   — opt in to notarytool submission
-#
-#   The CI workflow release-macos.yml handles this automatically. See
-#   docs/runbooks/macos-release.md for operator instructions.
-#
-# AD-HOC BUILD (development / testing):
-#   Run without any of the above variables. The app is signed ad-hoc with
-#   Hardened Runtime for local testing. It is NOT notarized, NOT for
-#   distribution, and will not pass Gatekeeper on a clean Mac.
-#
-# REFUSING INSECURE OUTPUT:
-#   If DEVELOPER_ID_CERT is set but notarization is skipped (NOTARIZE != 1)
-#   the script exits with an error to prevent accidental unnotarized publication.
+# Build an Apple-Silicon, source-distribution Perch.app for macOS 26+.
+# The installer must provide a pre-fetched Node 24 runtime and its verified
+# node-binary SHA-256. This script performs no downloads or notarization.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_DIR="$SCRIPT_DIR/../backend"
+DERIVED_DATA="$SCRIPT_DIR/.build/xcode-release"
+STAGING_DIR="$SCRIPT_DIR/.build/daemon-staging"
+NODE_RUNTIME_DIR="${PERCH_NODE_RUNTIME_DIR:-}"
+NODE_SHA256="${PERCH_NODE_SHA256:-}"
+MARKETING_VERSION="${PERCH_MARKETING_VERSION:-0.0.0}"
+BUILD_NUMBER="${PERCH_BUILD_NUMBER:-1}"
+RELEASE_BUILD="${PERCH_RELEASE_BUILD:-0}"
+EXECUTOR_ARTIFACT_SIGNING_KEY_PEM="${EXECUTOR_ARTIFACT_SIGNING_KEY_PEM:-}"
+MANIFEST_BACKUP="$SCRIPT_DIR/.build/ExecutorArtifacts.source.json"
+
 cd "$SCRIPT_DIR"
 
-DEVELOPER_ID_CERT="${DEVELOPER_ID_CERT:-}"
-NOTARIZE="${NOTARIZE:-0}"
-APPLE_ID="${APPLE_ID:-}"
-APPLE_ID_PASSWORD="${APPLE_ID_PASSWORD:-}"
-APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
-TMPDIR="${TMPDIR:-/tmp}"
-PERCH_SPARKLE_FEED_URL="${PERCH_SPARKLE_FEED_URL:-}"
-PERCH_SPARKLE_PUBLIC_KEY="${PERCH_SPARKLE_PUBLIC_KEY:-}"
-EXECUTOR_ARTIFACT_SIGNING_KEY_PEM="${EXECUTOR_ARTIFACT_SIGNING_KEY_PEM:-}"
-RELEASE_TAG="$(git describe --tags --exact-match 2>/dev/null || true)"
-MARKETING_VERSION="${RELEASE_TAG#v}"
-BUILD_NUMBER="$(git rev-list --count HEAD)"
-
-# If a real Developer ID cert is configured, require notarization to be
-# explicitly opted in. An unnotarized Developer-ID-signed artifact is
-# misleading and must not be published.
-if [[ -n "$DEVELOPER_ID_CERT" && "$NOTARIZE" != "1" ]]; then
-  echo ""
-  echo "ERROR: DEVELOPER_ID_CERT is set but NOTARIZE=1 was not specified."
-  echo "Unnotarized Developer ID artifacts are refused to prevent accidental"
-  echo "distribution of an app that will fail Gatekeeper on a clean Mac."
-  echo ""
-  echo "Either:"
-  echo "  - Set NOTARIZE=1 (and provide APPLE_ID / APPLE_ID_PASSWORD / APPLE_TEAM_ID)"
-  echo "    to produce a notarized distributable archive."
-  echo "  - Unset DEVELOPER_ID_CERT to produce an ad-hoc development build."
-  echo ""
+[[ -n "$NODE_RUNTIME_DIR" && -d "$NODE_RUNTIME_DIR" ]] || {
+  echo "ERROR: PERCH_NODE_RUNTIME_DIR must name a pre-fetched Node 24 runtime directory." >&2
   exit 1
-fi
+}
+NODE_BINARY="$NODE_RUNTIME_DIR/bin/node"
+NPM_BINARY="$NODE_RUNTIME_DIR/bin/npm"
+[[ -x "$NODE_BINARY" && -x "$NPM_BINARY" ]] || {
+  echo "ERROR: Node runtime is missing executable bin/node or bin/npm." >&2
+  exit 1
+}
+[[ "$NODE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || {
+  echo "ERROR: PERCH_NODE_SHA256 must contain the installer-verified bin/node SHA-256." >&2
+  exit 1
+}
+ACTUAL_NODE_SHA256="$(shasum -a 256 "$NODE_BINARY" | awk '{print $1}')"
+ACTUAL_NODE_SHA256="$(printf '%s' "$ACTUAL_NODE_SHA256" | tr '[:upper:]' '[:lower:]')"
+NODE_SHA256="$(printf '%s' "$NODE_SHA256" | tr '[:upper:]' '[:lower:]')"
+[[ "$ACTUAL_NODE_SHA256" == "$NODE_SHA256" ]] || {
+  echo "ERROR: bundled Node binary checksum does not match PERCH_NODE_SHA256." >&2
+  exit 1
+}
+[[ "$("$NODE_BINARY" --version)" =~ ^v24\. ]] || {
+  echo "ERROR: bundled runtime must be Node 24." >&2
+  exit 1
+}
+file "$NODE_BINARY" | grep -q "arm64" || {
+  echo "ERROR: bundled Node runtime must contain an arm64 executable." >&2
+  exit 1
+}
+export PATH="$NODE_RUNTIME_DIR/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-if [[ -n "$DEVELOPER_ID_CERT" ]]; then
-  [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-    echo "ERROR: Developer ID releases must be built from an exact vX.Y.Z tag."
-    exit 1
-  }
-  [[ "$PERCH_SPARKLE_FEED_URL" =~ ^https:// ]] || {
-    echo "ERROR: PERCH_SPARKLE_FEED_URL must be configured with HTTPS."
-    exit 1
-  }
-  [[ -n "$PERCH_SPARKLE_PUBLIC_KEY" ]] || {
-    echo "ERROR: PERCH_SPARKLE_PUBLIC_KEY is required."
-    exit 1
-  }
+mkdir -p "$SCRIPT_DIR/.build"
+if [[ -n "$EXECUTOR_ARTIFACT_SIGNING_KEY_PEM" ]]; then
   [[ -f "$EXECUTOR_ARTIFACT_SIGNING_KEY_PEM" ]] || {
-    echo "ERROR: EXECUTOR_ARTIFACT_SIGNING_KEY_PEM must name the protected P-256 PEM file."
+    echo "ERROR: EXECUTOR_ARTIFACT_SIGNING_KEY_PEM does not name a file." >&2
     exit 1
   }
-  cp Resources/ExecutorArtifacts.json "$TMPDIR/Perch-ExecutorArtifacts.source.json"
-  trap 'cp "$TMPDIR/Perch-ExecutorArtifacts.source.json" Resources/ExecutorArtifacts.json; rm -f "$TMPDIR/Perch-ExecutorArtifacts.source.json"' EXIT
+  cp Resources/ExecutorArtifacts.json "$MANIFEST_BACKUP"
+  trap 'cp "$MANIFEST_BACKUP" Resources/ExecutorArtifacts.json; rm -f "$MANIFEST_BACKUP"' EXIT
   python3 scripts/executor_manifest.py Resources/ExecutorArtifacts.json \
     --sign-key "$EXECUTOR_ARTIFACT_SIGNING_KEY_PEM" \
-    --output "$TMPDIR/Perch-ExecutorArtifacts.signed.json"
-  cp "$TMPDIR/Perch-ExecutorArtifacts.signed.json" Resources/ExecutorArtifacts.json
+    --output "$SCRIPT_DIR/.build/ExecutorArtifacts.signed.json"
+  cp "$SCRIPT_DIR/.build/ExecutorArtifacts.signed.json" Resources/ExecutorArtifacts.json
 fi
 
-echo "Building Perch..."
+if [[ "$RELEASE_BUILD" == "1" ]]; then
+  python3 -c 'import json,sys; value=json.load(open(sys.argv[1])).get("signature",""); sys.exit(0 if isinstance(value,str) and value.strip() else 1)' \
+    Resources/ExecutorArtifacts.json || {
+      echo "ERROR: release build requires a non-empty executor manifest signature." >&2
+      exit 1
+    }
+  python3 scripts/executor_manifest.py Resources/ExecutorArtifacts.json
+fi
+
+echo "Building backend daemon..."
+"$NPM_BINARY" ci --prefix "$BACKEND_DIR"
+"$NPM_BINARY" run --prefix "$BACKEND_DIR" build
+
+rm -rf "$STAGING_DIR"
+mkdir -p "$STAGING_DIR"
+cp "$BACKEND_DIR/package.json" "$BACKEND_DIR/package-lock.json" "$STAGING_DIR/"
+"$NPM_BINARY" ci --prefix "$STAGING_DIR" --omit=dev
+cp -R "$BACKEND_DIR/dist" "$STAGING_DIR/dist"
+cp "$SCRIPT_DIR/scripts/daemon-entry.mjs" "$STAGING_DIR/entry.mjs"
+
+echo "Building Perch.app..."
 xcodegen generate
-DERIVED_DATA="$SCRIPT_DIR/.build/xcode-release"
 xcodebuild \
-    -project Perch.xcodeproj \
-    -scheme Perch \
-    -configuration Release \
-    -derivedDataPath "$DERIVED_DATA" \
-    PERCH_SPARKLE_FEED_URL="$PERCH_SPARKLE_FEED_URL" \
-    PERCH_SPARKLE_PUBLIC_KEY="$PERCH_SPARKLE_PUBLIC_KEY" \
-    PERCH_MARKETING_VERSION="${MARKETING_VERSION:-0.0.0}" \
-    PERCH_BUILD_NUMBER="$BUILD_NUMBER" \
-    CODE_SIGNING_ALLOWED=NO \
-    build
+  -project Perch.xcodeproj \
+  -scheme Perch \
+  -configuration Release \
+  -derivedDataPath "$DERIVED_DATA" \
+  -arch arm64 \
+  ONLY_ACTIVE_ARCH=NO \
+  MACOSX_DEPLOYMENT_TARGET=26.0 \
+  PERCH_MARKETING_VERSION="$MARKETING_VERSION" \
+  PERCH_BUILD_NUMBER="$BUILD_NUMBER" \
+  CODE_SIGNING_ALLOWED=NO \
+  build
 
 BUILT_APP="$DERIVED_DATA/Build/Products/Release/Perch.app"
-if [ ! -d "$BUILT_APP" ]; then
-    echo "Build failed: app not found at $BUILT_APP"
-    exit 1
-fi
+[[ -d "$BUILT_APP" ]] || {
+  echo "ERROR: app build product was not found." >&2
+  exit 1
+}
 rm -rf "$SCRIPT_DIR/Perch.app"
 cp -R "$BUILT_APP" "$SCRIPT_DIR/Perch.app"
 BUNDLE_DIR="$SCRIPT_DIR/Perch.app/Contents"
 
-if [[ -n "$DEVELOPER_ID_CERT" ]]; then
-  python3 scripts/executor_manifest.py "$BUNDLE_DIR/Resources/ExecutorArtifacts.json"
-  # --- Developer ID signing (inside-out, Hardened Runtime) ---
-  echo "Signing with Developer ID: $DEVELOPER_ID_CERT"
+rm -rf "$BUNDLE_DIR/Resources/DaemonRuntime" "$BUNDLE_DIR/Resources/Daemon"
+mkdir -p "$BUNDLE_DIR/Resources/DaemonRuntime" "$BUNDLE_DIR/Resources/Daemon"
+ditto "$NODE_RUNTIME_DIR" "$BUNDLE_DIR/Resources/DaemonRuntime"
+ditto "$STAGING_DIR" "$BUNDLE_DIR/Resources/Daemon"
 
-  if [ -f "$BUNDLE_DIR/Helpers/PerchExecutor" ]; then
-    codesign --force --options runtime --entitlements "$SCRIPT_DIR/Executor.entitlements" \
-        --sign "$DEVELOPER_ID_CERT" "$BUNDLE_DIR/Helpers/PerchExecutor"
+# Sign Mach-O payloads first, then helpers, then the outer app. The source
+# distribution intentionally uses only ad-hoc signatures.
+while IFS= read -r -d '' candidate; do
+  if file "$candidate" | grep -q "Mach-O"; then
+    codesign --force --options runtime --sign - "$candidate"
   fi
-  codesign --force --options runtime --entitlements "$SCRIPT_DIR/Perch.entitlements" \
-      --sign "$DEVELOPER_ID_CERT" "$BUNDLE_DIR/.."
+done < <(find "$BUNDLE_DIR/Resources/DaemonRuntime" "$BUNDLE_DIR/Resources/Daemon" -type f -print0)
 
-  codesign --verify --deep --strict "$SCRIPT_DIR/Perch.app"
-  codesign -dvvv "$SCRIPT_DIR/Perch.app"
+codesign --force --options runtime --sign - "$BUNDLE_DIR/Helpers/PerchDaemonHost"
+codesign --force --options runtime --entitlements "$SCRIPT_DIR/Executor.entitlements" \
+  --sign - "$BUNDLE_DIR/Helpers/PerchExecutor"
+codesign --force --options runtime --entitlements "$SCRIPT_DIR/Perch.entitlements" \
+  --sign - "$SCRIPT_DIR/Perch.app"
+codesign --verify --deep --strict "$SCRIPT_DIR/Perch.app"
 
-  if [[ "$NOTARIZE" == "1" ]]; then
-    if [[ -z "$APPLE_ID" || -z "$APPLE_ID_PASSWORD" || -z "$APPLE_TEAM_ID" ]]; then
-      echo "ERROR: NOTARIZE=1 requires APPLE_ID, APPLE_ID_PASSWORD, and APPLE_TEAM_ID."
-      exit 1
-    fi
-
-    VERSION=$(defaults read "$SCRIPT_DIR/Perch.app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "dev")
-    ARCHIVE="$SCRIPT_DIR/Perch-${VERSION}.zip"
-
-    echo "Creating archive for notarization: $ARCHIVE"
-    ditto -c -k --keepParent "$SCRIPT_DIR/Perch.app" "$ARCHIVE"
-
-    echo "Submitting to Apple notary service (this may take a few minutes)..."
-    xcrun notarytool submit "$ARCHIVE" \
-      --apple-id "$APPLE_ID" \
-      --password "$APPLE_ID_PASSWORD" \
-      --team-id "$APPLE_TEAM_ID" \
-      --wait
-
-    echo "Stapling notarization ticket..."
-    xcrun stapler staple "$SCRIPT_DIR/Perch.app"
-    xcrun stapler validate "$SCRIPT_DIR/Perch.app"
-
-    echo "Verifying Gatekeeper acceptance..."
-    spctl --assess --type execute -vv "$SCRIPT_DIR/Perch.app"
-
-    # Repackage stapled app
-    ditto -c -k --keepParent "$SCRIPT_DIR/Perch.app" "$ARCHIVE"
-    shasum -a 256 "$ARCHIVE" | tee "$SCRIPT_DIR/Perch-${VERSION}.sha256"
-
-    echo ""
-    echo "Build complete — NOTARIZED and STAPLED"
-    echo "Archive:  $ARCHIVE"
-    echo "Checksum: Perch-${VERSION}.sha256"
-    echo ""
-  fi
-else
-  # --- Ad-hoc signing (development/testing only) ---
-  echo ""
-  echo "⚠️  WARNING: AD-HOC BUILD — NOT FOR DISTRIBUTION ⚠️"
-  echo "This artifact is signed ad-hoc. It will NOT pass Gatekeeper on"
-  echo "another Mac and MUST NOT be published or distributed."
-  echo ""
-  echo "To produce a distributable artifact, set DEVELOPER_ID_CERT and NOTARIZE=1."
-  echo "See docs/runbooks/macos-release.md for instructions."
-  echo ""
-
-  if [ -f "$BUNDLE_DIR/Helpers/PerchExecutor" ]; then
-    codesign --force --options runtime --entitlements "$SCRIPT_DIR/Executor.entitlements" \
-        --sign - "$BUNDLE_DIR/Helpers/PerchExecutor"
-  fi
-  codesign --force --options runtime --entitlements "$SCRIPT_DIR/Perch.entitlements" \
-      --sign - "$BUNDLE_DIR/.."
-
-  echo "Ad-hoc build complete: Perch.app"
-  echo "Run locally: open Perch.app"
-fi
+"$BUNDLE_DIR/Helpers/PerchDaemonHost" --self-test
+echo "Source build complete: $SCRIPT_DIR/Perch.app"

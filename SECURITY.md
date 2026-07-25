@@ -1,48 +1,74 @@
 # Security Policy
 
-## Reporting a Vulnerability
+## Report privately
 
-**Do not open a public GitHub issue for security vulnerabilities.**
+Do not open a public issue for a suspected vulnerability. Email
+**security@perch.app** with the affected signed tag, macOS version, impact, and
+the minimum safe reproduction. Do not include real credentials or another
+person's data. Encrypt especially sensitive evidence with a maintainer key from
+[docs/maintainer-keys.md](docs/maintainer-keys.md) once one is published.
 
-Email **security@perch.app** with:
+We target acknowledgement within two business days, an initial assessment
+within five, and a critical fix within fourteen. Please coordinate disclosure
+until a fix or mitigation is available. If the reporting address fails, open a
+public issue containing no vulnerability detail and ask for a private channel.
 
-- A description of the vulnerability and its potential impact
-- Steps to reproduce or proof-of-concept (if safe to share)
-- The version of Perch affected (check the app's About screen or the downloaded artifact's checksum)
+## Supported releases
 
-We aim to acknowledge reports within **2 business days** and provide an initial assessment within **5 business days**.
+Only the newest stable `vX.Y.Z` release tag is supported. A release is eligible
+for installation only when it is annotated, has a valid signature, and its
+signer is in the repository's reviewed fingerprint allowlist. Branch builds,
+lightweight tags, unsigned archives, and ad-hoc binaries from another machine
+are unsupported.
 
-Coordinated disclosure: please allow us reasonable time to investigate and patch before public disclosure.
+## Local-first trust model
 
-## Supported Versions
+Perch's distribution contract is source-first:
 
-Only the latest notarized release is actively patched. Older versions may not receive security updates.
+- Users inspect a clone and run `./install.sh`; the project does not promote
+  `curl | bash`.
+- The installer accepts only macOS 26+ on Apple Silicon and embeds a
+  checksum-pinned Node 24 arm64 runtime. It never relies on Homebrew Node at
+  runtime.
+- The daemon is a non-root per-user LaunchAgent and binds only to `127.0.0.1`.
+  Its mode-`0600` discovery file is private to the user; capabilities require
+  the authenticated local session protocol.
+- Provider and installation secrets belong in macOS Keychain. SQLite stores
+  non-secret local state under `~/Library/Application Support/Perch`.
+- Updates build a verified tag in staging, back up SQLite, atomically replace
+  runtime files, and restore both runtime and database backup when startup or
+  migration health checks fail.
+- Uninstall preserves data and Keychain entries unless the user explicitly
+  requests and confirms `--purge`.
+- User-approved code execution must remain inside the documented Apple
+  Containerization boundary with scoped workspace access and bounded resources.
 
-## Security Architecture
+The checked-in installer currently fails closed until a maintainer fingerprint
+allowlist is published. It also refuses incomplete daemon, native-host, or
+LaunchAgent resources.
 
-See [/security](/security) on the public site for a summary of Perch's trust model, credential handling, and local isolation design.
+## Threats in scope
 
-Key properties:
+- forged or rollback release tags, compromised dependency downloads, and
+  updater time-of-check/time-of-use errors;
+- another local process or malicious website invoking daemon capabilities;
+- symlink, path, permission, or LaunchAgent injection in install/update flows;
+- SQLite corruption, unsafe migration, lost rollback data, or secret leakage
+  into SQLite, logs, process arguments, crash reports, or CI output;
+- sandbox/container escape, consent bypass, workspace overreach, or unexpected
+  network access;
+- malicious prompt or tool output that causes an action beyond explicit user
+  authorization.
 
-- **Signed and notarized**: every public release is Developer ID signed, Hardened Runtime enabled, notarized by Apple, and stapled. Gatekeeper verification passes on a clean Mac.
-- **No hosted shell execution**: the backend cannot invoke child processes or arbitrary shell commands.
-- **Local execution isolation**: user-consented local commands run inside a disposable Apple Containerization VM with a workspace-scoped read-only mount, no host credentials, no implicit network, and bounded resources.
-- **Tenant isolation**: ordinary requests use a per-caller JWT Supabase client protected by Row Level Security. No service-role credential is available to public request handlers.
-- **Credentials in Keychain**: session tokens and device private keys are stored in the macOS Data Protection Keychain, not plaintext files.
-- **Authenticated device channel**: the app connects outbound over WSS using HTTPS-issued one-use tickets. The unauthenticated localhost bridge (port 7778) is not present in production releases.
+Reports about an upstream service are useful when Perch's integration worsens
+the impact. Pure upstream outages, social engineering without a Perch flaw, and
+unsupported modified builds are generally out of scope.
 
-## Disclosure Timeline
+## Response and history
 
-| Phase | Target |
-|-------|--------|
-| Acknowledgement | ≤ 2 business days |
-| Initial assessment | ≤ 5 business days |
-| Patch for critical issues | ≤ 14 days |
-| Public disclosure (coordinated) | After patch is available |
-
-## Out of Scope
-
-- Vulnerabilities in third-party services (Apple, Supabase, Composio, LLM providers) not under our control
-- Social engineering attacks against Perch users
-- Denial-of-service attacks against the hosted backend (report these separately)
-- Issues in versions that are no longer supported
+Maintainers preserve relevant logs and hashes privately, rotate exposed
+credentials, publish a signed fixed tag, and document user action without
+revealing exploit details prematurely. Security floors are forward-only:
+rollback must not restore unauthenticated IPC, plaintext secrets, hosted shell
+execution, or an incompatible schema. Historical hosted-distribution controls
+are retained under `docs/archive/` for audit context.

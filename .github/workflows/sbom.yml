@@ -1,0 +1,65 @@
+name: Release SBOM
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable signed tag
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    runs-on: macos-26
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            site/package-lock.json
+      - name: Verify immutable maintainer-signed tag
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git cat-file -t "refs/tags/$RELEASE_TAG")" = tag
+          git verify-tag --raw "$RELEASE_TAG" 2>"$RUNNER_TEMP/tag-verification"
+          fingerprint="$(awk '/^\[GNUPG:\] VALIDSIG / {print toupper($3); exit}' "$RUNNER_TEMP/tag-verification")"
+          test -n "$fingerprint"
+          grep -Eiq "^${fingerprint}$" release/maintainer-gpg-fingerprints.txt
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$RELEASE_TAG")"
+      - name: Generate SPDX and Swift dependency inventories
+        run: |
+          set -euo pipefail
+          mkdir "$RUNNER_TEMP/perch-sbom"
+          npm ci --ignore-scripts --prefix backend
+          npm sbom --sbom-format spdx --prefix backend \
+            >"$RUNNER_TEMP/perch-sbom/backend.spdx.json"
+          npm ci --ignore-scripts --prefix site
+          npm sbom --sbom-format spdx --prefix site \
+            >"$RUNNER_TEMP/perch-sbom/site.spdx.json"
+          swift package --package-path app show-dependencies --format json \
+            >"$RUNNER_TEMP/perch-sbom/app-swift-dependencies.json"
+          cp release/node-runtime.env release/node-runtime.sha256 \
+            "$RUNNER_TEMP/perch-sbom/"
+          shasum -a 256 "$RUNNER_TEMP"/perch-sbom/* \
+            >"$RUNNER_TEMP/perch-sbom/SHA256SUMS"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perch-${{ env.RELEASE_TAG }}-sbom
+          path: ${{ runner.temp }}/perch-sbom
+          retention-days: 90
+          if-no-files-found: error

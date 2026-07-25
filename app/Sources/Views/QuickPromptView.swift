@@ -10,7 +10,7 @@ struct QuickPromptView: View {
             ChatModelSelectorView(viewModel: viewModel, maxWidth: 112)
 
             TextField(
-                viewModel.trialDailyLimitReached ? "Daily limit reached — resumes automatically" : "Ask Perch anything…",
+                "Ask Perch anything…",
                 text: $text
             )
                 .textFieldStyle(.plain)
@@ -19,7 +19,6 @@ struct QuickPromptView: View {
                 .focused($isFocused)
                 .onSubmit { submit() }
                 .layoutPriority(1)
-                .disabled(viewModel.trialDailyLimitReached)
 
             sendButton
         }
@@ -27,7 +26,7 @@ struct QuickPromptView: View {
         .padding(.vertical, 9)
         .perchGlass(in: Capsule())
         .contentShape(.capsule)
-        .onTapGesture { if !viewModel.trialDailyLimitReached { isFocused = true } }
+        .onTapGesture { isFocused = true }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -46,8 +45,7 @@ struct QuickPromptView: View {
     }
 
     private var sendButton: some View {
-        let enabled = !viewModel.trialDailyLimitReached
-            && !text.trimmingCharacters(in: .whitespaces).isEmpty
+        let enabled = !text.trimmingCharacters(in: .whitespaces).isEmpty
         return Image(systemName: "arrow.up")
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
@@ -60,7 +58,7 @@ struct QuickPromptView: View {
 
     private func submit() {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard !viewModel.trialDailyLimitReached, !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return }
         text = ""
         isFocused = false
         withAnimation(DN.expandSpring) {

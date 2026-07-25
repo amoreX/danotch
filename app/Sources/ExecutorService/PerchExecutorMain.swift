@@ -2,6 +2,7 @@
 import ExecutorCore
 #endif
 import Foundation
+import Security
 
 @main
 struct PerchExecutorMain {
@@ -30,8 +31,10 @@ struct PerchExecutorMain {
                 : nil) else {
                 throw ArtifactVerificationError.invalidManifest
             }
+            let manifestData = try Data(contentsOf: manifestURL)
             let manifest = try ExecutorArtifactManifestVerifier().verify(
-                data: Data(contentsOf: manifestURL)
+                data: manifestData,
+                mode: try manifestVerificationMode()
             )
             if CommandLine.arguments == [CommandLine.arguments[0], "--ipc"] {
                 try await runIPC(manifest: manifest)
@@ -113,6 +116,71 @@ struct PerchExecutorMain {
             }
         }
         return result
+    }
+
+    private static func manifestVerificationMode()
+        throws -> ExecutorArtifactManifestVerifier.VerificationMode
+    {
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+        guard let appURL = enclosingApplication(for: executable) else {
+            // Standalone SwiftPM executors still require an offline release
+            // signature; unsigned source manifests are accepted only inside a
+            // strictly sealed application bundle.
+            return .signedRelease
+        }
+        let expected = appURL
+            .appendingPathComponent("Contents/Helpers/PerchExecutor")
+            .standardizedFileURL
+        guard executable == expected else { throw ArtifactVerificationError.invalidSignature }
+        let appCode = try staticCode(at: appURL)
+        let executorCode = try staticCode(at: executable)
+        let flags = SecCSFlags(rawValue: kSecCSStrictValidate | kSecCSCheckAllArchitectures)
+        guard SecStaticCodeCheckValidity(appCode, flags, nil) == errSecSuccess,
+              SecStaticCodeCheckValidity(executorCode, flags, nil) == errSecSuccess,
+              let entitlements = signingInformation(executorCode)?[
+                  kSecCodeInfoEntitlementsDict
+              ] as? [String: Any],
+              entitlements["com.apple.security.virtualization"] as? Bool == true else {
+            throw ArtifactVerificationError.invalidSignature
+        }
+        let appTeam = signingInformation(appCode)?[kSecCodeInfoTeamIdentifier] as? String
+        let executorTeam = signingInformation(executorCode)?[kSecCodeInfoTeamIdentifier] as? String
+        switch (appTeam, executorTeam) {
+        case (nil, nil):
+            return .enclosingBundleSeal
+        case let (app?, executor?) where app == executor:
+            return .signedRelease
+        default:
+            throw ArtifactVerificationError.invalidSignature
+        }
+    }
+
+    private static func enclosingApplication(for executable: URL) -> URL? {
+        var candidate = executable.deletingLastPathComponent()
+        while candidate.path != "/" {
+            if candidate.pathExtension == "app" { return candidate }
+            candidate.deleteLastPathComponent()
+        }
+        return nil
+    }
+
+    private static func staticCode(at url: URL) throws -> SecStaticCode {
+        var code: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(url as CFURL, SecCSFlags(), &code) == errSecSuccess,
+              let code else {
+            throw ArtifactVerificationError.invalidSignature
+        }
+        return code
+    }
+
+    private static func signingInformation(_ code: SecStaticCode) -> [CFString: Any]? {
+        var information: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &information
+        ) == errSecSuccess else { return nil }
+        return information as? [CFString: Any]
     }
 
     private static func fail(_ message: String) -> Never {

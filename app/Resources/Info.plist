@@ -16,17 +16,6 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
-	<key>CFBundleURLTypes</key>
-	<array>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>engineering.super.Perch.billing</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>perch</string>
-			</array>
-		</dict>
-	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSUIElement</key>
@@ -35,17 +24,13 @@
 	<string>Perch accesses Apple Music only to display and control the track you are playing.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
-	<key>PerchAPIBaseURL</key>
-	<string>$(PERCH_API_BASE_URL)</string>
-	<key>PerchDeviceGatewayURL</key>
-	<string>$(PERCH_DEVICE_GATEWAY_URL)</string>
-	<key>SUFeedURL</key>
-	<string>$(PERCH_SPARKLE_FEED_URL)</string>
-	<key>SUPublicEDKey</key>
-	<string>$(PERCH_SPARKLE_PUBLIC_KEY)</string>
-	<key>SURequireSignedFeed</key>
-	<true/>
-	<key>SUVerifyUpdateBeforeExtraction</key>
-	<true/>
+	<key>PerchDaemonEntrypointRelativePath</key>
+	<string>Contents/Resources/Daemon/entry.mjs</string>
+	<key>PerchDaemonHostRelativePath</key>
+	<string>Contents/Helpers/PerchDaemonHost</string>
+	<key>PerchDaemonRuntimeRelativePath</key>
+	<string>Contents/Resources/DaemonRuntime</string>
+	<key>PerchLaunchAgentTemplateResource</key>
+	<string>engineering.super.Perch.daemon.plist.template</string>
 </dict>
 </plist>

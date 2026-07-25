@@ -4,10 +4,6 @@ import {
   validateLocalAction,
   validateLocalCapabilities,
 } from './local-executor-registry.ts';
-import {
-  signExecutionGrant,
-  verifyExecutionGrantSignature,
-} from '../security/execution-grant.ts';
 
 const capabilities = {
   workspace_mode: 'read_only',
@@ -59,38 +55,4 @@ test('network is explicitly unavailable in local executor capabilities', () => {
     ...capabilities,
     egress_destinations: ['example.com:443'],
   }), /network is unavailable/);
-});
-
-test('grant signature binds every executor authorization field', () => {
-  const payload = {
-    grant_id: '10000000-0000-4000-8000-000000000001',
-    action_id: '20000000-0000-4000-8000-000000000002',
-    action_hash: 'a'.repeat(64),
-    parameters_hash: 'b'.repeat(64),
-    registry_version: '1',
-    action_type: 'workspace.inspect',
-    normalized_parameters: { path: 'Sources', depth: 2 },
-    capabilities,
-    image_digest: `sha256:${'c'.repeat(64)}`,
-    workspace_bookmark_id: 'workspace-test',
-    result_disclosure_policy: { sensitive_output: false, upload: false },
-    session_id: '30000000-0000-4000-8000-000000000003',
-    device_key_fingerprint: 'd'.repeat(64),
-    device_id: '40000000-0000-4000-8000-000000000004',
-    fence: 7,
-    expires_at: '2099-01-01T00:00:00Z',
-    transition_id: '50000000-0000-4000-8000-000000000005',
-  };
-  const token = 'x'.repeat(43);
-  const signature = signExecutionGrant(payload, token);
-  assert.equal(verifyExecutionGrantSignature(payload, token, signature), true);
-  assert.equal(verifyExecutionGrantSignature({ ...payload, fence: 8 }, token, signature), false);
-  assert.equal(
-    verifyExecutionGrantSignature(
-      { ...payload, workspace_bookmark_id: 'other' },
-      token,
-      signature,
-    ),
-    false,
-  );
 });

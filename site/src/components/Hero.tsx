@@ -193,7 +193,7 @@ export default function Hero({ ready = true }: { ready?: boolean }) {
             in your notch.
           </motion.h1>
 
-          {/* Download CTA */}
+          {/* Source install CTA */}
           <motion.div
             className="mt-8 sm:mt-16"
             initial={false}
@@ -204,7 +204,7 @@ export default function Hero({ ready = true }: { ready?: boolean }) {
               <span className="[&_svg]:size-4">
                 <AppleIcon />
               </span>
-              Get Perch For Mac
+              Install from source
             </Button>
           </motion.div>
 

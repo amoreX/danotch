@@ -233,7 +233,7 @@ struct NotchShellView: View {
     private var expandedContent: some View {
         VStack(spacing: 6) {
             if viewModel.connectionState.needsAttention {
-                DeviceConnectionBanner(viewModel: viewModel)
+                LocalDaemonBanner(viewModel: viewModel)
             }
             Group {
                 switch viewModel.viewState {
@@ -516,8 +516,9 @@ struct NotchShoulder: Shape {
     }
 }
 
-private struct DeviceConnectionBanner: View {
+private struct LocalDaemonBanner: View {
     @ObservedObject var viewModel: NotchViewModel
+    @ObservedObject private var updates = UpdateController.shared
 
     var body: some View {
         HStack(spacing: 8) {
@@ -526,17 +527,20 @@ private struct DeviceConnectionBanner: View {
                 .font(.system(size: 10, weight: .semibold))
             Spacer()
             if viewModel.connectionState.requiresUpdate {
-                Button("Check for Updates") { UpdateController.shared.checkForUpdates() }
+                Button(updates.state == .launching ? "Starting…" : "Check for Updates") {
+                    updates.checkForUpdates()
+                }
                     .buttonStyle(.plain)
                     .font(.system(size: 10, weight: .semibold))
+                    .disabled(!updates.canCheckForUpdates)
             }
             if viewModel.connectionState.canRetry {
-                Button("Retry") { viewModel.retryDeviceConnection() }
+                Button("Retry") { viewModel.retryDaemonConnection() }
                     .buttonStyle(.plain)
                     .font(.system(size: 10, weight: .semibold))
             }
             if viewModel.connectionState.canCancel {
-                Button("Cancel") { viewModel.cancelDeviceConnection() }
+                Button("Cancel") { viewModel.cancelDaemonConnection() }
                     .buttonStyle(.plain)
                     .font(.system(size: 10))
             }
@@ -547,98 +551,6 @@ private struct DeviceConnectionBanner: View {
         .background(Color.orange.opacity(0.24), in: Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel(viewModel.connectionState.announcement)
-    }
-}
-
-extension DeviceConnectionState {
-    var requiresUpdate: Bool {
-        self == .unsupportedProtocol
-    }
-
-    var needsAttention: Bool {
-        switch self {
-        case .offline, .expired, .revoked, .interrupted,
-             .reenrollmentRequired, .unsupportedProtocol:
-            return true
-        default:
-            return false
-        }
-    }
-
-    var canRetry: Bool {
-        switch self {
-        case .offline, .expired, .interrupted, .reenrollmentRequired, .cancelled:
-            return true
-        default:
-            return false
-        }
-    }
-
-    var canCancel: Bool {
-        switch self {
-        case .enrolling, .connecting, .offline, .expired, .interrupted:
-            return true
-        default:
-            return false
-        }
-    }
-
-    var canReenroll: Bool {
-        switch self {
-        case .revoked, .reenrollmentRequired:
-            return true
-        default:
-            return false
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .signedOut: return "Signed out"
-        case .enrolling: return "Enrolling this Mac"
-        case .connecting: return "Connecting"
-        case .connected: return "Securely connected"
-        case .offline: return "Offline"
-        case .expired: return "Session expired"
-        case .revoked: return "Device revoked"
-        case .interrupted: return "Connection interrupted"
-        case .reenrollmentRequired: return "Re-enrollment required"
-        case .unsupportedProtocol: return "Update required"
-        case .cancelled: return "Connection cancelled"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .offline(let reason), .revoked(let reason),
-             .interrupted(let reason), .reenrollmentRequired(let reason):
-            return reason
-        case .connected(let deviceID):
-            return "Authenticated outbound device channel · \(deviceID)"
-        case .connecting(let attempt):
-            return "Requesting a one-use gateway ticket · attempt \(attempt + 1)"
-        case .expired:
-            return "The one-use ticket or account session expired."
-        case .unsupportedProtocol:
-            return "This app cannot safely connect to the server protocol."
-        case .enrolling:
-            return "Creating a non-exportable device identity and binding it to this account."
-        case .signedOut:
-            return "Sign in to connect this Mac."
-        case .cancelled:
-            return "Automatic reconnection is paused."
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .connected: return "lock.shield.fill"
-        case .connecting, .enrolling: return "arrow.triangle.2.circlepath"
-        case .signedOut, .cancelled: return "pause.circle"
-        case .unsupportedProtocol: return "arrow.down.app"
-        case .revoked: return "xmark.shield"
-        default: return "wifi.exclamationmark"
-        }
     }
 }
 
@@ -887,6 +799,10 @@ private func notifDate(_ iso: String) -> String {
 
 struct SettingsPanel: View {
     @ObservedObject var viewModel: NotchViewModel
+    @ObservedObject private var updates = UpdateController.shared
+    @State private var composioKey = ""
+    @State private var authConfigIDs: [String: String] = [:]
+    @State private var loadedAuthConfigIDs: [String: String] = [:]
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -897,17 +813,15 @@ struct SettingsPanel: View {
                     settingsToggle("Keep open in chat", $viewModel.settings.keepOpenInChat)
                 }
 
-                section(title: "Device Connection") {
-                    deviceConnectionSection
+                section(title: "Local Daemon") {
+                    localDaemonSection
                 }
 
-                section(title: "Billing") {
-                    billingSection
-                }
-
-                section(title: "Provider") {
-                    defaultProviderRow
-                    ForEach(["anthropic", "openai", "openrouter"], id: \.self) { providerType in
+                section(
+                    title: "Providers",
+                    footer: "Secrets are sent only through the authenticated loopback session and are never saved by the app."
+                ) {
+                    ForEach(["anthropic", "openai", "openrouter", "deepseek", "custom"], id: \.self) { providerType in
                         Divider().background(Color.white.opacity(0.08))
                         ProviderRow(viewModel: viewModel, providerType: providerType)
                     }
@@ -930,6 +844,60 @@ struct SettingsPanel: View {
                     settingsToggle("Compact rows", $viewModel.settings.compactAgentRows)
                 }
 
+                section(
+                    title: "Composio",
+                    footer: "The API key is transferred once to the local daemon and immediately cleared here. Auth config IDs may be updated without re-entering a configured key."
+                ) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            SecureField(
+                                viewModel.composioState.configured
+                                    ? "Enter a new API key to replace"
+                                    : "Composio API key",
+                                text: $composioKey
+                            )
+                            .textFieldStyle(.plain)
+                            Button(viewModel.appLoading["composio"] == true ? "Saving…" : "Save") {
+                                saveComposioConfiguration()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(
+                                viewModel.appLoading["composio"] == true
+                                    || (!hasComposioChanges && composioKey.isEmpty)
+                            )
+                        }
+                        ForEach(composioIntegrations) { integration in
+                            HStack(spacing: 8) {
+                                Text(integration.displayName)
+                                    .font(.caption)
+                                    .frame(width: 110, alignment: .leading)
+                                TextField(
+                                    "Auth config ID (optional)",
+                                    text: authConfigBinding(for: integration.appType)
+                                )
+                                .textFieldStyle(.plain)
+                            }
+                        }
+                        if let localUserID = viewModel.composioState.localUserID {
+                            Text("Local user: \(localUserID)")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        if let error = viewModel.appError["composio"] ?? nil {
+                            Label(error, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(Color.orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if viewModel.composioState.configured {
+                            Label("Composio configured", systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(Color.green)
+                        }
+                    }
+                }
+
                 integrationsSection
             }
             .padding(.bottom, 14)
@@ -940,10 +908,13 @@ struct SettingsPanel: View {
         .onAppear {
             viewModel.loadProviderConfigs()
             viewModel.loadProviderModels()
-            viewModel.loadBillingStatus()
+            viewModel.loadComposioState()
             for app in ["gmail", "googlecalendar", "googledocs", "github"] {
                 viewModel.checkAppStatus(app)
             }
+        }
+        .onChange(of: viewModel.composioState) { _, state in
+            applyComposioMetadata(state)
         }
     }
 
@@ -966,7 +937,66 @@ struct SettingsPanel: View {
 
     // MARK: - Integrations grid
 
-    private var deviceConnectionSection: some View {
+    private var composioIntegrations: [ComposioIntegrationMetadata] {
+        if !viewModel.composioState.integrations.isEmpty {
+            return viewModel.composioState.integrations
+        }
+        return [
+            .init(appType: "gmail", displayName: "Gmail", authConfigID: nil),
+            .init(appType: "googlecalendar", displayName: "Google Calendar", authConfigID: nil),
+            .init(appType: "googledocs", displayName: "Google Docs", authConfigID: nil),
+            .init(appType: "github", displayName: "GitHub", authConfigID: nil),
+        ]
+    }
+
+    private var hasComposioChanges: Bool {
+        composioIntegrations.contains { integration in
+            normalizedAuthConfig(authConfigIDs[integration.appType])
+                != normalizedAuthConfig(loadedAuthConfigIDs[integration.appType])
+        }
+    }
+
+    private func authConfigBinding(for appType: String) -> Binding<String> {
+        Binding(
+            get: { authConfigIDs[appType] ?? "" },
+            set: { authConfigIDs[appType] = $0 }
+        )
+    }
+
+    private func normalizedAuthConfig(_ value: String?) -> String {
+        (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func applyComposioMetadata(_ state: ComposioConfigState) {
+        let values = Dictionary(uniqueKeysWithValues: state.integrations.map {
+            ($0.appType, $0.authConfigID ?? "")
+        })
+        authConfigIDs = values
+        loadedAuthConfigIDs = values
+    }
+
+    private func saveComposioConfiguration() {
+        var changed: [String: String] = [:]
+        for integration in composioIntegrations {
+            let current = normalizedAuthConfig(authConfigIDs[integration.appType])
+            let original = normalizedAuthConfig(loadedAuthConfigIDs[integration.appType])
+            guard current != original else { continue }
+            guard !current.isEmpty else {
+                viewModel.appError["composio"] =
+                    "Removing an existing auth config ID requires daemon support; enter a replacement ID."
+                return
+            }
+            changed[integration.appType] = current
+        }
+        let submittedKey = composioKey
+        composioKey = ""
+        viewModel.configureComposio(
+            apiKey: submittedKey.isEmpty ? nil : submittedKey,
+            authConfigIDs: changed
+        )
+    }
+
+    private var localDaemonSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(
                 viewModel.connectionState.title,
@@ -977,32 +1007,39 @@ struct SettingsPanel: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            if let email = viewModel.authManager?.session?.email {
-                Text("Active account: \(email)")
+            if let installationID = viewModel.daemonConnection.installationID {
+                Text("Installation: \(installationID)")
                     .font(.caption2.monospaced())
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
                 if viewModel.connectionState.requiresUpdate {
                     Button("Check for Updates") {
-                        UpdateController.shared.checkForUpdates()
+                        updates.checkForUpdates()
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
-                }
-                if viewModel.connectionState.canReenroll {
-                    Button("Re-enroll") { viewModel.reenrollDevice() }
-                        .buttonStyle(.bordered).controlSize(.small)
+                    .disabled(!updates.canCheckForUpdates)
                 }
                 if viewModel.connectionState.canRetry {
-                    Button("Retry") { viewModel.retryDeviceConnection() }
+                    Button("Retry") { viewModel.retryDaemonConnection() }
                         .buttonStyle(.bordered).controlSize(.small)
                 }
                 if viewModel.connectionState.canCancel {
-                    Button("Cancel") { viewModel.cancelDeviceConnection() }
+                    Button("Cancel") { viewModel.cancelDaemonConnection() }
                         .buttonStyle(.bordered).controlSize(.small)
                 }
-                Button("Switch Account") { viewModel.authManager?.logout() }
-                    .buttonStyle(.bordered).controlSize(.small)
+            }
+            if let message = updates.statusMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(
+                        {
+                            if case .failed = updates.state { return Color.orange }
+                            if case .unavailable = updates.state { return Color.orange }
+                            return Color.secondary
+                        }()
+                    )
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .accessibilityElement(children: .combine)
@@ -1076,202 +1113,6 @@ struct SettingsPanel: View {
         .tint(DN.accent)
     }
 
-    // MARK: - Billing
-
-    private var billingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Label(billingTitle, systemImage: billingIcon)
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
-                billingBadge
-            }
-
-            Text(billingSubtitle)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text("14-day server-funded trial · up to $5 of shared chat + scheduled usage daily · $5 lifetime app unlock · your own provider API key is mandatory after the trial.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Label(checkoutStateText, systemImage: checkoutStateIcon)
-                .font(.caption)
-                .foregroundStyle(checkoutStateColor)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if let error = viewModel.billingError {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(DN.accent)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack(spacing: 8) {
-                Button("Refresh") { viewModel.loadBillingStatus() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(.clear)
-
-                if viewModel.billingStatus?.canPurchase == true {
-                    Button(viewModel.checkoutState.isBusy ? "Checkout pending…" : "Buy $5 lifetime") {
-                        viewModel.startCheckout()
-                    }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .tint(DN.accent)
-                        .disabled(viewModel.checkoutState.isBusy)
-                }
-
-                if viewModel.billingStatus?.requiresProviderKey == true
-                    || viewModel.billingStatus?.hasActiveProvider == false {
-                    Button("Add Provider") {
-                        viewModel.requestProviderSetup()
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(.clear)
-                }
-            }
-
-            Text("Purchases are account-based. Sign in with this same account to restore your lifetime unlock.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var checkoutStateText: String {
-        switch viewModel.checkoutState {
-        case .idle: return "Checkout ready."
-        case .creating: return "Creating a secure checkout…"
-        case .pending: return "Checkout opened. Waiting for verified payment confirmation…"
-        case .success: return "Purchase confirmed for this account."
-        case .timeout: return "Confirmation timed out. Your payment may still complete; refresh to check."
-        case .error(let message): return message
-        }
-    }
-
-    private var checkoutStateIcon: String {
-        switch viewModel.checkoutState {
-        case .idle: return "creditcard"
-        case .creating: return "arrow.triangle.2.circlepath"
-        case .pending: return "clock"
-        case .success: return "checkmark.circle.fill"
-        case .timeout: return "clock.badge.exclamationmark"
-        case .error: return "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var checkoutStateColor: Color {
-        switch viewModel.checkoutState {
-        case .success: return DN.success
-        case .timeout, .error: return DN.accent
-        case .creating, .pending: return DN.warning
-        case .idle: return .secondary
-        }
-    }
-
-    private var billingTitle: String {
-        guard let status = viewModel.billingStatus else {
-            return viewModel.billingLoading ? "Loading trial status" : "Trial status"
-        }
-        if status.isPaid { return "Lifetime unlocked" }
-        if status.canUseServerKey && status.trialUsage.dailyLimitReached {
-            return "Daily limit reached"
-        }
-        if status.isTrialing { return "\(status.trialDaysRemaining) day trial left" }
-        return "Trial ended"
-    }
-
-    private var billingSubtitle: String {
-        guard let status = viewModel.billingStatus else {
-            return "Perch checks trial and purchase status on the backend."
-        }
-        if status.canUseServerKey && status.trialUsage.dailyLimitReached {
-            let reset = status.trialUsage.resetDate?.formatted(date: .omitted, time: .shortened)
-                ?? "tomorrow"
-            return "Chat and scheduled tasks resume automatically at \(reset). You can still pause or resume schedules."
-        }
-        if status.hasActiveProvider {
-            return "Using your \(status.activeProvider ?? "provider") key for chat and scheduled tasks."
-        }
-        if status.canUseServerKey {
-            return "Using the server Anthropic key with a shared $5 daily chat and scheduled-task allowance."
-        }
-        if status.requiresPurchase {
-            return "Buy once to unlock the app, then add your own provider key to continue."
-        }
-        if status.requiresProviderKey {
-            return "Add or activate a provider key below to continue using chat and scheduled tasks."
-        }
-        return "Billing status is active."
-    }
-
-    private var billingIcon: String {
-        guard let status = viewModel.billingStatus else { return "hourglass" }
-        if status.isPaid { return "checkmark.seal.fill" }
-        if status.isTrialing { return "timer" }
-        return "exclamationmark.triangle.fill"
-    }
-
-    private var billingBadge: some View {
-        let label: String
-        let color: Color
-        if let status = viewModel.billingStatus {
-            if status.isPaid {
-                label = "PAID"
-                color = DN.success
-            } else if status.isTrialing {
-                label = "TRIAL"
-                color = DN.warning
-            } else {
-                label = "EXPIRED"
-                color = DN.accent
-            }
-        } else {
-            label = viewModel.billingLoading ? "LOADING" : "UNKNOWN"
-            color = DN.textSecondary
-        }
-
-        return Text(label)
-            .font(DN.label(9))
-            .foregroundStyle(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(color.opacity(0.12), in: Capsule())
-    }
-
-    // MARK: - Default provider row
-
-    private var defaultProviderRow: some View {
-        let isUsingDefault = !viewModel.providerConfigs.contains { $0.isActive }
-        let serverKeyAllowed = viewModel.billingStatus?.canUseServerKey ?? true
-        return HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Label("Trial Default", systemImage: "server.rack")
-                Text(serverKeyAllowed ? "Server Anthropic key during trial" : "Requires active BYOK provider")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if isUsingDefault {
-                Text(serverKeyAllowed ? "Active" : "Locked")
-                    .foregroundStyle(serverKeyAllowed ? .green : DN.accent)
-                    .font(.callout)
-            } else {
-                if serverKeyAllowed {
-                    Button("Use") { viewModel.deactivateAllProviders() }
-                        .buttonStyle(.bordered).controlSize(.small).tint(.clear)
-                } else {
-                    Text("Trial ended")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
 
     // MARK: - Widget toggle row
 
@@ -1310,6 +1151,7 @@ struct ProviderRow: View {
     @State private var isExpanded = false
     @State private var apiKey = ""
     @State private var modelId = ""
+    @State private var baseURL = ""
 
     private var config: ProviderConfig? {
         viewModel.providerConfigs.first { $0.provider == providerType }
@@ -1384,22 +1226,43 @@ struct ProviderRow: View {
                         .padding(.vertical, 8)
                         .perchGlass(in: Capsule())
 
-                    Picker("Model", selection: Binding(
-                        get: { modelId.isEmpty ? defaultModel : modelId },
-                        set: { modelId = $0 }
-                    )) {
-                        ForEach(ProviderConfig.availableModels[providerType] ?? [], id: \.id) { m in
-                            Text(m.label).tag(m.id)
+                    if providerType == "custom" {
+                        TextField("Model", text: $modelId)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .perchGlass(in: Capsule())
+                    } else {
+                        Picker("Model", selection: Binding(
+                            get: { modelId.isEmpty ? defaultModel : modelId },
+                            set: { modelId = $0 }
+                        )) {
+                            ForEach(ProviderConfig.availableModels[providerType] ?? [], id: \.id) { m in
+                                Text(m.label).tag(m.id)
+                            }
                         }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
+
+                    if providerType == "custom" || providerType == "deepseek" {
+                        TextField("Base URL", text: $baseURL)
+                            .textFieldStyle(.plain)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .perchGlass(in: Capsule())
+                    }
 
                     HStack(spacing: 8) {
                         Button(isVerifying ? "Verifying…" : (isVerified && apiKey.isEmpty ? "Verified" : "Verify")) {
                             guard !apiKey.isEmpty else { return }
                             let model = modelId.isEmpty ? defaultModel : modelId
-                            viewModel.verifyProviderKey(provider: providerType, apiKey: apiKey, modelId: model)
+                            viewModel.verifyProviderKey(
+                                provider: providerType,
+                                apiKey: apiKey,
+                                modelId: model,
+                                baseURL: baseURL.isEmpty ? nil : baseURL
+                            )
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
@@ -1409,7 +1272,12 @@ struct ProviderRow: View {
                         Button("Save") {
                             guard !apiKey.isEmpty else { return }
                             let model = modelId.isEmpty ? defaultModel : modelId
-                            viewModel.saveProviderConfig(provider: providerType, apiKey: apiKey, modelId: model)
+                            viewModel.saveProviderConfig(
+                                provider: providerType,
+                                apiKey: apiKey,
+                                modelId: model,
+                                baseURL: baseURL.isEmpty ? nil : baseURL
+                            )
                             apiKey = ""
                         }
                         .buttonStyle(.bordered)
@@ -1444,6 +1312,10 @@ struct ProviderRow: View {
                 .transition(.opacity)
                 .onAppear {
                     if modelId.isEmpty { modelId = config?.modelId ?? defaultModel }
+                    if baseURL.isEmpty {
+                        baseURL = config?.baseURL
+                            ?? (providerType == "deepseek" ? "https://api.deepseek.com" : "")
+                    }
                 }
             }
         }
@@ -1476,6 +1348,15 @@ struct AppConnectionTile: View {
     private var isConnected: Bool { viewModel.appConnected[appType] ?? false }
     private var isLoading: Bool { viewModel.appLoading[appType] ?? false }
     private var error: String? { viewModel.appError[appType] ?? nil }
+    private var connectionStatus: String {
+        if error != nil { return "ERROR" }
+        if isConnected { return "ACTIVE" }
+        if isLoading { return "CONNECTING" }
+        if viewModel.appConnectionStatus[appType]?.lowercased() == "pending" {
+            return "PENDING"
+        }
+        return "NOT CONNECTED"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1494,6 +1375,12 @@ struct AppConnectionTile: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(isConnected ? Color.white : Color.secondary)
                 .lineLimit(1)
+            Text(connectionStatus)
+                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                .foregroundStyle(
+                    error != nil ? Color.orange
+                        : (isConnected ? Color.green : Color.secondary)
+                )
 
             Spacer(minLength: 6)
 
@@ -1520,6 +1407,8 @@ struct AppConnectionTile: View {
             Circle().fill(Color.green).frame(width: 7, height: 7)
         } else if error != nil {
             Circle().fill(Color.orange).frame(width: 7, height: 7)
+        } else if viewModel.appConnectionStatus[appType]?.lowercased() == "pending" {
+            Circle().fill(Color.yellow).frame(width: 7, height: 7)
         }
     }
 
@@ -1529,6 +1418,10 @@ struct AppConnectionTile: View {
             Text("Connecting…")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+        } else if viewModel.appConnectionStatus[appType]?.lowercased() == "pending" {
+            Text("Finish in browser")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.orange)
         } else if isConnected {
             Button("Disconnect") { viewModel.disconnectApp(appType) }
                 .font(.system(size: 10, weight: .medium))

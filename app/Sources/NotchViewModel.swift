@@ -5,6 +5,7 @@ import ExecutorCore
 import Foundation
 import SwiftUI
 import Combine
+import UserNotifications
 
 enum MusicSize: String, CaseIterable {
     case mini = "mini"
@@ -233,52 +234,6 @@ class NotchSettings: ObservableObject {
     }
 }
 
-enum APIConfig {
-    private static func configuredValue(infoKey: String, environmentKey: String) -> String? {
-        let candidates = [
-            ProcessInfo.processInfo.environment[environmentKey],
-            Bundle.main.object(forInfoDictionaryKey: infoKey) as? String,
-        ]
-        return candidates.compactMap { candidate -> String? in
-            guard let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !value.isEmpty,
-                  !value.contains("$("),
-                  !value.contains(".example") else {
-                return nil
-            }
-            return value
-        }.first
-    }
-
-    static let baseURL = configuredValue(
-        infoKey: "PerchAPIBaseURL",
-        environmentKey: "PERCH_API_BASE_URL"
-    ) ?? "http://localhost:3001"
-    static let gatewayURL = configuredValue(
-        infoKey: "PerchDeviceGatewayURL",
-        environmentKey: "PERCH_DEVICE_GATEWAY_URL"
-    ) ?? "ws://localhost:3001/api/device-gateway"
-
-    static var baseURLValue: URL {
-        validatedURL(baseURL, secureScheme: "https")
-    }
-
-    static var gatewayURLValue: URL {
-        validatedURL(gatewayURL, secureScheme: "wss")
-    }
-
-    private static func validatedURL(_ value: String, secureScheme: String) -> URL {
-        guard let url = URL(string: value),
-              url.user == nil, url.password == nil,
-              url.scheme == secureScheme
-                || ((url.host == "localhost" || url.host == "127.0.0.1")
-                    && (url.scheme == "http" || url.scheme == "ws")) else {
-            fatalError("Perch endpoint must use \(secureScheme) outside local development")
-        }
-        return url
-    }
-}
-
 private enum CachedFormatters {
     static let time: DateFormatter = { let f = DateFormatter(); f.dateFormat = "h:mm"; return f }()
     static let period: DateFormatter = { let f = DateFormatter(); f.dateFormat = "a"; return f }()
@@ -303,16 +258,24 @@ class NotchViewModel: ObservableObject {
     var isDraggingWidget = false
     var lastViewBeforeCollapse: NotchViewState = .overview
 
-    var authManager: AuthManager?
-    let deviceConnection: DeviceConnection
-    @Published var connectionState: DeviceConnectionState = .signedOut
+    let daemonConnection: LocalDaemonConnection
+    @Published var connectionState: LocalDaemonConnectionState = .discovering
     @Published var connectionAnnouncement = ""
-    private var activeUserID: String?
+    private var installationID: String?
+    private let installationIdentities: LocalInstallationIdentityStore
+    private let accountDataStore: AccountDataStore
+    private let deviceIdentities: DeviceIdentityProviding
+    private let workspaceBookmarkResolver: WorkspaceBookmarkResolving
+    private let workspaceBookmarks: ExecutorWorkspaceBookmarkStore
+    private let executorInstallation: ExecutorInstallationVerifying
+    private let executionBackend: DeviceExecutionBackend
+    private let executionRequests: LocalExecutionRequestProcessor
 
     // App connection states (keyed by app_type: gmail, googlecalendar, googledocs, github)
     @Published var appConnected: [String: Bool] = [:]
     @Published var appLoading: [String: Bool] = [:]
     @Published var appError: [String: String?] = [:]
+    @Published var appConnectionStatus: [String: String] = [:]
 
     // Provider configs (BYOK)
     @Published var providerConfigs: [ProviderConfig] = []
@@ -325,20 +288,8 @@ class NotchViewModel: ObservableObject {
     @Published var isLoadingModels = false
     @Published var modelListError: String?
 
-    // Billing / trial state
-    @Published var billingStatus: BillingStatus?
-    @Published var billingLoading = false
-    @Published var billingError: String?
-    @Published var checkoutState: CheckoutState = .idle
     @Published var requestedProviderType: String?
-    var trialDailyLimitReached: Bool {
-        billingStatus?.canUseServerKey == true
-            && billingStatus?.trialUsage.dailyLimitReached == true
-    }
-    private var checkoutPollTimer: Timer?
-    private var billingExpiryTimer: Timer?
-    private var checkoutPollAttempts = 0
-    private let checkoutPollMaxAttempts = 40 // ~2 min at 3s intervals
+    @Published var composioState = ComposioConfigState(configured: false, connectedApps: [])
 
     // Pending connection requests from agent (requestId → metadata)
     @Published var pendingConnectionRequests: [String: PendingConnectionRequest] = [:]
@@ -363,14 +314,37 @@ class NotchViewModel: ObservableObject {
 
     init(
         localConversationStore: LocalConversationStore = LocalConversationStore(),
-        deviceConnection: DeviceConnection = DeviceConnection()
+        daemonConnection: LocalDaemonConnection = LocalDaemonConnection(),
+        installationIdentities: LocalInstallationIdentityStore = LocalInstallationIdentityStore(),
+        accountDataStore: AccountDataStore = AccountDataStore(),
+        deviceIdentities: DeviceIdentityProviding = DeviceIdentityStore(),
+        workspaceBookmarkResolver: WorkspaceBookmarkResolving = SecurityScopedBookmarkResolver(),
+        executorInstallation: ExecutorInstallationVerifying = ProductionExecutorInstallationVerifier(),
+        executorBackend: DeviceExecutionBackend? = nil
     ) {
         let settings = NotchSettings()
         self.settings = settings
         self.agentMonitor = AgentMonitor(enabled: settings.agentMonitoringEnabled)
         self.nowPlaying = NowPlayingMonitor(enabled: settings.musicControlsEnabled)
         self.localConversationStore = localConversationStore
-        self.deviceConnection = deviceConnection
+        self.daemonConnection = daemonConnection
+        self.installationIdentities = installationIdentities
+        self.accountDataStore = accountDataStore
+        self.deviceIdentities = deviceIdentities
+        self.workspaceBookmarkResolver = workspaceBookmarkResolver
+        let workspaceBookmarks = ExecutorWorkspaceBookmarkStore(accountData: accountDataStore)
+        self.workspaceBookmarks = workspaceBookmarks
+        self.executorInstallation = executorInstallation
+        let backend = executorBackend ?? ProductionExecutorBackend(
+            identities: deviceIdentities,
+            bookmarks: workspaceBookmarks,
+            installation: executorInstallation
+        )
+        self.executionBackend = backend
+        self.executionRequests = LocalExecutionRequestProcessor(
+            backend: backend,
+            accountData: accountDataStore
+        )
         startClock()
         startShimmerCycle()
         // Forward agent monitor changes to trigger view updates
@@ -395,21 +369,16 @@ class NotchViewModel: ObservableObject {
                 self?.nowPlaying.setEnabled(enabled)
             }
             .store(in: &cancellables)
-        deviceConnection.$state.sink { [weak self] state in
+        daemonConnection.$state.sink { [weak self] state in
             self?.connectionState = state
         }.store(in: &cancellables)
-        deviceConnection.onStateAnnouncement = { [weak self] message in
+        daemonConnection.onStateAnnouncement = { [weak self] message in
             self?.connectionAnnouncement = message
         }
-        deviceConnection.onEvent = { [weak self] userID, event in
-            guard let self, self.activeUserID == userID else { return }
+        daemonConnection.onEvent = { [weak self] installationID, event in
+            guard let self, self.installationID == installationID else { return }
             self.processEvent(event)
         }
-    }
-
-    deinit {
-        checkoutPollTimer?.invalidate()
-        billingExpiryTimer?.invalidate()
     }
 
     func startClock() {
@@ -458,11 +427,8 @@ class NotchViewModel: ObservableObject {
     @Published var threadHistory: [ThreadSummary] = []
     @Published var isLoadingHistory = false
 
-    func switchAccount(to session: AuthSession?) {
-        // Fence queued disk writes and clear every user-derived in-memory
-        // collection before loading the next partition.
-        activeUserID = nil
-        localConversationStore.activate(userID: nil)
+    func activateLocalInstallation() {
+        localConversationStore.activate(installationID: nil)
         tasks = []
         threadHistory = []
         notifications = []
@@ -471,31 +437,26 @@ class NotchViewModel: ObservableObject {
         pendingConnectionRequests = [:]
         appConnected = [:]
         providerConfigs = []
-        billingStatus = nil
-        checkoutState = .idle
         requestedProviderType = nil
-        stopCheckoutPolling()
-        billingExpiryTimer?.invalidate()
-        billingExpiryTimer = nil
         viewState = .overview
         dismissPeek()
-        deviceConnection.logout()
-        guard let session else { return }
-        activeUserID = session.userId
-        localConversationStore.activate(userID: session.userId)
-        deviceConnection.start(session: session)
+        do {
+            let identity = try installationIdentities.loadOrCreate()
+            installationID = identity.id
+            localConversationStore.activate(installationID: identity.id)
+            try? accountDataStore.importLegacyConversations(installationID: identity.id)
+            daemonConnection.start()
+        } catch {
+            connectionState = .offline(reason: "Could not create the local installation identity.")
+        }
     }
 
-    func retryDeviceConnection() {
-        deviceConnection.retry()
+    func retryDaemonConnection() {
+        daemonConnection.retry()
     }
 
-    func cancelDeviceConnection() {
-        deviceConnection.cancel()
-    }
-
-    func reenrollDevice() {
-        deviceConnection.reenroll()
+    func cancelDaemonConnection() {
+        daemonConnection.cancel()
     }
 
     func loadThreadHistory() {
@@ -574,6 +535,8 @@ class NotchViewModel: ObservableObject {
             activitySteps: [],
             chatHistory: record.messages,
             threadId: record.id,
+            provider: record.provider,
+            modelId: record.modelId,
             isFromHistory: false
         )
     }
@@ -600,7 +563,9 @@ class NotchViewModel: ObservableObject {
             updatedAt: updatedAt,
             completedAt: task.completedAt,
             toolCallsCount: task.toolCallsCount,
-            messages: task.chatHistory
+            messages: task.chatHistory,
+            provider: task.provider,
+            modelId: task.modelId
         )
         localConversationStore.upsert(record)
 
@@ -647,16 +612,8 @@ class NotchViewModel: ObservableObject {
     @Published var unreadCount: Int = 0
 
     func loadNotifications() {
-        guard let auth = authManager, let requestUserID = auth.session?.userId else { return }
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else { return }
-
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications")!)
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  (response as? HTTPURLResponse)?.statusCode == 200,
+            guard let data = try? await daemonConnection.request("/v1/notifications"),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let items = json["notifications"] as? [[String: Any]] else { return }
 
@@ -674,7 +631,6 @@ class NotchViewModel: ObservableObject {
             }
 
             await MainActor.run {
-                guard self.activeUserID == requestUserID else { return }
                 self.notifications = parsed
                 self.unreadCount = parsed.filter { !$0.read }.count
             }
@@ -682,20 +638,12 @@ class NotchViewModel: ObservableObject {
     }
 
     func loadUnreadCount() {
-        guard let auth = authManager, let requestUserID = auth.session?.userId else { return }
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else { return }
-
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications/unread-count")!)
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            guard let (data, _) = try? await URLSession.shared.data(for: request),
+            guard let data = try? await daemonConnection.request("/v1/notifications/unread-count"),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let count = json["count"] as? Int else { return }
 
             await MainActor.run {
-                guard self.activeUserID == requestUserID else { return }
                 self.unreadCount = count
             }
         }
@@ -709,19 +657,12 @@ class NotchViewModel: ObservableObject {
         notifications[idx].read = true
         unreadCount = notifications.filter { !$0.read }.count
 
-        guard let auth = authManager else { return }
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else {
-                await MainActor.run { self.revertNotificationRead(id, to: previous) }
-                return
-            }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications/\(id)/read")!)
-            request.httpMethod = "POST"
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let status = (try? await URLSession.shared.data(for: request))
-                .flatMap { ($0.1 as? HTTPURLResponse)?.statusCode } ?? 0
-            if !(200...299).contains(status) {
+            if (try? await daemonConnection.request(
+                "/v1/notifications/\(id)/read",
+                method: "POST",
+                json: [:]
+            )) == nil {
                 await MainActor.run { self.revertNotificationRead(id, to: previous) }
             }
         }
@@ -738,19 +679,12 @@ class NotchViewModel: ObservableObject {
         let previous = notifications.map { $0.read }
         notifications.indices.forEach { notifications[$0].read = true }
         unreadCount = 0
-        guard let auth = authManager else { return }
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else {
-                await MainActor.run { self.restoreNotificationReadStates(previous) }
-                return
-            }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/notifications/read-all")!)
-            request.httpMethod = "POST"
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let status = (try? await URLSession.shared.data(for: request))
-                .flatMap { ($0.1 as? HTTPURLResponse)?.statusCode } ?? 0
-            if !(200...299).contains(status) {
+            if (try? await daemonConnection.request(
+                "/v1/notifications/read-all",
+                method: "POST",
+                json: [:]
+            )) == nil {
                 await MainActor.run { self.restoreNotificationReadStates(previous) }
             }
         }
@@ -765,24 +699,13 @@ class NotchViewModel: ObservableObject {
     // MARK: - Scheduled Tasks
 
     @Published var scheduledTasks: [ScheduledTask] = []
+    @Published var scheduledTaskError: String?
 
     func loadScheduledTasks() {
-        guard let auth = authManager, let requestUserID = auth.session?.userId else { return }
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else { return }
-
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/scheduled")!)
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            guard status == 200,
+            guard let data = try? await daemonConnection.request("/v1/scheduled"),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let tasks = json["tasks"] as? [[String: Any]] else {
-                print("[Perch] loadScheduledTasks: failed status=\(status)")
-                return
-            }
+                  let tasks = json["tasks"] as? [[String: Any]] else { return }
 
             let parsed: [ScheduledTask] = tasks.compactMap { t in
                 guard let id = t["id"] as? String,
@@ -793,63 +716,98 @@ class NotchViewModel: ObservableObject {
                     prompt: t["prompt"] as? String ?? "",
                     taskType: t["task_type"] as? String ?? "scheduled",
                     scheduleHuman: t["schedule_human"] as? String ?? "",
+                    cron: t["cron"] as? String,
+                    intervalMs: t["interval_ms"] as? Int,
                     enabled: t["enabled"] as? Bool ?? true,
                     lastRunAt: t["last_run_at"] as? String,
                     nextRunAt: t["next_run_at"] as? String,
                     runCount: t["run_count"] as? Int ?? 0,
                     lastStatus: (t["last_result"] as? [String: Any])?["status"] as? String,
                     lastResultSummary: (t["last_result"] as? [String: Any])?["summary"] as? String,
-                    notifyUser: t["notify_user"] as? Bool ?? false
+                    notifyUser: t["notify_user"] as? Bool ?? false,
+                    provider: t["provider"] as? String ?? "anthropic",
+                    modelId: t["model_id"] as? String
+                        ?? ProviderConfig.defaultModels[t["provider"] as? String ?? "anthropic"]
+                        ?? ""
                 )
             }
 
             await MainActor.run {
-                guard self.activeUserID == requestUserID else { return }
                 self.scheduledTasks = parsed
-                print("[Perch] loadScheduledTasks: \(parsed.count) tasks")
             }
         }
     }
 
     func toggleScheduledTask(_ taskId: String, enabled: Bool) {
-        guard let auth = authManager else { return }
-        // Optimistic update
         if let idx = scheduledTasks.firstIndex(where: { $0.id == taskId }) {
             scheduledTasks[idx].enabled = enabled
         }
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken,
-                  let url = URL(string: "\(APIConfig.baseURL)/api/scheduled/\(taskId)") else { return }
-            var request = URLRequest(url: url)
-            request.httpMethod = "PATCH"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: ["enabled": enabled])
-            let result = try? await URLSession.shared.data(for: request)
-            let status = (result?.1 as? HTTPURLResponse)?.statusCode ?? 0
-            if !(200...299).contains(status) {
-                // Reconcile optimistic toggle with server truth.
+            if (try? await daemonConnection.request(
+                "/v1/scheduled/\(taskId)",
+                method: "PATCH",
+                json: ["enabled": enabled]
+            )) == nil {
                 await MainActor.run { self.loadScheduledTasks() }
             }
         }
     }
 
     func deleteScheduledTask(_ taskId: String) {
-        guard let auth = authManager else { return }
         scheduledTasks.removeAll { $0.id == taskId }
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken,
-                  let url = URL(string: "\(APIConfig.baseURL)/api/scheduled/\(taskId)") else { return }
-            var request = URLRequest(url: url)
-            request.httpMethod = "DELETE"
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let result = try? await URLSession.shared.data(for: request)
-            let status = (result?.1 as? HTTPURLResponse)?.statusCode ?? 0
-            if !(200...299).contains(status) {
-                // Delete failed — restore the list from the server.
+            if (try? await daemonConnection.request(
+                "/v1/scheduled/\(taskId)",
+                method: "DELETE"
+            )) == nil {
                 await MainActor.run { self.loadScheduledTasks() }
+            }
+        }
+    }
+
+    func createScheduledTask(_ draft: ScheduledTaskDraft) {
+        saveScheduledTask(nil, draft: draft)
+    }
+
+    func updateScheduledTask(_ id: String, draft: ScheduledTaskDraft) {
+        saveScheduledTask(id, draft: draft)
+    }
+
+    private func saveScheduledTask(_ id: String?, draft: ScheduledTaskDraft) {
+        scheduledTaskError = nil
+        Task {
+            do {
+                _ = try await daemonConnection.request(
+                    id.map { "/v1/scheduled/\($0)" } ?? "/v1/scheduled",
+                    method: id == nil ? "POST" : "PATCH",
+                    json: [
+                        "name": draft.name,
+                        "prompt": draft.prompt,
+                        "task_type": "scheduled",
+                        "cron": draft.cron,
+                        "notify_user": draft.notifyUser,
+                        "provider": draft.provider,
+                        "model_id": draft.modelId,
+                    ]
+                )
+                await MainActor.run { self.loadScheduledTasks() }
+            } catch {
+                await MainActor.run { self.scheduledTaskError = error.localizedDescription }
+            }
+        }
+    }
+
+    func runScheduledTaskNow(_ id: String) {
+        Task {
+            do {
+                _ = try await daemonConnection.request(
+                    "/v1/scheduled/\(id)/run",
+                    method: "POST",
+                    json: [:]
+                )
+                await MainActor.run { self.loadScheduledTasks() }
+            } catch {
+                await MainActor.run { self.scheduledTaskError = error.localizedDescription }
             }
         }
     }
@@ -877,155 +835,110 @@ class NotchViewModel: ObservableObject {
         }
     }
 
-    // MARK: - App Connections (Generic)
+
+    // MARK: - Local Daemon Configuration
 
     func checkAppStatus(_ appType: String) {
-        guard let auth = authManager, let requestUserID = auth.session?.userId else { return }
         appLoading[appType] = true
-        appError[appType] = nil          // clear any stale error from a previous connect attempt
+        appError[appType] = nil
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else {
-                await MainActor.run { self.appLoading[appType] = false }
-                return
-            }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/apps/\(appType)/status")!)
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            guard let (data, _) = try? await URLSession.shared.data(for: request),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let connected = json["connected"] as? Bool else {
-                await MainActor.run { self.appLoading[appType] = false }
-                return
-            }
-            await MainActor.run {
-                guard self.activeUserID == requestUserID else { return }
-                self.appConnected[appType] = connected
-                self.appLoading[appType] = false
+            do {
+                let data = try await daemonConnection.request("/v1/integrations/\(appType)")
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                await MainActor.run {
+                    self.appConnected[appType] = json?["connected"] as? Bool ?? false
+                    self.appConnectionStatus[appType] =
+                        json?["status"] as? String ?? "disconnected"
+                    self.appLoading[appType] = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.appError[appType] = error.localizedDescription
+                    self.appConnectionStatus[appType] = "error"
+                    self.appLoading[appType] = false
+                }
             }
         }
     }
 
     func connectApp(_ appType: String) {
-        guard let auth = authManager else { return }
-        guard case .connected(let deviceID) = deviceConnection.state else {
-            appError[appType] = "Connect this Mac before linking an app."
-            return
-        }
         appLoading[appType] = true
         appError[appType] = nil
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else {
-                await MainActor.run {
-                    self.appError[appType] = "Not authenticated"
-                    self.appLoading[appType] = false
+            do {
+                let data = try await daemonConnection.request(
+                    "/v1/integrations/\(appType)/connect",
+                    method: "POST",
+                    json: [:]
+                )
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                if json?["connected"] as? Bool == true {
+                    await MainActor.run {
+                        self.appConnected[appType] = true
+                        self.appConnectionStatus[appType] =
+                            json?["status"] as? String ?? "ACTIVE"
+                        self.appLoading[appType] = false
+                    }
+                    return
                 }
-                return
-            }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/apps/\(appType)/connect")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: [
-                "device_id": deviceID,
-                "replace": self.appConnected[appType] == true,
-            ])
-
-            guard let (data, _) = try? await URLSession.shared.data(for: request),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                await MainActor.run {
-                    self.appError[appType] = "Failed to reach server"
-                    self.appLoading[appType] = false
+                if let value = (json?["redirect_url"] ?? json?["redirectUrl"]) as? String,
+                   let url = URL(string: value),
+                   url.scheme?.lowercased() == "https",
+                   url.host != nil {
+                    await MainActor.run {
+                        self.appConnectionStatus[appType] = "pending"
+                        self.appLoading[appType] = false
+                    }
+                    _ = await MainActor.run { NSWorkspace.shared.open(url) }
                 }
-                return
-            }
-
-            if let error = json["error"] as? String {
-                await MainActor.run {
-                    self.appError[appType] = error
-                    self.appLoading[appType] = false
-                }
-                return
-            }
-
-            if json["already_connected"] as? Bool == true {
-                await MainActor.run {
-                    self.appConnected[appType] = true
-                    self.appLoading[appType] = false
-                }
-                return
-            }
-
-            if let redirectUrl = json["redirectUrl"] as? String,
-               let url = URL(string: redirectUrl),
-               let attemptID = json["attempt_id"] as? String {
-                await MainActor.run {
-                    NSWorkspace.shared.open(url)
-                }
-                // Poll for connection until OAuth completes (up to 2 minutes)
                 for _ in 0..<40 {
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    var statusComponents = URLComponents(string: "\(APIConfig.baseURL)/api/apps/\(appType)/status")!
-                    statusComponents.queryItems = [
-                        URLQueryItem(name: "attempt_id", value: attemptID),
-                        URLQueryItem(name: "device_id", value: deviceID),
-                    ]
-                    var statusReq = URLRequest(url: statusComponents.url!)
-                    statusReq.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-                    if let (sData, _) = try? await URLSession.shared.data(for: statusReq),
-                       let sJson = try? JSONSerialization.jsonObject(with: sData) as? [String: Any],
-                       sJson["connected"] as? Bool == true {
+                    try await Task.sleep(for: .seconds(3))
+                    let status = try await daemonConnection.request("/v1/integrations/\(appType)")
+                    let payload = try JSONSerialization.jsonObject(with: status) as? [String: Any]
+                    if payload?["connected"] as? Bool == true {
                         await MainActor.run {
                             self.appConnected[appType] = true
+                            self.appConnectionStatus[appType] = "ACTIVE"
                             self.appLoading[appType] = false
                         }
                         return
                     }
                 }
-                await MainActor.run { self.appLoading[appType] = false }
-                return
-            }
-
-            // Auto-connected (no redirect needed)
-            if json["connected"] as? Bool == true {
                 await MainActor.run {
-                    self.appConnected[appType] = true
+                    self.appError[appType] = "Connection timed out."
+                    self.appConnectionStatus[appType] = "error"
                     self.appLoading[appType] = false
                 }
-                return
+            } catch {
+                await MainActor.run {
+                    self.appError[appType] = error.localizedDescription
+                    self.appConnectionStatus[appType] = "error"
+                    self.appLoading[appType] = false
+                }
             }
-
-            await MainActor.run { self.appLoading[appType] = false }
         }
     }
 
     func disconnectApp(_ appType: String) {
-        guard let auth = authManager else { return }
         appLoading[appType] = true
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else {
-                await MainActor.run { self.appLoading[appType] = false }
-                return
-            }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/apps/\(appType)/disconnect")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            let result = try? await URLSession.shared.data(for: request)
-            let status = (result?.1 as? HTTPURLResponse)?.statusCode ?? 0
-            let ok = (200...299).contains(status)
-            await MainActor.run {
-                // Only reflect disconnected when the server confirms it — otherwise
-                // Settings would falsely claim the app is disconnected.
-                if ok {
+            do {
+                _ = try await daemonConnection.request(
+                    "/v1/integrations/\(appType)/disconnect",
+                    method: "POST",
+                    json: [:]
+                )
+                await MainActor.run {
                     self.appConnected[appType] = false
-                } else {
-                    self.appError[appType] = "Failed to disconnect — please try again."
+                    self.appConnectionStatus[appType] = "disconnected"
+                    self.appLoading[appType] = false
                 }
-                self.appLoading[appType] = false
+            } catch {
+                await MainActor.run {
+                    self.appError[appType] = error.localizedDescription
+                    self.appConnectionStatus[appType] = "error"
+                    self.appLoading[appType] = false
+                }
             }
         }
     }
@@ -1033,280 +946,130 @@ class NotchViewModel: ObservableObject {
     func resetApp(_ appType: String) {
         appError[appType] = nil
         appLoading[appType] = false
+        if appConnected[appType] != true {
+            appConnectionStatus[appType] = "disconnected"
+        }
     }
 
-    // MARK: - Billing
-
-    func loadBillingStatus() {
-        guard let auth = authManager, auth.accessToken != nil,
-              let requestUserID = auth.session?.userId else { return }
-        billingLoading = true
-        billingError = nil
-
+    func configureComposio(
+        apiKey: String? = nil,
+        authConfigIDs: [String: String] = [:]
+    ) {
+        let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard key?.isEmpty == false || !authConfigIDs.isEmpty else { return }
+        appLoading["composio"] = true
+        appError["composio"] = nil
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else {
-                await MainActor.run { self.billingLoading = false }
-                return
-            }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/billing/status")!)
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
+            do {
+                var body: [String: Any] = [:]
+                if let key, !key.isEmpty { body["api_key"] = key }
+                if !authConfigIDs.isEmpty { body["auth_config_ids"] = authConfigIDs }
+                let data = try await daemonConnection.request(
+                    "/v1/config/composio",
+                    method: "PUT",
+                    json: body
+                )
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
                 await MainActor.run {
-                    self.billingLoading = false
-                    self.billingError = "Cannot reach billing service"
+                    self.composioState = ComposioConfigState.parse(json)
+                    self.synchronizeComposioConnections(preservePending: false)
+                    self.appLoading["composio"] = false
                 }
-                return
-            }
-
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-
-            guard status == 200 else {
-                let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-                let message = json["error"] as? String ?? "Billing status unavailable"
+            } catch {
                 await MainActor.run {
-                    self.billingLoading = false
-                    self.billingError = message
-                    if status == 404, json["code"] as? String == "profile_not_found" {
-                        self.authManager?.logout()
-                    }
-                }
-                return
-            }
-
-            guard let parsed = try? JSONDecoder().decode(BillingStatus.self, from: data) else {
-                await MainActor.run {
-                    self.billingLoading = false
-                    self.billingError = "The billing service returned an invalid response."
-                }
-                return
-            }
-
-            await MainActor.run {
-                guard self.activeUserID == requestUserID else { return }
-                self.billingStatus = parsed
-                self.billingLoading = false
-                self.billingError = nil
-                self.scheduleBillingRefresh(at: parsed.trialEndDate)
-                if parsed.isPaid {
-                    self.checkoutState = reduceCheckout(self.checkoutState, action: .purchased)
-                    self.stopCheckoutPolling()
+                    self.appError["composio"] = error.localizedDescription
+                    self.appLoading["composio"] = false
                 }
             }
         }
     }
 
-    private func stopCheckoutPolling() {
-        checkoutPollTimer?.invalidate()
-        checkoutPollTimer = nil
-        checkoutPollAttempts = 0
-    }
-
-    private func startCheckoutPolling() {
-        stopCheckoutPolling() // invalidate any existing timer so repeated "Buy $5" taps never leak timers
-        checkoutPollAttempts = 0
-        checkoutPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.checkoutPollAttempts += 1
-            if self.checkoutPollAttempts >= self.checkoutPollMaxAttempts {
-                self.stopCheckoutPolling()
-                self.checkoutState = reduceCheckout(self.checkoutState, action: .timedOut)
-                return
-            }
-            self.loadBillingStatus()
-        }
-    }
-
-    func startCheckout() {
-        guard let auth = authManager, auth.accessToken != nil,
-              billingStatus?.canPurchase != false,
-              !checkoutState.isBusy else { return }
-        checkoutState = reduceCheckout(checkoutState, action: .start)
-        billingError = nil
-
+    func loadComposioState() {
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else {
-                await MainActor.run {
-                    self.checkoutState = reduceCheckout(
-                        self.checkoutState,
-                        action: .failed("Your session could not be refreshed. Try again.")
-                    )
-                }
+            guard let data = try? await daemonConnection.request("/v1/config/composio"),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return
             }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/billing/checkout")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: [:] as [String: Any])
-
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
-                await MainActor.run {
-                    self.checkoutState = reduceCheckout(
-                        self.checkoutState,
-                        action: .failed("Cannot reach checkout. Try again.")
-                    )
-                }
-                return
-            }
-
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-
             await MainActor.run {
-                guard status == 200 else {
-                    let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-                    let message = json["error"] as? String ?? "Checkout is not ready yet."
-                    self.checkoutState = reduceCheckout(self.checkoutState, action: .failed(message))
-                    return
-                }
-                guard let checkout = try? JSONDecoder().decode(CheckoutResponse.self, from: data) else {
-                    self.checkoutState = reduceCheckout(
-                        self.checkoutState,
-                        action: .failed("Checkout returned an invalid response.")
-                    )
-                    return
-                }
-                guard NSWorkspace.shared.open(checkout.checkoutURL) else {
-                    self.checkoutState = reduceCheckout(
-                        self.checkoutState,
-                        action: .failed("Could not open your browser. Check your default browser and try again.")
-                    )
-                    return
-                }
-                self.checkoutState = reduceCheckout(self.checkoutState, action: .opened)
-                self.startCheckoutPolling()
+                self.composioState = ComposioConfigState.parse(json)
+                self.synchronizeComposioConnections()
             }
         }
     }
 
-    func handleBillingCompletionURL() {
-        guard authManager?.isAuthenticated == true else { return }
-        if checkoutState != .success {
-            checkoutState = .pending
-        }
-        loadBillingStatus()
-    }
-
-    func requestProviderSetup() {
-        requestedProviderType = activeProviderType
-    }
-
-    private func scheduleBillingRefresh(at trialEnd: Date) {
-        billingExpiryTimer?.invalidate()
-        guard billingStatus?.billingStatus == .trialing else {
-            billingExpiryTimer = nil
-            return
-        }
-        let delay = trialEnd.timeIntervalSinceNow
-        guard delay > 0 else {
-            billingExpiryTimer = nil
-            return
-        }
-        billingExpiryTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            self?.loadBillingStatus()
+    private func synchronizeComposioConnections(preservePending: Bool = true) {
+        for integration in composioState.integrations {
+            let connected = composioState.connectedApps.contains(integration.appType)
+            appConnected[integration.appType] = connected
+            if connected {
+                appConnectionStatus[integration.appType] = "ACTIVE"
+            } else if !preservePending
+                        || appConnectionStatus[integration.appType]?.lowercased() != "pending" {
+                appConnectionStatus[integration.appType] = "disconnected"
+            }
         }
     }
-
-    // MARK: - Provider Config (BYOK)
 
     func loadProviderConfigs() {
-        guard let auth = authManager, let token = auth.accessToken,
-              let requestUserID = auth.session?.userId else { return }
         providerLoading = true
-
         Task {
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider")!)
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            guard let (data, response) = try? await URLSession.shared.data(for: request),
-                  (response as? HTTPURLResponse)?.statusCode == 200,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let configs = json["configs"] as? [[String: Any]] else {
-                await MainActor.run { self.providerLoading = false }
-                return
-            }
-
-            let parsed: [ProviderConfig] = configs.compactMap { c in
-                guard let id = c["id"] as? String,
-                      let provider = c["provider"] as? String,
-                      let modelId = c["model_id"] as? String else { return nil }
-                return ProviderConfig(
-                    id: id,
-                    provider: provider,
-                    modelId: modelId,
-                    isActive: c["is_active"] as? Bool ?? false,
-                    verifiedAt: c["verified_at"] as? String
-                )
-            }
-
-            await MainActor.run {
-                guard self.activeUserID == requestUserID else { return }
-                self.providerConfigs = parsed
-                self.providerLoading = false
-                if let active = parsed.first(where: { $0.isActive }) {
-                    self.activeModelProvider = active.provider
-                    if self.settings.selectedDefaultModel.isEmpty {
+            do {
+                let data = try await daemonConnection.request("/v1/config/providers")
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let configs = json?["providers"] as? [[String: Any]] ?? []
+                let parsed = configs.compactMap { value -> ProviderConfig? in
+                    guard let provider = value["provider"] as? String,
+                          let model = value["model_id"] as? String else { return nil }
+                    return ProviderConfig(
+                        id: value["id"] as? String ?? provider,
+                        provider: provider,
+                        modelId: model,
+                        isActive: value["is_active"] as? Bool ?? false,
+                        verifiedAt: value["verified_at"] as? String,
+                        baseURL: value["base_url"] as? String
+                    )
+                }
+                await MainActor.run {
+                    self.providerConfigs = parsed
+                    self.providerLoading = false
+                    if let active = parsed.first(where: \.isActive) {
+                        self.activeModelProvider = active.provider
                         self.settings.selectedDefaultModel = active.modelId
                     }
+                    self.loadProviderModels()
                 }
-                self.loadProviderModels()
+            } catch {
+                await MainActor.run { self.providerLoading = false }
             }
         }
     }
 
     func loadProviderModels() {
-        guard let auth = authManager, let token = auth.accessToken,
-              let requestUserID = auth.session?.userId else {
-            let provider = activeProviderType
-            activeModelProvider = provider
-            modelOptions = fallbackModelOptions(for: provider)
-            ensureSelectedModelIsAvailable(activeModel: settings.selectedDefaultModel)
-            return
-        }
-
+        let provider = activeProviderType
+        activeModelProvider = provider
+        modelOptions = fallbackModelOptions(for: provider)
+        ensureSelectedModelIsAvailable(activeModel: providerConfigs.first(where: \.isActive)?.modelId)
         isLoadingModels = true
-        modelListError = nil
-
         Task {
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider/models")!)
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
-                await MainActor.run {
-                    self.isLoadingModels = false
-                    self.modelListError = "Model list unavailable"
-                    let provider = self.activeProviderType
-                    self.activeModelProvider = provider
-                    self.modelOptions = self.fallbackModelOptions(for: provider)
-                    self.ensureSelectedModelIsAvailable(activeModel: self.settings.selectedDefaultModel)
-                }
+            defer { Task { @MainActor in self.isLoadingModels = false } }
+            guard let data = try? await daemonConnection.request("/v1/config/providers/models"),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return
             }
-
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-            let provider = json["provider"] as? String ?? self.activeProviderType
-            let activeModel = json["active_model"] as? String
-            let warning = json["warning"] as? String
-            let models = (json["models"] as? [[String: Any]] ?? []).compactMap { item -> ProviderModelOption? in
-                guard let id = item["id"] as? String, !id.isEmpty else { return nil }
+            let remoteProvider = json["provider"] as? String ?? provider
+            let models: [ProviderModelOption] = (json["models"] as? [[String: Any]] ?? []).compactMap {
+                guard let id = $0["id"] as? String else { return nil }
                 return ProviderModelOption(
                     id: id,
-                    name: item["name"] as? String ?? id,
-                    provider: provider,
-                    contextLength: item["context_length"] as? Int
+                    name: $0["name"] as? String ?? id,
+                    provider: remoteProvider,
+                    contextLength: $0["context_length"] as? Int
                 )
             }
-
             await MainActor.run {
-                guard self.activeUserID == requestUserID else { return }
-                self.isLoadingModels = false
-                self.activeModelProvider = provider
-                self.modelOptions = models.isEmpty ? self.fallbackModelOptions(for: provider) : models
-                self.modelListError = status == 200 ? warning : (json["error"] as? String ?? "Model list unavailable")
-                self.ensureSelectedModelIsAvailable(activeModel: activeModel)
+                if !models.isEmpty { self.modelOptions = models }
+                self.activeModelProvider = remoteProvider
+                self.ensureSelectedModelIsAvailable(activeModel: json["active_model"] as? String)
             }
         }
     }
@@ -1317,195 +1080,133 @@ class NotchViewModel: ObservableObject {
     }
 
     private func selectedModelIdForRequest() -> String {
-        if modelOptions.isEmpty {
-            let fallbackOptions = fallbackModelOptions(for: activeProviderType)
-            if !fallbackOptions.contains(where: { $0.id == settings.selectedDefaultModel }),
-               let fallback = fallbackOptions.first?.id {
-                settings.selectedDefaultModel = fallback
-            }
-            return settings.selectedDefaultModel
-        }
-
-        if !modelOptions.contains(where: { $0.id == settings.selectedDefaultModel }) {
-            ensureSelectedModelIsAvailable(activeModel: nil)
-        }
-        return settings.selectedDefaultModel
+        let configured = settings.selectedDefaultModel
+        if !configured.isEmpty { return configured }
+        return providerConfigs.first(where: \.isActive)?.modelId
+            ?? ProviderConfig.defaultModels[activeProviderType]
+            ?? ""
     }
 
     var activeProviderType: String {
-        providerConfigs.first(where: { $0.isActive })?.provider ?? "anthropic"
+        providerConfigs.first(where: \.isActive)?.provider ?? "anthropic"
     }
 
     private func ensureSelectedModelIsAvailable(activeModel: String?) {
-        let availableIds = Set(modelOptions.map(\.id))
-        if availableIds.contains(settings.selectedDefaultModel) {
-            return
-        }
-        if let activeModel, availableIds.contains(activeModel) {
+        if let activeModel, !activeModel.isEmpty {
             settings.selectedDefaultModel = activeModel
-            return
+        } else if settings.selectedDefaultModel.isEmpty {
+            settings.selectedDefaultModel = modelOptions.first?.id
+                ?? ProviderConfig.defaultModels[activeProviderType]
+                ?? ""
         }
-        settings.selectedDefaultModel = activeModel ?? modelOptions.first?.id ?? NotchSettings.defaultAnthropicModel
     }
 
     private func fallbackModelOptions(for provider: String) -> [ProviderModelOption] {
-        let models = ProviderConfig.availableModels[provider] ?? ProviderConfig.availableModels["anthropic"] ?? []
-        return models.map {
+        let configured = providerConfigs.first { $0.provider == provider }?.modelId
+        var values = ProviderConfig.availableModels[provider] ?? []
+        if let configured, !configured.isEmpty, !values.contains(where: { $0.id == configured }) {
+            values.insert((configured, configured), at: 0)
+        }
+        return values.map {
             ProviderModelOption(id: $0.id, name: $0.label, provider: provider, contextLength: nil)
         }
     }
 
-    func saveProviderConfig(provider: String, apiKey: String, modelId: String) {
-        guard let auth = authManager, let token = auth.accessToken else { return }
-
+    func verifyProviderKey(
+        provider: String,
+        apiKey: String,
+        modelId: String,
+        baseURL: String? = nil
+    ) {
+        providerVerifying[provider] = true
+        providerVerified[provider] = false
         providerError[provider] = nil
-
         Task {
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            let body: [String: Any] = ["provider": provider, "api_key": apiKey, "model_id": modelId]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
-                await MainActor.run { self.providerError[provider] = "Network error" }
-                return
-            }
-
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-
-            if status == 200 {
+            do {
+                var body: [String: Any] = [
+                    "provider": provider,
+                    "api_key": apiKey,
+                    "model_id": modelId,
+                ]
+                if let baseURL { body["base_url"] = baseURL }
+                let data = try await daemonConnection.request(
+                    "/v1/config/providers/verify",
+                    method: "POST",
+                    json: body
+                )
+                let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                let verified = json?["verified"] as? Bool == true
                 await MainActor.run {
-                    self.providerError[provider] = nil
-                    self.loadProviderConfigs()
-                    self.loadProviderModels()
-                    self.loadBillingStatus()
+                    self.providerVerifying[provider] = false
+                    self.providerVerified[provider] = verified
+                    self.providerError[provider] = verified
+                        ? nil
+                        : (json?["error"] as? String ?? "Verification failed")
                 }
-            } else {
-                let errorMsg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
+            } catch {
                 await MainActor.run {
-                    self.providerError[provider] = errorMsg ?? "Save failed"
+                    self.providerVerifying[provider] = false
+                    self.providerError[provider] = error.localizedDescription
                 }
             }
         }
     }
 
-    func verifyProviderKey(provider: String, apiKey: String, modelId: String) {
-        guard let auth = authManager, let token = auth.accessToken else { return }
-
-        providerVerifying[provider] = true
-        providerVerified[provider] = false
-        providerError[provider] = nil
-
+    func saveProviderConfig(
+        provider: String,
+        apiKey: String,
+        modelId: String,
+        baseURL: String? = nil
+    ) {
+        guard !apiKey.isEmpty else { return }
         Task {
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider/verify")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-
-            let body: [String: Any] = ["provider": provider, "api_key": apiKey, "model_id": modelId]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
-                await MainActor.run {
-                    self.providerVerifying[provider] = false
-                    self.providerError[provider] = "Network error"
-                }
-                return
-            }
-
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-
-            await MainActor.run {
-                self.providerVerifying[provider] = false
-                if status == 200 && json["verified"] as? Bool == true {
-                    self.providerVerified[provider] = true
-                    self.providerError[provider] = nil
-                } else {
-                    self.providerVerified[provider] = false
-                    self.providerError[provider] = json["error"] as? String ?? "Verification failed"
-                }
+            do {
+                var body: [String: Any] = [
+                    "provider": provider,
+                    "api_key": apiKey,
+                    "model_id": modelId,
+                ]
+                if let baseURL { body["base_url"] = baseURL }
+                _ = try await daemonConnection.request(
+                    "/v1/config/providers",
+                    method: "PUT",
+                    json: body
+                )
+                await MainActor.run { self.loadProviderConfigs() }
+            } catch {
+                await MainActor.run { self.providerError[provider] = error.localizedDescription }
             }
         }
     }
 
     func activateProviderConfig(provider: String) {
-        guard let auth = authManager, let token = auth.accessToken else { return }
-        providerError[provider] = nil
-
         Task {
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider/activate")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: ["provider": provider])
-
-            guard let (data, response) = try? await URLSession.shared.data(for: request) else {
-                await MainActor.run { self.providerError[provider] = "Network error" }
-                return
-            }
-
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            if status == 200 {
-                await MainActor.run {
-                    self.providerError[provider] = nil
-                    self.loadProviderConfigs()
-                    self.loadProviderModels()
-                    self.loadBillingStatus()
-                }
-            } else {
-                let errorMsg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-                await MainActor.run {
-                    self.providerError[provider] = errorMsg ?? "Activate failed"
-                }
-            }
-        }
-    }
-
-    func deactivateAllProviders() {
-        guard let auth = authManager, let token = auth.accessToken else { return }
-
-        Task {
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider/default")!)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: [:] as [String: Any])
-
-            _ = try? await URLSession.shared.data(for: request)
-            await MainActor.run {
-                for idx in self.providerConfigs.indices {
-                    self.providerConfigs[idx].isActive = false
-                }
-                self.providerError = [:]
-                self.activeModelProvider = "anthropic"
-                self.loadProviderConfigs()
-                self.loadProviderModels()
-                self.loadBillingStatus()
+            do {
+                _ = try await daemonConnection.request(
+                    "/v1/config/providers/activate",
+                    method: "POST",
+                    json: ["provider": provider]
+                )
+                await MainActor.run { self.loadProviderConfigs() }
+            } catch {
+                await MainActor.run { self.providerError[provider] = error.localizedDescription }
             }
         }
     }
 
     func deleteProviderConfig(provider: String) {
-        guard let auth = authManager, let token = auth.accessToken else { return }
-
         Task {
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/provider")!)
-            request.httpMethod = "DELETE"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: ["provider": provider])
-
-            _ = try? await URLSession.shared.data(for: request)
-            await MainActor.run {
-                self.providerConfigs.removeAll { $0.provider == provider }
-                self.providerError[provider] = nil
-                self.providerVerified[provider] = false
-                self.loadProviderModels()
-                self.loadBillingStatus()
+            do {
+                _ = try await daemonConnection.request(
+                    "/v1/config/providers/\(provider)",
+                    method: "DELETE"
+                )
+                await MainActor.run {
+                    self.providerConfigs.removeAll { $0.provider == provider }
+                    self.loadProviderModels()
+                }
+            } catch {
+                await MainActor.run { self.providerError[provider] = error.localizedDescription }
             }
         }
     }
@@ -1513,19 +1214,19 @@ class NotchViewModel: ObservableObject {
     // MARK: - Event Processing
 
     func processEvent(_ json: [String: Any]) {
-        guard activeUserID != nil else { return }
+        guard installationID != nil else { return }
         guard let type = json["type"] as? String else { return }
         switch type {
         case "subagent_event": processSubagentEvent(json)
         case "task_summary": processBulkUpdate(json)
         case "scheduled_task_update":
             loadScheduledTasks()
-            loadBillingStatus()
         case "notification": processNotification(json)
         case "peek_notification": processPeekNotification(json)
         case "connection_request": processConnectionRequest(json)
         case "pending_action": processPendingAction(json)
         case "local_action_offered": processLocalActionOffer(json)
+        case "local_execution_request": processLocalExecutionRequest(json)
         default: break
         }
     }
@@ -1586,6 +1287,7 @@ class NotchViewModel: ObservableObject {
             sensitiveDisclosure: capabilities.sensitiveOutputDisclosure,
             resultUpload: capabilities.resultUpload,
             expiresAt: expiresAt,
+            expiresAtValue: expiresValue,
             selectedWorkspacePath: nil,
             confirmations: [],
             state: unavailable ? .unavailable : .pending,
@@ -1605,7 +1307,7 @@ class NotchViewModel: ObservableObject {
     }
 
     private var executorUnavailableReason: String? {
-        switch deviceConnection.executorCapabilityState {
+        switch executionBackend.capabilityState {
         case .available:
             return nil
         case .unsupportedOS:
@@ -1643,31 +1345,45 @@ class NotchViewModel: ObservableObject {
     }
 
     func approveLocalExecution(actionID: String) {
-        guard let workspace = selectedExecutionWorkspaces[actionID] else { return }
+        guard let workspace = selectedExecutionWorkspaces[actionID],
+              let installationID,
+              UUID(uuidString: installationID) != nil else { return }
         updateLocalConsent(actionID) {
             LocalConsentCardReducer().reduce($0, event: .approve)
         }
         guard let card = localConsentCard(actionID),
               card.state == .approving,
-              let actionUUID = UUID(uuidString: card.actionID),
-              let capabilitiesObject = try? JSONSerialization.jsonObject(
-                  with: card.capabilitiesJSON
-              ),
-              let capabilities = try? ExecutionCapabilities(
-                  json: ExecutorJSON(any: capabilitiesObject)
-              ) else { return }
+              let actionUUID = UUID(uuidString: card.actionID) else { return }
         Task {
             do {
-                try await deviceConnection.decideLocalAction(
+                let bookmark = try workspaceBookmarkResolver.create(for: workspace)
+                try await workspaceBookmarks.save(
+                    bookmark.data,
+                    identifier: card.workspaceBookmarkID,
+                    userID: installationID
+                )
+                let identity = try deviceIdentities.identity(
+                    for: installationID,
+                    createIfMissing: true
+                )
+                let fingerprint = try ExecutorIPCAuthenticator.fingerprint(
+                    publicKeyPEM: identity.publicKey.value
+                )
+                let imageDigest = try executorInstallation
+                    .verifiedInstallation()
+                    .workloadImageDigest
+                try await daemonConnection.approveLocalAction(
                     actionID: actionUUID,
                     actionHash: card.actionHash,
                     parametersHash: card.parametersHash,
-                    capabilities: capabilities,
                     workspaceURL: workspace,
                     workspaceBookmarkID: card.workspaceBookmarkID,
                     highRiskShell: card.actionType == "shell.execute",
-                    expiresAt: card.expiresAt,
-                    approved: true
+                    expiresAt: card.expiresAtValue
+                        ?? ISO8601DateFormatter().string(from: card.expiresAt),
+                    deviceID: installationID,
+                    deviceKeyFingerprint: fingerprint,
+                    imageDigest: imageDigest
                 )
                 await MainActor.run {
                     self.updateLocalConsent(actionID) {
@@ -1689,28 +1405,35 @@ class NotchViewModel: ObservableObject {
 
     func rejectLocalExecution(actionID: String) {
         guard let card = localConsentCard(actionID),
-              let actionUUID = UUID(uuidString: card.actionID),
-              let capabilitiesObject = try? JSONSerialization.jsonObject(
-                  with: card.capabilitiesJSON
-              ),
-              let capabilities = try? ExecutionCapabilities(
-                  json: ExecutorJSON(any: capabilitiesObject)
-              ) else { return }
+              let actionUUID = UUID(uuidString: card.actionID) else { return }
         updateLocalConsent(actionID) {
             LocalConsentCardReducer().reduce($0, event: .reject)
         }
         Task {
-            try? await deviceConnection.decideLocalAction(
+            try? await daemonConnection.rejectLocalAction(
                 actionID: actionUUID,
                 actionHash: card.actionHash,
                 parametersHash: card.parametersHash,
-                capabilities: capabilities,
-                workspaceURL: nil,
                 workspaceBookmarkID: card.workspaceBookmarkID,
-                highRiskShell: card.actionType == "shell.execute",
-                expiresAt: card.expiresAt,
-                approved: false
+                expiresAt: card.expiresAtValue
+                    ?? ISO8601DateFormatter().string(from: card.expiresAt)
             )
+        }
+    }
+
+    private func processLocalExecutionRequest(_ json: [String: Any]) {
+        guard let installationID else { return }
+        Task {
+            do {
+                guard let response = try await executionRequests.handle(
+                    event: json,
+                    installationID: installationID
+                ) else { return }
+                try await daemonConnection.send(type: "execution_result", payload: response)
+            } catch {
+                // Malformed requests have no trustworthy correlation IDs and
+                // therefore cannot safely receive a terminal response.
+            }
         }
     }
 
@@ -1764,7 +1487,6 @@ class NotchViewModel: ObservableObject {
             ))
         }
         persistTask(at: idx)
-        loadBillingStatus()
     }
 
     func approveDraftAction(_ actionId: String) {
@@ -1778,23 +1500,17 @@ class NotchViewModel: ObservableObject {
     }
 
     private func performDraftDecision(_ actionId: String, path: String) {
-        guard let auth = authManager else { return }
         Task {
-            await auth.ensureValidToken()
-            guard let token = auth.accessToken else {
-                await MainActor.run { self.updateDraftActionStatus(actionId, status: "failed") }
-                return
-            }
-            var request = URLRequest(url: URL(string: "\(APIConfig.baseURL)/api/actions/\(actionId)/\(path)")!)
-            request.httpMethod = "POST"
-            request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            let result = try? await URLSession.shared.data(for: request)
-            let status = (result?.1 as? HTTPURLResponse)?.statusCode ?? 0
+            let succeeded = (try? await daemonConnection.request(
+                "/v1/actions/\(actionId)/\(path)",
+                method: "POST",
+                json: [:]
+            )) != nil
             await MainActor.run {
                 if path == "approve" {
-                    self.updateDraftActionStatus(actionId, status: (200...299).contains(status) ? "completed" : "failed")
+                    self.updateDraftActionStatus(actionId, status: succeeded ? "completed" : "failed")
                 } else {
-                    self.updateDraftActionStatus(actionId, status: (200...299).contains(status) ? "rejected" : "pending")
+                    self.updateDraftActionStatus(actionId, status: succeeded ? "rejected" : "pending")
                 }
             }
         }
@@ -1850,6 +1566,13 @@ class NotchViewModel: ObservableObject {
 
         let appType = request.appType
 
+        Task {
+            try? await daemonConnection.send(
+                type: "connection_response",
+                payload: ["request_id": requestId, "approved": true]
+            )
+        }
+
         // Start the OAuth connection flow
         connectApp(appType)
 
@@ -1883,7 +1606,12 @@ class NotchViewModel: ObservableObject {
         pendingConnectionRequests[requestId] = request
 
         updateConnectionRequestMessage(requestId, status: .denied)
-
+        Task {
+            try? await daemonConnection.send(
+                type: "connection_response",
+                payload: ["request_id": requestId, "approved": false]
+            )
+        }
     }
 
     private func updateConnectionRequestMessage(_ requestId: String, status: ConnectionRequestStatus) {
@@ -2128,6 +1856,20 @@ class NotchViewModel: ObservableObject {
             isPeeking = true
         }
 
+        if settings.systemNotificationsEnabled, Bundle.main.bundleIdentifier != nil {
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = String(Self.cleanNotifBody(body).prefix(500))
+            content.sound = .default
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(
+                    identifier: UUID().uuidString,
+                    content: content,
+                    trigger: nil
+                )
+            )
+        }
+
         // Auto-dismiss after 4 seconds unless hovering
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
             guard let self, !self.peekHovering else { return }
@@ -2248,6 +1990,15 @@ class NotchViewModel: ObservableObject {
     func sendChat(message: String, sessionId: String? = nil) {
         let sid = sessionId ?? UUID().uuidString
         let isFollowUp = sessionId != nil
+        let pinnedProvider: String
+        let pinnedModel: String
+        if let existing = tasks.first(where: { $0.id == sid }) {
+            pinnedProvider = existing.provider ?? activeProviderType
+            pinnedModel = existing.modelId ?? selectedModelIdForRequest()
+        } else {
+            pinnedProvider = activeProviderType
+            pinnedModel = selectedModelIdForRequest()
+        }
 
         if isFollowUp {
             // Follow-up: add user message to existing task
@@ -2261,6 +2012,8 @@ class NotchViewModel: ObservableObject {
                     tasks[idx].streamingText = ""
                     tasks[idx].result = nil
                     tasks[idx].error = nil
+                    tasks[idx].provider = pinnedProvider
+                    tasks[idx].modelId = pinnedModel
                     // Promote to active if it was from history
                     tasks[idx].isFromHistory = false
                 }
@@ -2283,7 +2036,9 @@ class NotchViewModel: ObservableObject {
                         toolName: nil, draftCard: nil, timestamp: Date()
                     )
                 ],
-                threadId: sid
+                threadId: sid,
+                provider: pinnedProvider,
+                modelId: pinnedModel
             )
             withAnimation(.snappy(duration: 0.3)) {
                 tasks.insert(task, at: 0)
@@ -2295,72 +2050,40 @@ class NotchViewModel: ObservableObject {
             persistTask(task)
         }
 
-        // POST to backend (refresh token first if needed)
-        let auth = authManager
-        let requestUserID = auth?.session?.userId
         let historyForRequest = recentHistoryPayload(for: sid, currentMessage: message)
         Task {
-            await auth?.ensureValidToken()
-            guard requestUserID != nil, auth?.session?.userId == requestUserID,
-                  self.activeUserID == requestUserID else { return }
-            guard let url = URL(string: "\(APIConfig.baseURL)/api/chat") else { return }
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-            if let token = auth?.accessToken {
-                request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            }
-            let body: [String: Any] = [
-                "message": message,
-                "session_id": sid,
-                "conversation_id": sid,
-                "model_id": selectedModelIdForRequest(),
-                "history": historyForRequest,
-            ]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                guard let self = self,
-                      self.activeUserID == requestUserID,
-                      let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
-                if let error = error {
+            do {
+                let data = try await daemonConnection.request(
+                    "/v1/chat",
+                    method: "POST",
+                    json: [
+                        "message": message,
+                        "session_id": sid,
+                        "conversation_id": sid,
+                        "provider": pinnedProvider,
+                        "model_id": pinnedModel,
+                        "history": historyForRequest,
+                    ]
+                )
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                await MainActor.run {
+                    guard let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
+                    if let response = json, let threadId = response["thread_id"] as? String {
+                        self.tasks[idx].threadId = threadId
+                        self.persistTask(at: idx)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    guard let idx = self.tasks.firstIndex(where: { $0.id == sid }) else { return }
                     withAnimation(.snappy(duration: 0.3)) {
                         self.tasks[idx].status = .failed
                         self.tasks[idx].error = error.localizedDescription
                     }
                     self.persistTask(at: idx)
-                    return
-                }
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                let json = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-                // A rejected request (auth, entitlement, validation, server error)
-                // must fail the task — otherwise it waits forever for WebSocket
-                // events that a rejected request never produces.
-                guard (200...299).contains(status) else {
-                    let serverMessage = json?["error"] as? String
-                    withAnimation(.snappy(duration: 0.3)) {
-                        self.tasks[idx].status = .failed
-                        self.tasks[idx].error = serverMessage ?? "Request failed (\(status))"
-                    }
-                    self.persistTask(at: idx)
-                    if status == 401 { self.authManager?.logout() }
-                    if status == 402 {
-                        self.loadBillingStatus()
-                        self.requestedProviderType = self.activeProviderType
-                        self.viewState = .settings
-                    }
-                    return
-                }
-                // Capture thread_id from response for follow-ups
-                if let threadId = json?["thread_id"] as? String {
-                    self.tasks[idx].threadId = threadId
-                    self.persistTask(at: idx)
                 }
             }
-            // Success streaming is handled by WebSocket events updating the task
-        }.resume()
-        } // Task
+        }
     }
 
     private func recentHistoryPayload(for sessionId: String, currentMessage: String) -> [[String: String]] {

@@ -1,0 +1,66 @@
+#!/bin/bash
+
+set -euo pipefail
+
+STATE_DIR="${PERCH_STATE_DIR:-$HOME/Library/Application Support/Perch}"
+SOURCE_DIR="$STATE_DIR/install/source"
+LABEL="engineering.super.Perch.daemon"
+
+usage() {
+  cat <<'EOF'
+Usage: perch <command>
+
+Commands:
+  update       Install the newest verified stable source release
+  status       Show the installed version and daemon state
+  doctor       Verify app, runtime, LaunchAgent, and local health
+  uninstall    Remove Perch while preserving user data
+  help         Show this help
+EOF
+}
+
+case "${1:-help}" in
+  update)
+    shift
+    [[ -x "$SOURCE_DIR/update.sh" ]] ||
+      { printf 'ERROR: installed updater is missing; clone the repository and run ./install.sh to repair.\n' >&2; exit 1; }
+    exec "$SOURCE_DIR/update.sh" "$@"
+    ;;
+  uninstall)
+    shift
+    [[ -x "$SOURCE_DIR/uninstall.sh" ]] ||
+      { printf 'ERROR: installed uninstaller is missing; use the repository uninstall.sh.\n' >&2; exit 1; }
+    exec "$SOURCE_DIR/uninstall.sh" "$@"
+    ;;
+  status)
+    if [[ -f "$STATE_DIR/install/version" ]]; then
+      printf 'Version: %s\n' "$(tr -d '\r\n' <"$STATE_DIR/install/version")"
+    else
+      printf 'Version: unknown\n'
+    fi
+    if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
+      printf 'Daemon: loaded\n'
+    else
+      printf 'Daemon: not loaded\n'
+    fi
+    ;;
+  doctor)
+    APP="${PERCH_APP_PATH:-$HOME/Applications/Perch.app}"
+    [[ -d "$APP" ]] || { printf 'ERROR: %s is missing.\n' "$APP" >&2; exit 1; }
+    [[ -x "$APP/Contents/Resources/DaemonRuntime/bin/node" ]] ||
+      { printf 'ERROR: bundled Node runtime is missing.\n' >&2; exit 1; }
+    [[ -f "$HOME/Library/LaunchAgents/$LABEL.plist" ]] ||
+      { printf 'ERROR: per-user LaunchAgent is missing.\n' >&2; exit 1; }
+    codesign --verify --deep --strict "$APP"
+    python3 "$SOURCE_DIR/scripts/verify-local-health.py" "$STATE_DIR/runtime/daemon.json"
+    printf 'Perch installation is healthy.\n'
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    printf 'ERROR: unknown command: %s\n' "$1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

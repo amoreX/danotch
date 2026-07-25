@@ -15,9 +15,9 @@ export class OpenAIProvider implements LLMProvider {
   readonly providerName: string;
   readonly modelId: string;
 
-  constructor(apiKey: string, modelId: string, baseURL?: string) {
+  constructor(apiKey: string, modelId: string, baseURL?: string, providerName?: string) {
     this.client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
-    this.providerName = baseURL ? 'openrouter' : 'openai';
+    this.providerName = providerName ?? (baseURL ? 'openrouter' : 'openai');
     this.modelId = modelId;
   }
 

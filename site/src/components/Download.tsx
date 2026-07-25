@@ -1,77 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Button from './Button';
 import { SITE } from './site-config';
 
-type DownloadArtifact = {
-  url: string;
-  version?: string;
-};
+const INSTALL_COMMAND = `git clone ${SITE.repositoryUrl}
+cd perch
+git checkout vX.Y.Z
+git verify-tag vX.Y.Z
+./install.sh`;
 
-function validHTTPSURL(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' && url.username === '' && url.password === ''
-      ? url.toString()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function useDownloadArtifact() {
-  const fallbackURL = validHTTPSURL(SITE.downloadUrl);
-  const [artifact, setArtifact] = useState<DownloadArtifact | null>(
-    fallbackURL ? { url: fallbackURL } : null,
-  );
-  const [loading, setLoading] = useState(Boolean(SITE.downloadManifestUrl));
-
-  useEffect(() => {
-    const manifestURL = validHTTPSURL(SITE.downloadManifestUrl);
-    if (!manifestURL) {
-      return;
-    }
-
-    const controller = new AbortController();
-    let active = true;
-    void fetch(manifestURL, {
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('release manifest unavailable');
-        const data = await response.json() as Record<string, unknown>;
-        const url = validHTTPSURL(data.url);
-        if (
-          !url
-          || typeof data.version !== 'string'
-          || !/^\d+\.\d+\.\d+$/.test(data.version)
-          || typeof data.build !== 'number'
-          || !Number.isSafeInteger(data.build)
-          || data.build <= 0
-          || typeof data.sha256 !== 'string'
-          || !/^[0-9a-f]{64}$/.test(data.sha256)
-        ) {
-          throw new Error('invalid release manifest');
-        }
-        if (active) setArtifact({ url, version: data.version });
-      })
-      .catch(() => {
-        // Keep the last known static fallback, if one was configured.
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [fallbackURL]);
-
-  return { artifact, loading };
-}
+const ASSISTANT_PROMPT = `Install Perch from its canonical source repository at ${SITE.repositoryUrl}. Inspect docs/source-install.md and the checked-in install.sh first, choose the newest stable signed vX.Y.Z tag, verify it against docs/maintainer-keys.md, and run the repository's reviewed ./install.sh. Do not invent an install procedure and do not use curl | bash.`;
 
 function AppleIcon() {
   return (
@@ -81,110 +18,67 @@ function AppleIcon() {
   );
 }
 
-function DownloadCTA({
-  artifact,
-  loading,
-}: {
-  artifact: DownloadArtifact | null;
-  loading: boolean;
-}) {
-  if (!artifact) {
-    return (
-      <div
-        role="status"
-        aria-label={loading ? 'Checking latest download' : 'Download coming soon'}
-        className="inline-flex items-center gap-2 rounded-full border border-white/20 px-6 py-3"
-        style={{
-          fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
-          fontSize: 16,
-          fontWeight: 500,
-          letterSpacing: '-0.02em',
-          color: 'rgba(255,255,255,0.45)',
-        }}
-      >
-        <AppleIcon />
-        {loading ? 'Checking latest…' : 'Coming soon'}
-      </div>
-    );
-  }
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    await navigator.clipboard.writeText(value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
 
   return (
-    <Button href={artifact.url} size="xl" external className="w-full sm:w-auto">
-      <span className="[&_svg]:size-4">
-        <AppleIcon />
-      </span>
-      Download for Mac
-    </Button>
+    <button
+      type="button"
+      onClick={() => void copy()}
+      className="rounded-full border border-white/20 px-5 py-3 font-mono text-sm text-white transition-colors hover:bg-white/10"
+    >
+      {copied ? 'Copied' : label}
+    </button>
   );
 }
 
 export default function Download() {
-  const { artifact, loading } = useDownloadArtifact();
-
   return (
-    <section
-      id="download"
-      className="relative overflow-hidden border-t border-zinc-100 bg-[#111111]"
-    >
+    <section id="download" className="relative overflow-hidden border-t border-zinc-100 bg-[#111111]">
       <div
         aria-hidden="true"
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: 'url(/hero-image.jpg)' }}
       />
-      <div
-        aria-hidden="true"
-        className="absolute inset-0"
-        style={{ background: 'rgba(0, 0, 0, 0.24)' }}
-      />
+      <div aria-hidden="true" className="absolute inset-0 bg-black/65" />
 
-      <div className="relative mx-auto max-w-[1280px] px-5 py-20 sm:px-8 md:py-40">
-        <div className="flex flex-col items-start gap-8">
-          <h2
-            className="m-0 leading-tight"
-            style={{
-              fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
-              fontWeight: 400,
-              fontSize: 'clamp(34px, 8vw, 72px)',
-              color: '#ffffff',
-              letterSpacing: '0.01em',
-              textWrap: 'balance',
-            } as React.CSSProperties}
-          >
-            Make your notch useful.
+      <div className="relative mx-auto max-w-[1280px] px-5 py-20 sm:px-8 md:py-32">
+        <div className="max-w-3xl">
+          <p className="mb-4 font-mono text-xs uppercase tracking-[0.18em] text-white/55">
+            Signed source install
+          </p>
+          <h2 className="m-0 font-mono text-[clamp(34px,8vw,72px)] font-normal leading-tight tracking-[0.01em] text-white">
+            Build Perch on your Mac.
           </h2>
+          <p className="mt-6 max-w-2xl text-base leading-7 text-white/65">
+            Clone the source, inspect the installer, and verify a signed stable tag. Perch supports
+            macOS 26+ on Apple Silicon and bundles its checksum-pinned Node 24 runtime.
+          </p>
 
-          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:items-center">
-            <DownloadCTA artifact={artifact} loading={loading} />
+          <pre className="mt-8 overflow-x-auto rounded-2xl border border-white/15 bg-black/55 p-5 text-sm leading-7 text-white/80">
+            <code>{INSTALL_COMMAND}</code>
+          </pre>
 
-            <a
-              href={SITE.supportEmail ? `mailto:${SITE.supportEmail}` : '#contact'}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-full text-white/55 no-underline hover:bg-white/10 hover:text-white sm:w-auto"
-              style={{
-                fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
-                fontSize: 16,
-                fontWeight: 500,
-                letterSpacing: '-0.02em',
-                height: 48,
-                padding: '0 28px',
-              }}
-            >
-              Get in touch
-            </a>
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+            <Button href={SITE.repositoryUrl} size="xl" external className="w-full sm:w-auto">
+              <AppleIcon />
+              View source
+            </Button>
+            <CopyButton value={INSTALL_COMMAND} label="Copy install commands" />
+            <CopyButton value={ASSISTANT_PROMPT} label="Copy assistant prompt" />
           </div>
 
-          {artifact && (
-            <p
-              className="m-0 text-white/35"
-              style={{
-                fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
-                fontSize: 12,
-                letterSpacing: '-0.01em',
-              }}
-            >
-              macOS 14+ · Apple silicon · Notarized by Apple
-              {artifact.version ? ` · Version ${artifact.version}` : ''}
-            </p>
-          )}
+          <p className="mt-7 text-xs leading-6 text-white/45">
+            No curl-to-shell path. Updates use verified annotated tags, staged builds, SQLite
+            backups, and automatic rollback. Funding is not configured; Perch has no in-app
+            donation prompt and donations never unlock features.
+          </p>
         </div>
       </div>
     </section>

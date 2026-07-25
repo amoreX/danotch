@@ -50,6 +50,7 @@ struct LocalExecutionConsentCard: Codable, Equatable {
     let sensitiveDisclosure: Bool
     let resultUpload: Bool
     let expiresAt: Date
+    var expiresAtValue: String? = nil
     var selectedWorkspacePath: String?
     var confirmations: Set<LocalConsentConfirmation>
     var state: LocalConsentCardState
@@ -168,6 +169,8 @@ struct SubagentTask: Identifiable {
     var draftCard: DraftCard?
     var chatHistory: [ChatMessage]
     var threadId: String?
+    var provider: String?
+    var modelId: String?
     var isFromHistory: Bool = false
 
     var isActive: Bool {
@@ -373,17 +376,30 @@ enum NotchViewState: Equatable {
 
 struct ScheduledTask: Identifiable {
     let id: String
-    let name: String
-    let prompt: String
+    var name: String
+    var prompt: String
     let taskType: String
-    let scheduleHuman: String
+    var scheduleHuman: String
+    var cron: String?
+    var intervalMs: Int?
     var enabled: Bool
     let lastRunAt: String?
     let nextRunAt: String?
     let runCount: Int
     let lastStatus: String?
     let lastResultSummary: String?
-    let notifyUser: Bool
+    var notifyUser: Bool
+    var provider: String
+    var modelId: String
+}
+
+struct ScheduledTaskDraft: Equatable {
+    var name = ""
+    var prompt = ""
+    var cron = "0 9 * * *"
+    var notifyUser = true
+    var provider = "anthropic"
+    var modelId = ProviderConfig.defaultModels["anthropic"] ?? ""
 }
 
 // MARK: - Connection Requests
@@ -412,12 +428,15 @@ struct ProviderConfig: Identifiable {
     var modelId: String
     var isActive: Bool
     var verifiedAt: String?
+    var baseURL: String? = nil
 
     var displayName: String {
         switch provider {
         case "anthropic": return "Anthropic"
         case "openai": return "OpenAI"
         case "openrouter": return "OpenRouter"
+        case "deepseek": return "DeepSeek"
+        case "custom": return "OpenAI Compatible"
         default: return provider.capitalized
         }
     }
@@ -427,6 +446,8 @@ struct ProviderConfig: Identifiable {
         case "anthropic": return "brain"
         case "openai": return "sparkles"
         case "openrouter": return "arrow.triangle.branch"
+        case "deepseek": return "wave.3.right"
+        case "custom": return "network"
         default: return "cpu"
         }
     }
@@ -437,6 +458,8 @@ struct ProviderConfig: Identifiable {
         "anthropic": "claude-sonnet-4-6",
         "openai": "gpt-5",
         "openrouter": "anthropic/claude-sonnet-4-6",
+        "deepseek": "deepseek-chat",
+        "custom": "",
     ]
 
     /// Fallback choices only. The chat selector fetches live provider models when possible.
@@ -461,7 +484,46 @@ struct ProviderConfig: Identifiable {
             ("anthropic/claude-haiku-4-5",  "Haiku 4.5"),
             ("openai/gpt-5",                "GPT-5"),
         ],
+        "deepseek": [
+            ("deepseek-chat", "DeepSeek Chat"),
+            ("deepseek-reasoner", "DeepSeek Reasoner"),
+        ],
+        "custom": [],
     ]
+}
+
+struct ComposioIntegrationMetadata: Identifiable, Equatable {
+    let appType: String
+    let displayName: String
+    var authConfigID: String?
+
+    var id: String { appType }
+}
+
+struct ComposioConfigState: Equatable {
+    var configured: Bool
+    var connectedApps: [String]
+    var localUserID: String? = nil
+    var integrations: [ComposioIntegrationMetadata] = []
+
+    static func parse(_ json: [String: Any]) -> ComposioConfigState {
+        let integrations = (json["integrations"] as? [[String: Any]] ?? []).compactMap {
+            value -> ComposioIntegrationMetadata? in
+            guard let appType = value["app_type"] as? String,
+                  let displayName = value["display_name"] as? String else { return nil }
+            return ComposioIntegrationMetadata(
+                appType: appType,
+                displayName: displayName,
+                authConfigID: value["auth_config_id"] as? String
+            )
+        }
+        return ComposioConfigState(
+            configured: json["configured"] as? Bool ?? false,
+            connectedApps: json["connected_apps"] as? [String] ?? [],
+            localUserID: json["local_user_id"] as? String,
+            integrations: integrations
+        )
+    }
 }
 
 struct ProviderModelOption: Identifiable, Equatable {

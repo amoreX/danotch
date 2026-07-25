@@ -5,7 +5,7 @@ import Button from './Button';
 const NAV_SECTIONS = [
   { id: 'home', label: 'Home', href: '#home' },
   { id: 'features', label: 'Features', href: '#features' },
-  { id: 'download', label: 'Download', href: '#download' },
+  { id: 'download', label: 'Install', href: '#download' },
   { id: 'contact', label: 'Contact', href: '#contact' },
 ];
 
@@ -252,12 +252,12 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
             Features
           </a>
           <a href="#download" className="rounded-full px-3 py-2 text-xs text-white/65 no-underline">
-            Download
+            Install
           </a>
         </nav>
         <a
           href="#download"
-          aria-label="Download Perch"
+          aria-label="Install Perch from source"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#7b6af0] text-white no-underline"
         >
           <AppleIcon />
@@ -375,7 +375,7 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
         <NotchRailShoulder side="right" />
         <Button href="#download" size="lg">
           <AppleIcon />
-          Download
+          Install
         </Button>
         <a
           href="#contact"

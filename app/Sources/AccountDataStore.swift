@@ -2,65 +2,7 @@ import Foundation
 
 enum AccountDataError: Error, Equatable {
     case invalidUserID
-    case accountMismatch
     case verificationFailed
-}
-
-struct DeviceAccountState: Codable, Equatable {
-    var deviceID: String?
-    var deviceKeyAlgorithm: String?
-    var cursor: Int
-    var processedTransitionIDs: [String]
-    var pendingResults: [PendingDeviceResult]
-
-    static let empty = DeviceAccountState(
-        deviceID: nil,
-        deviceKeyAlgorithm: nil,
-        cursor: 0,
-        processedTransitionIDs: [],
-        pendingResults: []
-    )
-
-    init(
-        deviceID: String?,
-        deviceKeyAlgorithm: String? = nil,
-        cursor: Int,
-        processedTransitionIDs: [String],
-        pendingResults: [PendingDeviceResult] = []
-    ) {
-        self.deviceID = deviceID
-        self.deviceKeyAlgorithm = deviceKeyAlgorithm
-        self.cursor = cursor
-        self.processedTransitionIDs = processedTransitionIDs
-        self.pendingResults = pendingResults
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case deviceID, deviceKeyAlgorithm, cursor, processedTransitionIDs, pendingResults
-    }
-
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        deviceID = try values.decodeIfPresent(String.self, forKey: .deviceID)
-        deviceKeyAlgorithm = try values.decodeIfPresent(String.self, forKey: .deviceKeyAlgorithm)
-        cursor = try values.decodeIfPresent(Int.self, forKey: .cursor) ?? 0
-        processedTransitionIDs = try values.decodeIfPresent(
-            [String].self,
-            forKey: .processedTransitionIDs
-        ) ?? []
-        pendingResults = try values.decodeIfPresent(
-            [PendingDeviceResult].self,
-            forKey: .pendingResults
-        ) ?? []
-    }
-}
-
-struct PendingDeviceResult: Codable, Equatable {
-    let resultID: String
-    let actionID: String
-    let grantID: String
-    let status: String
-    let resultJSON: Data
 }
 
 final class AccountDataStore {
@@ -78,79 +20,51 @@ final class AccountDataStore {
         )[0].appendingPathComponent("Perch", isDirectory: true)
     }
 
-    func accountDirectory(for userID: String) throws -> URL {
-        guard isValidUserID(userID) else { throw AccountDataError.invalidUserID }
+    func installationDirectory(for installationID: String) throws -> URL {
+        guard isValidUserID(installationID) else { throw AccountDataError.invalidUserID }
         let directory = rootURL
-            .appendingPathComponent("Accounts", isDirectory: true)
-            .appendingPathComponent(userID, isDirectory: true)
+            .appendingPathComponent("Installations", isDirectory: true)
+            .appendingPathComponent(installationID.lowercased(), isDirectory: true)
         try secureDirectory(directory)
         return directory
     }
 
-    func conversationsURL(for userID: String) throws -> URL {
-        try accountDirectory(for: userID).appendingPathComponent("conversations.json")
+    func localConversationsURL(for installationID: String) throws -> URL {
+        try installationDirectory(for: installationID)
+            .appendingPathComponent("conversations.json")
     }
 
-    func stateURL(for userID: String) throws -> URL {
-        try accountDirectory(for: userID).appendingPathComponent("device-state.json")
-    }
-
-    func loadDeviceState(for userID: String) throws -> DeviceAccountState {
-        let url = try stateURL(for: userID)
-        guard fileManager.fileExists(atPath: url.path) else { return .empty }
-        return try JSONDecoder().decode(DeviceAccountState.self, from: Data(contentsOf: url))
-    }
-
-    func saveDeviceState(_ state: DeviceAccountState, for userID: String) throws {
-        try writeSecurely(JSONEncoder().encode(state), to: stateURL(for: userID))
-        guard try loadDeviceState(for: userID) == state else {
-            throw AccountDataError.verificationFailed
-        }
-    }
-
-    /// Imports legacy plaintext only after a freshly authenticated session
-    /// proves ownership. Destination verification precedes deletion, making
-    /// interruption safe and retries idempotent.
-    func migrateLegacyData(
-        activeSession: AuthSession,
-        legacyDirectory: URL? = nil,
-        sessionStore: SecureSessionStore
+    /// Imports the pre-daemon conversation file into the installation
+    /// partition. The legacy file is intentionally retained: merging by
+    /// conversation id makes retries idempotent and avoids destructive
+    /// migration before the daemon host owns backup/recovery.
+    func importLegacyConversations(
+        installationID: String,
+        legacyDirectory: URL? = nil
     ) throws {
         let legacy = legacyDirectory ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent(".danotch", isDirectory: true)
-        let authURL = legacy.appendingPathComponent("auth.json")
-        guard fileManager.fileExists(atPath: authURL.path) else { return }
-        let legacySession = try JSONDecoder().decode(AuthSession.self, from: Data(contentsOf: authURL))
-        guard legacySession.userId == activeSession.userId else {
-            throw AccountDataError.accountMismatch
+        let source = legacy.appendingPathComponent("conversations.json")
+        guard fileManager.fileExists(atPath: source.path) else { return }
+        let destination = try localConversationsURL(for: installationID)
+        let sourceData = try Data(contentsOf: source)
+        let merged: Data
+        if fileManager.fileExists(atPath: destination.path) {
+            merged = try mergeConversationFiles(
+                destination: Data(contentsOf: destination),
+                legacy: sourceData
+            )
+        } else {
+            // Decode and re-encode to reject malformed legacy files and apply
+            // the current schema before considering the import successful.
+            merged = try mergeConversationFiles(
+                destination: emptyConversationFile(),
+                legacy: sourceData
+            )
         }
-        guard try sessionStore.load().userId == activeSession.userId else {
-            throw AccountDataError.accountMismatch
-        }
-
-        let legacyConversations = legacy.appendingPathComponent("conversations.json")
-        let destination = try conversationsURL(for: activeSession.userId)
-        if fileManager.fileExists(atPath: legacyConversations.path) {
-            let sourceData = try Data(contentsOf: legacyConversations)
-            if fileManager.fileExists(atPath: destination.path) {
-                let merged = try mergeConversationFiles(
-                    destination: Data(contentsOf: destination),
-                    legacy: sourceData
-                )
-                try writeSecurely(merged, to: destination)
-            } else {
-                try writeSecurely(sourceData, to: destination)
-            }
-            guard fileManager.fileExists(atPath: destination.path),
-                  !(try Data(contentsOf: destination)).isEmpty else {
-                throw AccountDataError.verificationFailed
-            }
-            try fileManager.removeItem(at: legacyConversations)
-        }
-
-        // Tokens are already verified in the Data Protection Keychain.
-        try fileManager.removeItem(at: authURL)
+        try writeSecurely(merged, to: destination)
     }
+
 
     func writeSecurely(_ data: Data, to url: URL) throws {
         try secureDirectory(url.deletingLastPathComponent())
@@ -197,5 +111,14 @@ final class AccountDataStore {
         return try encoder.encode(GenericStore(
             conversations: byID.values.sorted { $0.updatedAt > $1.updatedAt }
         ))
+    }
+
+    private func emptyConversationFile() throws -> Data {
+        struct GenericStore: Codable {
+            var conversations: [LocalConversationRecord]
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return try encoder.encode(GenericStore(conversations: []))
     }
 }

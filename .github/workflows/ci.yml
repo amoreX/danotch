@@ -13,6 +13,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  distribution-scripts:
+    name: Distribution — source install contract
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install ShellCheck
+        run: brew install shellcheck
+      - name: Check shell and Python scripts
+        run: |
+          bash -n install.sh update.sh uninstall.sh bin/perch scripts/lib/perch-common.sh
+          shellcheck install.sh update.sh uninstall.sh bin/perch scripts/lib/perch-common.sh
+          python3 -m py_compile scripts/verify-local-health.py
+      - name: Verify pinned Node runtime manifest
+        run: |
+          set -euo pipefail
+          source release/node-runtime.env
+          archive="node-v${NODE_VERSION}-${NODE_PLATFORM}.${NODE_ARCHIVE_FORMAT}"
+          expected="$(awk -v name="$archive" '$2 == name {print $1}' release/node-runtime.sha256)"
+          test "${#expected}" -eq 64
+          curl --fail --show-error --location --proto '=https' --tlsv1.2 \
+            "${NODE_BASE_URL}/v${NODE_VERSION}/SHASUMS256.txt" \
+            --output "$RUNNER_TEMP/SHASUMS256.txt"
+          grep -F "${expected}  ${archive}" "$RUNNER_TEMP/SHASUMS256.txt"
+      - name: Require local daemon and app compatibility resources
+        run: |
+          test -f backend/src/index.ts || {
+            echo "ERROR: backend/src/index.ts is required for source distribution."; exit 1;
+          }
+          test -f app/scripts/daemon-entry.mjs || {
+            echo "ERROR: app/scripts/daemon-entry.mjs is required for source distribution."; exit 1;
+          }
+          test -f app/Resources/engineering.super.Perch.daemon.plist.template
+          plutil -lint app/Resources/engineering.super.Perch.daemon.plist.template
+
   backend-lint:
     name: Backend — type-check
     runs-on: ubuntu-latest
@@ -43,10 +77,13 @@ jobs:
         run: npm ci
       - name: Unit tests
         working-directory: backend
-        run: npm test
+        run: npm test && npm run test:db
       - name: Runtime-policy gate (no child-process permission)
         working-directory: backend
         run: npm run test:runtime-policy
+      - name: Dependency audit
+        working-directory: backend
+        run: npm audit --audit-level=low
 
   site-build:
     name: Site — lint + build
@@ -66,6 +103,9 @@ jobs:
       - name: Build
         working-directory: site
         run: npm run build
+      - name: Dependency audit
+        working-directory: site
+        run: npm audit --audit-level=low
       - name: Upload built site
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -117,10 +157,7 @@ jobs:
         working-directory: app
         run: swift build
       - name: Direct-distribution static verification
-        run: |
-          python3 app/scripts/verify_release_static.py
-          npm ci --prefix app/release-tools
-          npm test --prefix app/release-tools
+        run: python3 app/scripts/verify_release_static.py
       - name: Generate Xcode project and resolve release dependencies
         working-directory: app
         run: |
@@ -130,58 +167,3 @@ jobs:
           xcodebuild -project Perch.xcodeproj -scheme Perch -configuration Debug \
             -derivedDataPath "$RUNNER_TEMP/perch-ci" \
             CODE_SIGNING_ALLOWED=NO build
-
-  migrations-verify:
-    name: Database — migration verify + RLS
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-      - working-directory: backend
-        run: npm ci
-      - name: Apply migrations (idempotency check — run twice)
-        working-directory: backend
-        run: npm run db:migrate && npm run db:migrate
-      - name: Verify migrations read-only
-        working-directory: backend
-        run: npm run db:verify
-      - name: DB integration tests (RLS + isolation)
-        working-directory: backend
-        run: npm run test:db
-      - name: Schema snapshot drift
-        working-directory: backend
-        run: npm run db:snapshot && git diff --exit-code -- schema.sql
-
-  protocol-schema:
-    name: Protocol — schema compatibility
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-      - working-directory: backend
-        run: npm ci
-      - name: Protocol schema tests
-        working-directory: backend
-        run: node --import tsx --test src/protocol/schemas.test.ts

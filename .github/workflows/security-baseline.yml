@@ -56,13 +56,13 @@ jobs:
       - working-directory: backend
         run: npm ci
       - working-directory: backend
-        run: npm test
+        run: npm test && npm run test:db
       - working-directory: backend
         run: npm run test:runtime-policy
       - working-directory: backend
         run: npm run build
       - working-directory: backend
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=low
 
   site:
     runs-on: ubuntu-latest
@@ -80,7 +80,7 @@ jobs:
       - working-directory: site
         run: npm run build
       - working-directory: site
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=low
 
   swift:
     runs-on: macos-26
@@ -96,39 +96,3 @@ jobs:
         run: swift test
       - working-directory: app
         run: swift build
-
-  migrations:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-      - working-directory: backend
-        run: npm ci
-      - working-directory: backend
-        run: npm run db:migrate
-      - working-directory: backend
-        run: npm run db:migrate
-      - working-directory: backend
-        run: npm run db:verify
-      - working-directory: backend
-        run: npm run test:db
-      - working-directory: backend
-        run: npm run db:snapshot && git diff --exit-code -- schema.sql

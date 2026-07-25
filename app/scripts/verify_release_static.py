@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail CI when direct-distribution release invariants drift."""
+"""Fail when local source-distribution invariants drift."""
 
 import pathlib
 
@@ -12,65 +12,91 @@ def require(path: str, snippets: list[str]) -> None:
     if missing:
         raise SystemExit(f"{path} is missing release invariants: {missing}")
 
+def forbid(path: str, snippets: list[str]) -> None:
+    text = (ROOT / path).read_text()
+    present = [snippet for snippet in snippets if snippet in text]
+    if present:
+        raise SystemExit(f"{path} contains forbidden hosted-distribution values: {present}")
 
 require("app/project.yml", [
-    "exactVersion: 2.9.4",
-    "product: Sparkle",
-    "SUFeedURL: $(PERCH_SPARKLE_FEED_URL)",
-    "SUPublicEDKey: $(PERCH_SPARKLE_PUBLIC_KEY)",
-    "SURequireSignedFeed: true",
-    "SUVerifyUpdateBeforeExtraction: true",
+    'macOS: "26.0"',
+    "ARCHS: arm64",
+    "PerchDaemonHost:",
+    "- sdk: Security.framework",
+    "Contents/Resources/DaemonRuntime",
+    "Contents/Resources/Daemon/entry.mjs",
     "MARKETING_VERSION: $(PERCH_MARKETING_VERSION)",
     "CURRENT_PROJECT_VERSION: $(PERCH_BUILD_NUMBER)",
 ])
-require("app/Sources/DanotchApp.swift", [
-    'Button("Check for Updates…")',
-    "updates.checkForUpdates()",
-])
-require("app/Sources/UpdateController.swift", [
-    "SPUStandardUpdaterController",
-    "startingUpdater: configurationError == nil",
-    'url.scheme?.lowercased() == "https"',
-])
-require("app/Sources/Views/NotchShellView.swift", [
-    "viewModel.connectionState.requiresUpdate",
-    'Button("Check for Updates")',
-])
-require(".github/workflows/release-macos.yml", [
-    "ref: ${{ env.RELEASE_TAG }}",
-    "git merge-base --is-ancestor",
-    "Require successful main CI for release commit",
-    "EXECUTOR_ARTIFACT_SIGNING_KEY_PEM_B64",
-    "SPARKLE_ED25519_PRIVATE_KEY",
-    "sparkle_public_key.swift",
-    "generate_appcast",
-    "<sparkle:version>$BUILD_NUMBER</sparkle:version>",
-    "sparkle-signatures:",
-    "sign_update",
-    "XPCServices/Installer.xpc",
-    "--preserve-metadata=entitlements",
-    "Versions/B/Autoupdate",
-    "Versions/B/Updater.app",
-    "Inspect final public endpoints",
-])
-require("app/release-tools/package.json", ['"@vercel/blob": "2.6.1"'])
-require("app/release-tools/blob-put.mjs", [
-    "addRandomSuffix: false",
-    "allowOverwrite:",
-    "cacheControlMaxAge",
-])
-require("app/release-tools/blob-put.test.mjs", [
-    "'x-add-random-suffix'",
-    "'x-allow-overwrite'",
-    "'x-cache-control-max-age'",
-])
-require("site/src/components/site-config.ts", [
-    "VITE_DOWNLOAD_MANIFEST_URL",
-])
-require("site/src/components/Download.tsx", [
-    "downloadManifestUrl",
-    "invalid release manifest",
-    "cache: 'no-store'",
+forbid("app/project.yml", [
+    "Sparkle",
+    "SUFeedURL",
+    "SUPublicEDKey",
+    "PerchAPIBaseURL",
+    "PerchDeviceGatewayURL",
+    "CFBundleURLTypes",
 ])
 
-print("Direct-distribution release invariants verified.")
+require("app/Package.swift", [
+    '.macOS("26.0")',
+    'name: "PerchDaemonHost"',
+    '.linkedFramework("Security")',
+])
+forbid("app/Package.swift", ["Sparkle"])
+
+require("app/DaemonHost/main.swift", [
+    "kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly",
+    "SecRandomCopyBytes",
+    "SecStaticCodeCreateWithPath",
+    "SecStaticCodeCheckValidityWithErrors",
+    "kSecCSCheckAllArchitectures",
+    "kSecCSCheckNestedCode",
+    "kSecCSStrictValidate",
+    "decodedValue.count == 32",
+    "O_NOFOLLOW",
+    "fchmod(descriptor, 0o700)",
+    "umask(0o077)",
+    "runtime discovery",
+    "daemon logs",
+    '"installation.secret"',
+    '"provider.anthropic"',
+    '"provider.openai"',
+    '"provider.openrouter"',
+    '"provider.deepseek"',
+    '"provider.custom_openai"',
+    '"composio"',
+    'process.environment = [:]',
+    'process.arguments = [layout.entrypoint.path]',
+    '"type": "bootstrap"',
+])
+
+require("app/build.sh", [
+    "PERCH_NODE_RUNTIME_DIR",
+    "PERCH_NODE_SHA256",
+    '"$NPM_BINARY" run --prefix "$BACKEND_DIR" build',
+    '"$NPM_BINARY" ci --prefix "$STAGING_DIR" --omit=dev',
+    "release build requires a non-empty executor manifest signature",
+    "codesign --force --options runtime --sign - \"$BUNDLE_DIR/Helpers/PerchDaemonHost\"",
+])
+forbid("app/build.sh", [
+    "notarytool",
+    "Sparkle",
+    "PERCH_SPARKLE",
+    "VERCEL",
+    "BLOB",
+])
+
+require("app/Resources/engineering.super.Perch.daemon.plist.template", [
+    "engineering.super.Perch.daemon",
+    "__PERCH_APP_PATH__/Contents/Helpers/PerchDaemonHost",
+    "__PERCH_LOG_PATH__/daemon.log",
+])
+forbid("app/Resources/Info.plist", [
+    "CFBundleURLTypes",
+    "PerchAPIBaseURL",
+    "PerchDeviceGatewayURL",
+    "SUFeedURL",
+    "SUPublicEDKey",
+])
+
+print("Local source-distribution invariants verified.")

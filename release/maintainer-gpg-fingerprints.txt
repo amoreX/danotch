@@ -1,0 +1,4 @@
+# One uppercase full OpenPGP primary-key fingerprint per line.
+#
+# Release installation intentionally fails closed until maintainers publish
+# and review at least one fingerprint according to docs/maintainer-keys.md.

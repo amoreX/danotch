@@ -10,6 +10,8 @@ struct LocalConversationRecord: Codable, Identifiable {
     var completedAt: Date?
     var toolCallsCount: Int
     var messages: [ChatMessage]
+    var provider: String? = nil
+    var modelId: String? = nil
 }
 
 final class LocalConversationStore {
@@ -29,7 +31,7 @@ final class LocalConversationStore {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let accountDataStore: AccountDataStore
-    private var activeUserID: String?
+    private var activeInstallationID: String?
     private var generation = 0
 
     init(accountDataStore: AccountDataStore = AccountDataStore()) {
@@ -42,9 +44,9 @@ final class LocalConversationStore {
         decoder.dateDecodingStrategy = .iso8601
     }
 
-    func activate(userID: String?) {
+    func activate(installationID: String?) {
         ioQueue.sync {
-            activeUserID = userID
+            activeInstallationID = installationID
             generation += 1
         }
     }
@@ -68,7 +70,7 @@ final class LocalConversationStore {
     func upsert(_ record: LocalConversationRecord) {
         let scheduledGeneration = ioQueue.sync { generation }
         ioQueue.async { [self] in
-            guard scheduledGeneration == generation, activeUserID != nil else { return }
+            guard scheduledGeneration == generation, activeInstallationID != nil else { return }
             var records = loadAll()
             if let idx = records.firstIndex(where: { $0.id == record.id }) {
                 records[idx] = record
@@ -81,7 +83,7 @@ final class LocalConversationStore {
 
     func markInProgressInterrupted() {
         ioQueue.sync { [self] in
-            guard activeUserID != nil else { return }
+            guard activeInstallationID != nil else { return }
             var records = loadAll()
             var changed = false
             let now = Date()
@@ -119,8 +121,8 @@ final class LocalConversationStore {
     }
 
     private func currentStoreURL() -> URL? {
-        guard let activeUserID else { return nil }
-        return try? accountDataStore.conversationsURL(for: activeUserID)
+        guard let activeInstallationID else { return nil }
+        return try? accountDataStore.localConversationsURL(for: activeInstallationID)
     }
 }
 

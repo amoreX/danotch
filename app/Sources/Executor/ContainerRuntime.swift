@@ -54,6 +54,16 @@ public enum ArtifactVerificationError: Error, Equatable {
 }
 
 public struct ExecutorArtifactManifestVerifier: Sendable {
+    public enum VerificationMode: Sendable {
+        case signedRelease
+        /// Source-built ad-hoc applications have no release private key. This
+        /// mode is only valid after the caller has strictly validated the
+        /// enclosing app's sealed-resource signature. The seal binds the exact
+        /// manifest bytes; this verifier still validates the pinned schema and
+        /// every artifact digest.
+        case enclosingBundleSeal
+    }
+
     public static let releaseKeyID = "perch-executor-artifacts-2026-01"
     // Public verification material only. Resources/ExecutorArtifacts.json is
     // intentionally unsigned in source control. Protected U8 release CI signs
@@ -72,23 +82,37 @@ public struct ExecutorArtifactManifestVerifier: Sendable {
         self.publicKeyPEM = publicKeyPEM
     }
 
-    public func verify(data: Data) throws -> ExecutorArtifactManifestPayload {
+    public func verify(
+        data: Data,
+        mode: VerificationMode = .signedRelease
+    ) throws -> ExecutorArtifactManifestPayload {
         let envelope = try JSONDecoder().decode(SignedExecutorArtifactManifest.self, from: data)
         guard envelope.algorithm == "P256-SHA256-DER",
               envelope.keyID == Self.releaseKeyID,
-              let payload = Data(base64Encoded: envelope.signedPayload),
-              let signatureData = Data(base64Encoded: envelope.signature) else {
+              let payload = Data(base64Encoded: envelope.signedPayload) else {
             throw ArtifactVerificationError.invalidManifest
         }
-        let key: P256.Signing.PublicKey
-        do {
-            key = try P256.Signing.PublicKey(pemRepresentation: publicKeyPEM)
-        } catch {
-            throw ArtifactVerificationError.unsupportedSigner
-        }
-        guard let signature = try? P256.Signing.ECDSASignature(derRepresentation: signatureData),
-              key.isValidSignature(signature, for: payload) else {
-            throw ArtifactVerificationError.invalidSignature
+        switch mode {
+        case .signedRelease:
+            guard let signatureData = Data(base64Encoded: envelope.signature) else {
+                throw ArtifactVerificationError.invalidManifest
+            }
+            let key: P256.Signing.PublicKey
+            do {
+                key = try P256.Signing.PublicKey(pemRepresentation: publicKeyPEM)
+            } catch {
+                throw ArtifactVerificationError.unsupportedSigner
+            }
+            guard let signature = try? P256.Signing.ECDSASignature(
+                derRepresentation: signatureData
+            ), key.isValidSignature(signature, for: payload) else {
+                throw ArtifactVerificationError.invalidSignature
+            }
+        case .enclosingBundleSeal:
+            // Never reinterpret a bad release signature as a source build.
+            guard envelope.signature.isEmpty else {
+                throw ArtifactVerificationError.invalidSignature
+            }
         }
         let manifest = try JSONDecoder().decode(ExecutorArtifactManifestPayload.self, from: payload)
         try validate(manifest)
@@ -106,9 +130,16 @@ public struct ExecutorArtifactManifestVerifier: Sendable {
               ]) else {
             throw ArtifactVerificationError.invalidManifest
         }
+        guard manifest.artifacts.count == 4 else {
+            throw ArtifactVerificationError.invalidManifest
+        }
         for artifact in manifest.artifacts {
             guard artifact.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
-                  artifact.reference.range(of: #"^(https://|ghcr\.io/)"#, options: .regularExpression) != nil else {
+                  artifact.reference.range(of: #"^(https://|ghcr\.io/)"#, options: .regularExpression) != nil,
+                  artifact.bytes.map({ $0 > 0 }) ?? true,
+                  artifact.sourceSHA256.map({
+                      $0.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil
+                  }) ?? true else {
                 throw ArtifactVerificationError.invalidArtifact(artifact.reference)
             }
         }

@@ -194,10 +194,18 @@ public struct ExecutorIPCAuthenticator: Sendable {
         return grant
     }
 
-    private static func fingerprint(_ key: P256.Signing.PublicKey) -> String {
+    public static func fingerprint(_ key: P256.Signing.PublicKey) -> String {
         SHA256.hash(data: key.derRepresentation)
             .map { String(format: "%02x", $0) }
             .joined()
+    }
+
+    public static func fingerprint(publicKeyPEM: String) throws -> String {
+        do {
+            return fingerprint(try P256.Signing.PublicKey(pemRepresentation: publicKeyPEM))
+        } catch {
+            throw ExecutorIPCError.unauthenticated
+        }
     }
 }
 

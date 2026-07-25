@@ -67,14 +67,14 @@ export interface LLMProvider {
   }): Promise<CompletionResult>;
 }
 
-export type ProviderType = 'anthropic' | 'openai' | 'openrouter';
+export type ProviderType = 'anthropic' | 'openai' | 'openrouter' | 'deepseek' | 'custom';
 
 export interface ProviderConfig {
   id: string;
-  user_id: string;
   provider: ProviderType;
-  api_key_encrypted: string;
   model_id: string;
+  base_url?: string | null;
+  keychain_account: string;
   is_active: boolean;
   verified_at?: string;
 }

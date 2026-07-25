@@ -1,7 +1,7 @@
 import { SITE } from './site-config';
 
 const FOOTER_LINKS = [
-  { label: 'Download', href: '#download' },
+  { label: 'Install', href: '#download' },
   { label: 'Changelog', href: SITE.changelogUrl },
   { label: 'Security', href: SITE.securityArchitectureUrl },
   { label: 'Contact', href: `mailto:${SITE.supportEmail}` },

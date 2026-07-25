@@ -1,117 +1,15 @@
-import { getAdminDb } from '../lib/admin-db.js';
-import { config } from '../config.js';
-import { decrypt } from './crypto.js';
+import { resolve4, resolve6 } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import type { ProviderPreference } from '../db/repositories.js';
+import type { Credential, SecretBroker } from '../ipc/keychain-broker.js';
 import { AnthropicProvider } from './anthropic.js';
 import { OpenAIProvider } from './openai.js';
 import type { LLMProvider, ProviderType } from './types.js';
-import type { SupabaseClient } from '@supabase/supabase-js';
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
-const supabase = new Proxy({} as ReturnType<typeof getAdminDb>, {
-  get(_target, property) {
-    const client = getAdminDb('provider') as unknown as Record<PropertyKey, unknown>;
-    const value = client[property];
-    return typeof value === 'function' ? value.bind(client) : value;
-  },
-});
+const DEEPSEEK_BASE_URL = 'https://api.deepseek.com';
 
-export class ProviderLookupError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = 'ProviderLookupError';
-  }
-}
-
-function isNoRowsError(error: unknown): boolean {
-  const postgrestError = error as { code?: string; details?: string } | null;
-  return postgrestError?.code === 'PGRST116'
-    && /\b0 rows?\b/i.test(postgrestError.details ?? '');
-}
-
-/**
- * Get the LLM provider for a specific user.
- * Checks for user's active provider config in DB, falls back to server's ANTHROPIC_API_KEY.
- */
-export async function getProviderForUser(
-  userId: string,
-  fallbackModelId?: string,
-  db: SupabaseClient = supabase,
-): Promise<LLMProvider> {
-  try {
-    const { data, error } = await db
-      .from('danotch_provider_configs')
-      .select('provider, api_key_encrypted, model_id')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .single();
-
-    if (error) {
-      if (isNoRowsError(error)) return getFallbackProvider(fallbackModelId);
-      throw new ProviderLookupError(`Provider lookup failed: ${error.message}`);
-    }
-    if (!data) throw new ProviderLookupError('Provider lookup returned no result');
-
-    const apiKey = decrypt(data.api_key_encrypted);
-    const modelId = fallbackModelId || data.model_id;
-    return createProvider(data.provider as ProviderType, apiKey, modelId);
-  } catch (err) {
-    if (err instanceof ProviderLookupError) throw err;
-    throw new ProviderLookupError(`Provider config for user ${userId} could not be resolved`, {
-      cause: err,
-    });
-  }
-}
-
-/**
- * Get only the user's active BYOK provider. Does not fall back to the server key.
- */
-export async function getActiveProviderForUser(
-  userId: string,
-  modelOverride?: string,
-  db: SupabaseClient = supabase,
-): Promise<LLMProvider | null> {
-  try {
-    const { data, error } = await db
-      .from('danotch_provider_configs')
-      .select('provider, api_key_encrypted, model_id')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .single();
-
-    if (error) {
-      if (isNoRowsError(error)) return null;
-      throw new ProviderLookupError(`Active provider lookup failed: ${error.message}`);
-    }
-    if (!data) throw new ProviderLookupError('Active provider lookup returned no result');
-
-    const apiKey = decrypt(data.api_key_encrypted);
-    const modelId = modelOverride || data.model_id;
-    return createProvider(data.provider as ProviderType, apiKey, modelId);
-  } catch (err) {
-    if (err instanceof ProviderLookupError) throw err;
-    throw new ProviderLookupError(`Active provider for user ${userId} could not be resolved`, {
-      cause: err,
-    });
-  }
-}
-
-/**
- * Fallback provider using the server's ANTHROPIC_API_KEY env var.
- * Used when user has no provider config or for unauthenticated requests.
- */
-export function getFallbackProvider(modelId?: string): LLMProvider {
-  if (!config.containment.trialsEnabled || !config.trial.apiKey) {
-    throw new ProviderLookupError('Server-funded trials are not configured');
-  }
-  const selectedModel = modelId ?? config.trial.defaultModel;
-  if (!config.trial.allowedModels.includes(selectedModel)) {
-    throw new ProviderLookupError('Requested model is not available for server-funded trials');
-  }
-  return new AnthropicProvider(
-    config.trial.apiKey,
-    selectedModel,
-  );
-}
+export class ProviderLookupError extends Error {}
 
 /**
  * Create a provider instance from explicit config. Used by verify endpoint and factory.
@@ -119,7 +17,8 @@ export function getFallbackProvider(modelId?: string): LLMProvider {
 export function createProvider(
   provider: ProviderType,
   apiKey: string,
-  modelId: string
+  modelId: string,
+  baseUrl?: string | null,
 ): LLMProvider {
   switch (provider) {
     case 'anthropic':
@@ -127,8 +26,84 @@ export function createProvider(
     case 'openai':
       return new OpenAIProvider(apiKey, modelId);
     case 'openrouter':
-      return new OpenAIProvider(apiKey, modelId, OPENROUTER_BASE_URL);
+      return new OpenAIProvider(apiKey, modelId, OPENROUTER_BASE_URL, 'openrouter');
+    case 'deepseek':
+      return new OpenAIProvider(apiKey, modelId, baseUrl || DEEPSEEK_BASE_URL, 'deepseek');
+    case 'custom':
+      if (!baseUrl) throw new ProviderLookupError('Custom provider requires an HTTPS base URL');
+      return new OpenAIProvider(apiKey, modelId, baseUrl, 'custom');
     default:
-      throw new Error(`Unsupported provider: ${provider}`);
+      throw new ProviderLookupError(`Unsupported provider: ${provider as string}`);
   }
+}
+
+export async function resolveProvider(
+  preference: ProviderPreference | undefined,
+  broker: SecretBroker,
+  overrides?: { modelId?: string | null; baseUrl?: string | null },
+): Promise<LLMProvider> {
+  if (!preference) throw new ProviderLookupError('An active provider is required');
+  const baseUrl = overrides?.baseUrl ?? preference.base_url;
+  if (preference.provider === 'custom') await validateProviderEndpoint(baseUrl ?? '');
+  const apiKey = await broker.getCredential(preference.keychain_account as Credential);
+  if (!apiKey) throw new ProviderLookupError('Provider credential is not configured');
+  return createProvider(
+    preference.provider,
+    apiKey,
+    overrides?.modelId || preference.model_id,
+    baseUrl,
+  );
+}
+
+export async function validateProviderEndpoint(
+  value: string,
+  lookup: (hostname: string) => Promise<string[]> = resolveAddresses,
+): Promise<string> {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ProviderLookupError('Custom base URL must be a valid HTTPS URL');
+  }
+  if (
+    url.protocol !== 'https:' || url.username || url.password || url.search || url.hash
+    || url.port && url.port !== '443'
+  ) {
+    throw new ProviderLookupError('Custom base URL must be credential-free HTTPS on port 443');
+  }
+  const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (hostname === 'localhost' || hostname.endsWith('.local') || hostname.endsWith('.internal')) {
+    throw new ProviderLookupError('Custom base URL must not target local hosts');
+  }
+  const addresses = isIP(hostname) ? [hostname] : await lookup(hostname);
+  if (addresses.length === 0 || addresses.some(isPrivateAddress)) {
+    throw new ProviderLookupError('Custom base URL must resolve only to public addresses');
+  }
+  return url.toString().replace(/\/$/, '');
+}
+
+async function resolveAddresses(hostname: string): Promise<string[]> {
+  const [v4, v6] = await Promise.all([
+    resolve4(hostname).catch(() => []),
+    resolve6(hostname).catch(() => []),
+  ]);
+  return [...v4, ...v6];
+}
+
+function isPrivateAddress(address: string): boolean {
+  if (address.includes(':')) {
+    const normalized = address.toLowerCase();
+    return normalized === '::1' || normalized === '::' || normalized.startsWith('fc')
+      || normalized.startsWith('fd') || /^fe[89ab]/.test(normalized)
+      || normalized.startsWith('2001:db8:');
+  }
+  const parts = address.split('.').map(Number);
+  return parts[0] === 0 || parts[0] === 10 || parts[0] === 127 || parts[0] >= 224
+    || (parts[0] === 169 && parts[1] === 254)
+    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
+    || (parts[0] === 192 && parts[1] === 168)
+    || (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127)
+    || (parts[0] === 192 && parts[1] === 0 && parts[2] === 2)
+    || (parts[0] === 198 && parts[1] === 51 && parts[2] === 100)
+    || (parts[0] === 203 && parts[1] === 0 && parts[2] === 113);
 }

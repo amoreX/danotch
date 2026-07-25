@@ -348,7 +348,7 @@ private struct TodayPage: View {
             ChatModelSelectorView(viewModel: viewModel, maxWidth: 122)
 
             TextField(
-                viewModel.trialDailyLimitReached ? "Daily limit reached — resumes automatically" : "Ask Perch anything…",
+                "Ask Perch anything…",
                 text: $composerText
             )
                 .textFieldStyle(.plain)
@@ -360,7 +360,6 @@ private struct TodayPage: View {
                 .onTapGesture { composerFocused = true }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
-                .disabled(viewModel.trialDailyLimitReached)
             sendButton
         }
         .padding(.horizontal, 14)
@@ -373,13 +372,12 @@ private struct TodayPage: View {
         // only the placeholder/text glyphs were focusable, not the rest of
         // the field's padded width or the empty capsule area around it.
         .simultaneousGesture(TapGesture().onEnded {
-            if !viewModel.trialDailyLimitReached { composerFocused = true }
+            composerFocused = true
         })
     }
 
     private var sendButton: some View {
-        let enabled = !viewModel.trialDailyLimitReached
-            && !composerText.trimmingCharacters(in: .whitespaces).isEmpty
+        let enabled = !composerText.trimmingCharacters(in: .whitespaces).isEmpty
         return Image(systemName: "arrow.up")
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(.white)
@@ -392,7 +390,7 @@ private struct TodayPage: View {
 
     private func submit() {
         let trimmed = composerText.trimmingCharacters(in: .whitespaces)
-        guard !viewModel.trialDailyLimitReached, !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return }
         composerText = ""
         composerFocused = false
         viewModel.sendChat(message: trimmed)
@@ -615,11 +613,6 @@ private struct ScheduledTasksTodayCard: View {
                                 .foregroundStyle(.white)
                                 .lineLimit(1)
                             Spacer()
-                            if task.lastStatus == "trial_limit" {
-                                Text("LIMIT · AUTO-RESUME")
-                                    .font(.system(size: 7, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(DN.accent)
-                            }
                             Text(task.scheduleHuman)
                                 .font(.system(size: 9, design: .monospaced))
                                 .foregroundStyle(.tertiary)
@@ -1788,6 +1781,7 @@ private struct ScheduledGlassCard: View {
 
 struct ScheduledTasksSection: View {
     @ObservedObject var viewModel: NotchViewModel
+    @State private var editor: ScheduledTaskEditorContext?
 
     private var isExpanded: Bool { !viewModel.settings.collapsedGroups.contains("scheduled") }
 
@@ -1815,6 +1809,14 @@ struct ScheduledTasksSection: View {
 
                     Spacer()
 
+                    Button {
+                        editor = ScheduledTaskEditorContext(task: nil)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(DN.textDisabled)
@@ -1835,6 +1837,13 @@ struct ScheduledTasksSection: View {
             }
         }
         .contentCard(cornerRadius: DN.radiusMD)
+        .sheet(item: $editor) { context in
+            ScheduledTaskEditor(
+                viewModel: viewModel,
+                task: context.task,
+                onDismiss: { editor = nil }
+            )
+        }
     }
 }
 
@@ -1843,11 +1852,11 @@ struct ScheduledTaskRow: View {
     @ObservedObject var viewModel: NotchViewModel
     @State private var isHovering = false
     @State private var isExpanded = false
+    @State private var showEditor = false
 
     private var statusLabel: String? {
         switch task.lastStatus {
         case "completed": return "✓"
-        case "trial_limit": return "LIMIT · AUTO-RESUME"
         case .some: return "✗"
         case .none: return nil
         }
@@ -1856,7 +1865,6 @@ struct ScheduledTaskRow: View {
     private var statusColor: Color {
         switch task.lastStatus {
         case "completed": return DN.success
-        case "trial_limit": return DN.accent
         default: return DN.accent
         }
     }
@@ -1907,6 +1915,20 @@ struct ScheduledTaskRow: View {
                 Spacer()
 
                 if isHovering {
+                    Button(action: { viewModel.runScheduledTaskNow(task.id) }) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(DN.success)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button(action: { showEditor = true }) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 10))
+                            .foregroundColor(DN.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+
                     Button(action: {
                         viewModel.toggleScheduledTask(task.id, enabled: !task.enabled)
                     }) {
@@ -1965,6 +1987,87 @@ struct ScheduledTaskRow: View {
         )
         .animation(DN.transition, value: isHovering)
         .onHover { isHovering = $0 }
+        .sheet(isPresented: $showEditor) {
+            ScheduledTaskEditor(
+                viewModel: viewModel,
+                task: task,
+                onDismiss: { showEditor = false }
+            )
+        }
+    }
+}
+
+private struct ScheduledTaskEditorContext: Identifiable {
+    let id = UUID()
+    let task: ScheduledTask?
+}
+
+private struct ScheduledTaskEditor: View {
+    @ObservedObject var viewModel: NotchViewModel
+    let task: ScheduledTask?
+    let onDismiss: () -> Void
+
+    @State private var draft: ScheduledTaskDraft
+
+    init(
+        viewModel: NotchViewModel,
+        task: ScheduledTask?,
+        onDismiss: @escaping () -> Void
+    ) {
+        self.viewModel = viewModel
+        self.task = task
+        self.onDismiss = onDismiss
+        _draft = State(initialValue: ScheduledTaskDraft(
+            name: task?.name ?? "",
+            prompt: task?.prompt ?? "",
+            cron: task?.cron ?? "0 9 * * *",
+            notifyUser: task?.notifyUser ?? true,
+            provider: task?.provider ?? viewModel.activeProviderType,
+            modelId: task?.modelId ?? viewModel.settings.selectedDefaultModel
+        ))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(task == nil ? "New scheduled task" : "Edit scheduled task")
+                .font(.system(size: 18, weight: .semibold))
+            TextField("Name", text: $draft.name)
+            TextField("Prompt", text: $draft.prompt, axis: .vertical)
+                .lineLimit(3...7)
+            TextField("Cron schedule", text: $draft.cron)
+            Picker("Provider", selection: $draft.provider) {
+                ForEach(["anthropic", "openai", "openrouter", "deepseek", "custom"], id: \.self) {
+                    Text($0.capitalized).tag($0)
+                }
+            }
+            TextField("Model", text: $draft.modelId)
+            Toggle("Notify with macOS", isOn: $draft.notifyUser)
+            if let error = viewModel.scheduledTaskError {
+                Text(error).font(.caption).foregroundStyle(DN.accent)
+            }
+            HStack {
+                Button("Cancel", action: onDismiss)
+                Spacer()
+                Button("Save") {
+                    if let task {
+                        viewModel.updateScheduledTask(task.id, draft: draft)
+                    } else {
+                        viewModel.createScheduledTask(draft)
+                    }
+                    onDismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(
+                    draft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || draft.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || draft.cron.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || draft.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                )
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .padding(22)
+        .frame(width: 460)
     }
 }
 

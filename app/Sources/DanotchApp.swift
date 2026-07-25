@@ -26,35 +26,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var windowController: NotchWindowController?
     var onboardingWindow: NSWindow?
     let viewModel = NotchViewModel()
-    let auth = AuthManager.shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         applyAppIcon()
-        viewModel.authManager = auth
-        auth.onSessionWillChange = { [weak self] oldUserID, newUserID in
-            guard oldUserID != newUserID else { return }
-            self?.stopNotch()
-            self?.viewModel.switchAccount(to: nil)
-        }
-        auth.onSessionDidChange = { [weak self] session in
-            guard let self else { return }
-            self.viewModel.switchAccount(to: session)
-            if session == nil {
-                self.showOnboarding()
-            } else if self.onboardingWindow == nil && OnboardingCompletionStore.isComplete {
-                self.startNotch()
-            }
-        }
-        viewModel.switchAccount(to: auth.session)
+        viewModel.activateLocalInstallation()
         viewModel.interruptInProgressConversations()
 
-        if auth.isAuthenticated && OnboardingCompletionStore.isComplete {
-            // Already logged in and fully onboarded — go straight to notch
-            viewModel.authManager = auth
+        if OnboardingCompletionStore.isComplete {
             startNotch()
         } else {
-            // First launch, logged out, or setup still pending — show onboarding
             showOnboarding()
         }
     }
@@ -92,7 +73,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         viewModel.loadThreadHistory()
         viewModel.loadProviderConfigs()
         viewModel.loadProviderModels()
-        viewModel.loadBillingStatus()
         viewModel.loadUnreadCount()
 
         // Go back to accessory mode (no dock icon)
@@ -139,7 +119,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
 
         let onboardingView = OnboardingView(
-            auth: auth,
             viewModel: viewModel,
             onWindowSizeChange: { [weak window] size in
                 guard let window else { return }
@@ -157,7 +136,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         ) { [weak self] in
             guard let self else { return }
-            self.viewModel.authManager = self.auth
             self.expandOnFirstLaunch = true
             self.startNotch()
         }
@@ -173,21 +151,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard windowController != nil else { return }
         windowController?.close()
         windowController = nil
-        viewModel.cancelDeviceConnection()
+        viewModel.cancelDaemonConnection()
         viewModel.isExpanded = false
-    }
-
-    func application(_ application: NSApplication, open urls: [URL]) {
-        guard urls.contains(where: {
-            $0.scheme?.lowercased() == "perch"
-                && $0.host?.lowercased() == "billing"
-                && $0.path == "/complete"
-        }) else { return }
-        viewModel.handleBillingCompletionURL()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         viewModel.interruptInProgressConversations()
-        viewModel.cancelDeviceConnection()
+        viewModel.cancelDaemonConnection()
     }
 }

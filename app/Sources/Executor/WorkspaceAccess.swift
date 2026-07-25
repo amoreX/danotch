@@ -39,15 +39,17 @@ enum WorkspaceAccessError: Error, Equatable, LocalizedError {
     }
 }
 
-protocol WorkspaceBookmarkResolving: Sendable {
+public protocol WorkspaceBookmarkResolving: Sendable {
     func create(for url: URL) throws -> WorkspaceBookmark
     func resolve(_ bookmark: WorkspaceBookmark) throws -> (url: URL, stale: Bool)
     func startAccessing(_ url: URL) -> Bool
     func stopAccessing(_ url: URL)
 }
 
-struct SecurityScopedBookmarkResolver: WorkspaceBookmarkResolving {
-    func create(for url: URL) throws -> WorkspaceBookmark {
+public struct SecurityScopedBookmarkResolver: WorkspaceBookmarkResolving {
+    public init() {}
+
+    public func create(for url: URL) throws -> WorkspaceBookmark {
         WorkspaceBookmark(data: try url.bookmarkData(
             options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
             includingResourceValuesForKeys: nil,
@@ -55,7 +57,7 @@ struct SecurityScopedBookmarkResolver: WorkspaceBookmarkResolving {
         ))
     }
 
-    func resolve(_ bookmark: WorkspaceBookmark) throws -> (url: URL, stale: Bool) {
+    public func resolve(_ bookmark: WorkspaceBookmark) throws -> (url: URL, stale: Bool) {
         var stale = false
         let url = try URL(
             resolvingBookmarkData: bookmark.data,
@@ -66,8 +68,8 @@ struct SecurityScopedBookmarkResolver: WorkspaceBookmarkResolving {
         return (url, stale)
     }
 
-    func startAccessing(_ url: URL) -> Bool { url.startAccessingSecurityScopedResource() }
-    func stopAccessing(_ url: URL) { url.stopAccessingSecurityScopedResource() }
+    public func startAccessing(_ url: URL) -> Bool { url.startAccessingSecurityScopedResource() }
+    public func stopAccessing(_ url: URL) { url.stopAccessingSecurityScopedResource() }
 }
 
 struct WorkspaceAccess: @unchecked Sendable {

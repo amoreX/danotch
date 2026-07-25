@@ -19,9 +19,6 @@ updates:
           - "typescript"
           - "tsx"
           - "@types/*"
-      supabase:
-        patterns:
-          - "@supabase/*"
       anthropic:
         patterns:
           - "@anthropic-ai/*"
