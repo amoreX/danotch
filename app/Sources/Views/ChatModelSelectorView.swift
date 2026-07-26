@@ -27,15 +27,12 @@ struct ChatModelSelectorView: View {
                 Button {
                     viewModel.selectModel(model.id)
                 } label: {
-                    HStack {
-                        if model.id == viewModel.settings.selectedDefaultModel {
-                            Image(systemName: "checkmark")
-                        }
-                        Text(model.displayName)
-                        if let context = model.contextLength {
-                            Text("\(context / 1000)k")
-                        }
-                    }
+                    let isSelected = model.id == viewModel.settings.selectedDefaultModel
+                    let context = model.contextLength.map { "  \($0 / 1000)k" } ?? ""
+                    // macOS strips images from custom Button labels when
+                    // converting them into native menu items. Keep the check
+                    // in the title so it remains visible in the dropdown.
+                    Text("\(isSelected ? "✓  " : "    ")\(model.displayName)\(context)")
                 }
             }
 
