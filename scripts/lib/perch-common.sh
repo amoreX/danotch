@@ -61,6 +61,20 @@ perch_tag_fingerprint() {
   awk '/^\[GNUPG:\] VALIDSIG / {print toupper($3); exit}' "$verification_log"
 }
 
+perch_verify_source_checkout() {
+  local repository="$1"
+  local commit
+
+  [[ -d "$repository/.git" ]] ||
+    perch_die "Run this installer from a Git clone of $PERCH_REPOSITORY_URL."
+  [[ -z "$(git -C "$repository" status --porcelain --untracked-files=all)" ]] ||
+    perch_die "The source checkout has local modifications or untracked files. Commit, stash, or remove them before installing."
+  commit="$(git -C "$repository" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)"
+  [[ "$commit" =~ ^[A-Fa-f0-9]{40,64}$ ]] ||
+    perch_die "The source checkout does not have a valid Git commit."
+  printf '%s\n' "$commit"
+}
+
 perch_verify_release_checkout() {
   local repository="$1"
   local keys_file="${PERCH_TRUSTED_KEYS_FILE:-$repository/release/maintainer-gpg-fingerprints.txt}"
@@ -77,7 +91,7 @@ perch_verify_release_checkout() {
   [[ -f "$keys_file" ]] ||
     perch_die "Missing trusted maintainer fingerprint allowlist; release trust is not configured."
   grep -Eq '^[A-Fa-f0-9]{40,64}$' "$keys_file" ||
-    perch_die "No maintainer signing fingerprint is configured. A maintainer must complete docs/maintainer-keys.md before installation."
+    perch_die "No maintainer signing fingerprint is configured. A maintainer must complete docs/maintainer-keys.md before updating."
   command -v gpg >/dev/null 2>&1 ||
     perch_die "GnuPG is required to verify release tags. Install it from https://gnupg.org/download/ and retry."
 
@@ -91,7 +105,7 @@ perch_verify_release_checkout() {
 
   tag="$(git -C "$repository" describe --tags --exact-match HEAD 2>/dev/null || true)"
   [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-    perch_die "Install from an exact stable release tag (vX.Y.Z), not a branch or untagged commit."
+    perch_die "Update from an exact stable release tag (vX.Y.Z), not a branch or untagged commit."
   object_type="$(git -C "$repository" cat-file -t "refs/tags/$tag" 2>/dev/null || true)"
   [[ "$object_type" == "tag" ]] || perch_die "Release $tag is lightweight; Perch requires an annotated signed tag."
   tag_commit="$(git -C "$repository" rev-list -n 1 "$tag")"

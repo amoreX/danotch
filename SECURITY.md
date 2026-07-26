@@ -43,9 +43,9 @@ Perch's distribution contract is source-first:
 - User-approved code execution must remain inside the documented Apple
   Containerization boundary with scoped workspace access and bounded resources.
 
-The checked-in installer currently fails closed until a maintainer fingerprint
-allowlist is published. It also refuses incomplete daemon, native-host, or
-LaunchAgent resources.
+The installer builds only a clean Git checkout and refuses incomplete daemon,
+native-host, or LaunchAgent resources. Stable updates remain fail-closed until
+a maintainer fingerprint allowlist is published.
 
 ## Threats in scope
 

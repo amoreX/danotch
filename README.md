@@ -19,3 +19,16 @@ away.
 - Open the quick prompt globally with Command-Shift-Space.
 
 Perch has no account, subscription, trial, checkout, or feature gating.
+
+## Install
+
+Perch requires an Apple Silicon Mac running macOS 26 or newer.
+
+```bash
+git clone https://github.com/unordinarytech/perch.git
+cd perch
+./install.sh
+```
+
+See the [source installation guide](docs/source-install.md) for updating,
+uninstalling, and troubleshooting.

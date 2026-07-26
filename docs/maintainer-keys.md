@@ -1,13 +1,14 @@
 # Maintainer release keys
 
-Perch stable releases use annotated OpenPGP-signed Git tags. Install and update
-scripts trust only full primary-key fingerprints listed in
-`release/maintainer-gpg-fingerprints.txt`.
+Perch stable releases use annotated OpenPGP-signed Git tags. The update script
+trusts only full primary-key fingerprints listed in
+`release/maintainer-gpg-fingerprints.txt`; initial source installation builds
+the user's current clean Git checkout.
 
 ## Initial key publication
 
 No maintainer fingerprint is published yet. This is intentional fail-closed
-configuration, not a sample value: source installation and updates remain
+configuration, not a sample value: stable release promotion and updates remain
 blocked until maintainers complete this procedure.
 
 1. Create a dedicated offline-capable OpenPGP signing key. Keep its primary key

@@ -15,7 +15,8 @@ Perch is a free, local-first, open-source macOS 26+ application.
 - The daemon must bind only to authenticated loopback IPC.
 - Local mutation and execution must remain explicit, approval-gated, bounded,
   and auditable.
-- The supported distribution is verified source installation from signed tags.
+- Installation builds the current clean Git checkout; stable updates still
+  require verified signed tags.
 
 ## Repository
 
@@ -74,9 +75,9 @@ plutil -lint app/Resources/engineering.super.Perch.daemon.plist.template
 shellcheck install.sh update.sh uninstall.sh scripts/lib/perch-common.sh
 ```
 
-The installer must fail for a branch, lightweight tag, unsigned tag, unknown
-signer, wrong runtime checksum, symlinked destination, or failed health check.
-Do not bypass these checks for development convenience.
+The installer must fail for a dirty or invalid Git checkout, wrong runtime
+checksum, symlinked destination, or failed health check. The updater must also
+fail for a lightweight tag, unsigned tag, or unknown signer.
 
 ## Local architecture
 

@@ -11,8 +11,9 @@ Stable versions use semantic `vMAJOR.MINOR.PATCH` tags. Every stable tag must:
 - document schema/protocol compatibility and rollback behavior.
 
 The project distributes reviewed source, not prebuilt app archives. Users clone
-the canonical HTTPS repository and run `./install.sh`. GitHub source archives
-are not an installation input because they cannot prove tag authenticity.
+the canonical HTTPS repository and run `./install.sh` from a clean checkout.
+GitHub source archives are not an installation input because they do not retain
+the inspectable Git commit metadata required by the installer.
 
 ## Promotion procedure
 

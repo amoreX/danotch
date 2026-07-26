@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build and install a verified Perch source release for the current user.
+# Build and install the current clean Perch source checkout for the user.
 
 set -euo pipefail
 
@@ -17,7 +17,15 @@ fi
 
 perch_require_host
 perch_require_build_tools
-RELEASE_TAG="$(perch_verify_release_checkout "$SOURCE_ROOT")"
+SOURCE_COMMIT="$(perch_verify_source_checkout "$SOURCE_ROOT")"
+EXACT_RELEASE_TAG="$(git -C "$SOURCE_ROOT" describe --tags --exact-match HEAD 2>/dev/null || true)"
+if [[ "$EXACT_RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  INSTALL_VERSION="$EXACT_RELEASE_TAG"
+  MARKETING_VERSION="${EXACT_RELEASE_TAG#v}"
+else
+  INSTALL_VERSION="source-${SOURCE_COMMIT:0:12}"
+  MARKETING_VERSION="0.0.0"
+fi
 
 LOCAL_DAEMON_SOURCE="$SOURCE_ROOT/backend/src/index.ts"
 DAEMON_ENTRY_SOURCE="$SOURCE_ROOT/app/scripts/daemon-entry.mjs"
@@ -60,7 +68,7 @@ INSTALLED_SOURCE="$PERCH_STATE_DIR/install/source"
 ACTIVATION_APP="$HOME/Applications/.Perch.app.staging.$$"
 ACTIVATION_SOURCE="$PERCH_STATE_DIR/install/source.staging.$$"
 ACTIVATION_PLIST="$HOME/Library/LaunchAgents/.$PERCH_LABEL.plist.staging.$$"
-DATABASE_BACKUP="$PERCH_STATE_DIR/backups/perch.sqlite3.before-${RELEASE_TAG}-$(date -u +%Y%m%dT%H%M%SZ)"
+DATABASE_BACKUP="$PERCH_STATE_DIR/backups/perch.sqlite3.before-${INSTALL_VERSION}-$(date -u +%Y%m%dT%H%M%SZ)"
 SWAP_STARTED=0
 HAD_PREVIOUS_APP=0
 HAD_PREVIOUS_SOURCE=0
@@ -105,9 +113,9 @@ rollback() {
 trap cleanup EXIT
 trap rollback ERR
 
-perch_note "Preparing verified source for $RELEASE_TAG..."
+perch_note "Preparing clean source checkout $INSTALL_VERSION..."
 mkdir -p "$STAGED_SOURCE"
-git -C "$SOURCE_ROOT" archive --format=tar "$RELEASE_TAG" | tar -xf - -C "$STAGED_SOURCE"
+git -C "$SOURCE_ROOT" archive --format=tar "$SOURCE_COMMIT" | tar -xf - -C "$STAGED_SOURCE"
 
 NODE_DOWNLOAD="$WORK_DIR/$NODE_ARCHIVE"
 NODE_URL="${NODE_BASE_URL%/}/v${NODE_VERSION}/${NODE_ARCHIVE}"
@@ -152,8 +160,8 @@ perch_note "Resolving and testing the macOS app..."
   xcodebuild -project Perch.xcodeproj -scheme Perch -configuration Release \
     -derivedDataPath "$WORK_DIR/DerivedData" \
     ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
-    PERCH_MARKETING_VERSION="${RELEASE_TAG#v}" \
-    PERCH_BUILD_NUMBER="$(git -C "$SOURCE_ROOT" rev-list --count "$RELEASE_TAG")" \
+    PERCH_MARKETING_VERSION="$MARKETING_VERSION" \
+    PERCH_BUILD_NUMBER="$(git -C "$SOURCE_ROOT" rev-list --count "$SOURCE_COMMIT")" \
     build
 )
 
@@ -212,7 +220,7 @@ rm -rf "$ACTIVATION_APP" "$ACTIVATION_SOURCE"
 rm -f "$ACTIVATION_PLIST"
 ditto "$STAGED_APP" "$ACTIVATION_APP"
 mkdir -p "$ACTIVATION_SOURCE"
-git -C "$SOURCE_ROOT" archive --format=tar "$RELEASE_TAG" |
+git -C "$SOURCE_ROOT" archive --format=tar "$SOURCE_COMMIT" |
   tar -xf - -C "$ACTIVATION_SOURCE"
 cp "$STAGED_PLIST" "$ACTIVATION_PLIST"
 perch_launchctl_remove
@@ -237,7 +245,7 @@ mv "$ACTIVATION_SOURCE" "$INSTALLED_SOURCE"
 mv "$ACTIVATION_PLIST" "$PERCH_LAUNCH_AGENT"
 cp "$INSTALLED_SOURCE/bin/perch" "$PERCH_CLI_PATH"
 chmod 755 "$PERCH_CLI_PATH"
-printf '%s\n' "$RELEASE_TAG" >"$PERCH_STATE_DIR/install/version"
+printf '%s\n' "$INSTALL_VERSION" >"$PERCH_STATE_DIR/install/version"
 
 launchctl bootstrap "gui/$(id -u)" "$PERCH_LAUNCH_AGENT"
 DISCOVERY_FILE="$PERCH_STATE_DIR/runtime/daemon.json"
@@ -260,7 +268,7 @@ rm -f "$PREVIOUS_PLIST"
 if ((OPEN_APP == 1)); then
   open "$PERCH_APP_PATH"
 fi
-perch_note "Perch $RELEASE_TAG is installed at $PERCH_APP_PATH."
+perch_note "Perch $INSTALL_VERSION is installed at $PERCH_APP_PATH."
 perch_note "Use '$PERCH_CLI_PATH update' for signed source updates."
 if [[ ":$ORIGINAL_PATH:" != *":$HOME/.local/bin:"* ]]; then
   perch_note "Add $HOME/.local/bin to PATH to invoke the installed 'perch' command directly."
