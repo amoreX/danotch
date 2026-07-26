@@ -346,12 +346,24 @@ struct SecurityInstallationSecretReader: LocalInstallationSecretReading {
     static let account = "installation.secret"
 
     private let keychain: KeychainDataClient
+    private let developmentSecret: String?
 
-    init(keychain: KeychainDataClient = SystemKeychainDataClient()) {
+    init(
+        keychain: KeychainDataClient = SystemKeychainDataClient(),
+        developmentSecret: String? = ProcessInfo.processInfo.environment[
+            "PERCH_DEV_INSTALLATION_SECRET"
+        ]
+    ) {
         self.keychain = keychain
+        self.developmentSecret = developmentSecret
     }
 
     func readInstallationSecret() throws -> LocalInstallationSecret {
+#if DEBUG
+        if let developmentSecret {
+            return try LocalInstallationSecret(validatingBase64: developmentSecret)
+        }
+#endif
         var stored: Data
         do {
             stored = try keychain.read(service: Self.service, account: Self.account)

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, realpathSync, rmSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir, platform, tmpdir } from 'node:os';
@@ -198,11 +198,11 @@ function stop(exitCode = 0) {
   if (stopping) return;
   stopping = true;
   for (const child of children) {
-    if (!child.killed) child.kill('SIGTERM');
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
   }
   const deadline = setTimeout(() => {
     for (const child of children) {
-      if (!child.killed) child.kill('SIGKILL');
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     }
     process.exit(exitCode);
   }, 3_000);
@@ -224,6 +224,7 @@ if (platform() !== 'darwin' || machineArchitecture !== 'arm64') {
 }
 await ensurePinnedNode();
 await acquireStackLock();
+const developmentInstallationSecret = randomBytes(32).toString('base64');
 process.on('exit', () => {
   if (ownsStackLock) rmSync(stackLockDirectory, { recursive: true, force: true });
 });
@@ -326,7 +327,7 @@ process.on('SIGTERM', () => stop(0));
 
 const host = spawn(daemonHost, [], {
   cwd: appDirectory,
-  env: {},
+  env: { PERCH_DEV_INSTALLATION_SECRET: developmentInstallationSecret },
   stdio: ['ignore', 'inherit', 'inherit'],
 });
 children.add(host);
@@ -342,7 +343,26 @@ host.once('exit', (code, signal) => {
   }
 });
 
-run('/usr/bin/open', [appBundle]);
+const app = spawn(join(macOSDirectory, 'Perch'), [], {
+  cwd: appDirectory,
+  env: {
+    ...process.env,
+    PERCH_DEV_INSTALLATION_SECRET: developmentInstallationSecret,
+  },
+  stdio: 'inherit',
+});
+children.add(app);
+app.once('error', (error) => {
+  console.error(`Perch app failed to start: ${error.message}`);
+  stop(1);
+});
+app.once('exit', (code, signal) => {
+  children.delete(app);
+  if (!stopping) {
+    console.error(`Perch app stopped (${signal ?? code ?? 'unknown'}).`);
+    stop(code ?? (signal ? 0 : 1));
+  }
+});
 
 const site = spawn(npmBinary, ['run', 'dev', '--', '--host', '127.0.0.1'], {
   cwd: siteDirectory,
@@ -363,4 +383,4 @@ site.once('exit', (code, signal) => {
 });
 
 console.log('Perch is opening. Website: http://127.0.0.1:5173');
-console.log('Press Ctrl+C to stop the daemon and website.');
+console.log('Press Ctrl+C to stop the app, daemon, and website.');

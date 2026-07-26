@@ -3,6 +3,12 @@ import Carbon
 import Combine
 import SwiftUI
 
+extension Notification.Name {
+    static let perchWidgetDragRecoveryRequested = Notification.Name(
+        "engineering.super.Perch.widgetDragRecoveryRequested"
+    )
+}
+
 class PerchPanel: NSPanel {
     override init(
         contentRect: NSRect,
@@ -312,16 +318,33 @@ class NotchWindowController: NSObject {
     // MARK: - Global Mouse Tracking
 
     private func startMouseTracking() {
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .leftMouseUp]
+        ) { [weak self] event in
             self?.checkMouse()
+            self?.recoverCancelledWidgetDrag(after: event)
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .leftMouseUp]
+        ) { [weak self] event in
             self?.checkMouse()
+            self?.recoverCancelledWidgetDrag(after: event)
             return event
         }
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             self?.handleScroll(event)
             return event
+        }
+    }
+
+    private func recoverCancelledWidgetDrag(after event: NSEvent) {
+        guard event.type == .leftMouseUp, viewModel.isDraggingWidget else { return }
+        // The local monitor runs before SwiftUI receives this mouse-up. Give
+        // the gesture one run-loop turn to finish normally; only recover if
+        // its onEnded callback was lost because the gesture view disappeared.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.viewModel.isDraggingWidget else { return }
+            NotificationCenter.default.post(name: .perchWidgetDragRecoveryRequested, object: nil)
         }
     }
 

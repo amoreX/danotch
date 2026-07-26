@@ -32,6 +32,8 @@ private struct TodayPage: View {
     @State private var dragLocation: CGPoint? = nil
     @State private var dragGrabOffset: CGSize = .zero
     @State private var widgetFrames: [PinnedWidget: CGRect] = [:]
+    @State private var dragStartFrames: [PinnedWidget: CGRect] = [:]
+    @State private var dragStartOrder: [PinnedWidget] = []
     @State private var isEditMode: Bool = false
 
     // Approximate height available for the widget grid before scrolling kicks in.
@@ -58,6 +60,7 @@ private struct TodayPage: View {
             .padding(.bottom, 4)
         }
         .scrollIndicators(.never)
+        .scrollDisabled(draggingWidget != nil)
         .smartScrollFade(40, bottomRadius: 28)
         .frame(maxWidth: .infinity, alignment: .top)
         .onChange(of: viewModel.shouldFocusChatInput) { _, v in
@@ -66,6 +69,14 @@ private struct TodayPage: View {
         .onChange(of: composerFocused) { _, f in viewModel.isChatInputActive = f }
         .onChange(of: isEditMode) { _, editing in
             if editing { composerFocused = false }
+            if !editing { cancelDrag(animated: false) }
+        }
+        .onDisappear {
+            cancelDrag(animated: false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .perchWidgetDragRecoveryRequested)) { _ in
+            guard draggingWidget != nil else { return }
+            cancelDrag(animated: false)
         }
     }
 
@@ -97,6 +108,10 @@ private struct TodayPage: View {
             floatingWidget
         }
         .onPreferenceChange(WidgetFramePreferenceKey.self) { frames in
+            // Preference delivery can occur repeatedly while SwiftUI lays out
+            // an animated overlay. Do not feed those transient frames back
+            // into the active gesture or trigger a redundant render cycle.
+            guard draggingWidget == nil, frames != widgetFrames else { return }
             widgetFrames = frames
         }
         .animation(DN.transition, value: pinned)
@@ -142,8 +157,12 @@ private struct TodayPage: View {
             .opacity(isDragging ? 0.18 : 1)
             .scaleEffect(isDragging ? 0.96 : 1)
             .overlay(alignment: .topTrailing) {
-                if isEditMode && !isDragging {
+                if isEditMode {
                     editModeHandleOverlay(widget)
+                        // Keep the view that owns the active gesture mounted
+                        // until mouse-up. Removing it here cancels the gesture
+                        // before SwiftUI can deliver onEnded.
+                        .opacity(isDragging ? 0 : 1)
                 }
             }
             .overlay {
@@ -190,6 +209,8 @@ private struct TodayPage: View {
                 .frame(width: 20, height: 20)
                 .background(Color.black.opacity(0.55))
                 .clipShape(Circle())
+                .contentShape(Circle())
+                .gesture(editModeDragGesture(for: widget))
         }
         .padding(8)
     }
@@ -198,7 +219,7 @@ private struct TodayPage: View {
     private var floatingWidget: some View {
         if let widget = draggingWidget,
            let location = dragLocation,
-           let frame = widgetFrames[widget] {
+           let frame = dragStartFrames[widget] {
             let position = CGPoint(
                 x: location.x - dragGrabOffset.width,
                 y: location.y - dragGrabOffset.height
@@ -226,13 +247,10 @@ private struct TodayPage: View {
 
     private func applyDragGesture(to view: some View, widget: PinnedWidget) -> some View {
         if isEditMode {
-            return AnyView(view.gesture(
-                DragGesture(minimumDistance: 4, coordinateSpace: .named(WidgetGridLayout.coordinateSpaceName))
-                    .onChanged { value in updateDrag(widget: widget, value: value) }
-                    .onEnded { value in
-                        finishDrag(widget: widget, at: value.location)
-                    }
-            ))
+            // In edit mode only the dedicated handle starts a drag. Attaching
+            // the gesture to the whole card also attaches it to the resize
+            // button, allowing one mouse-up to resize and reorder concurrently.
+            return AnyView(view)
         } else {
             return AnyView(view.simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.28, maximumDistance: 8)
@@ -257,11 +275,27 @@ private struct TodayPage: View {
         }
     }
 
+    private func editModeDragGesture(for widget: PinnedWidget) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named(WidgetGridLayout.coordinateSpaceName))
+            .onChanged { value in updateDrag(widget: widget, value: value) }
+            .onEnded { value in
+                finishDrag(widget: widget, at: value.location)
+            }
+    }
+
     private func updateDrag(widget: PinnedWidget, value: DragGesture.Value) {
         guard draggingWidget == nil || draggingWidget == widget,
-              let frame = widgetFrames[widget] else { return }
+              value.location.x.isFinite,
+              value.location.y.isFinite else { return }
 
         if draggingWidget == nil {
+            guard let frame = widgetFrames[widget],
+                  frame.width > 0,
+                  frame.height > 0,
+                  !frame.isNull,
+                  !frame.isInfinite else { return }
+            dragStartFrames = widgetFrames
+            dragStartOrder = viewModel.settings.pinnedWidgets
             dragGrabOffset = CGSize(
                 width: value.startLocation.x - frame.midX,
                 height: value.startLocation.y - frame.midY
@@ -275,39 +309,53 @@ private struct TodayPage: View {
         dragLocation = value.location
     }
 
-    private func attemptGridReorder(_ widget: PinnedWidget, at location: CGPoint) {
-        let current = viewModel.settings.pinnedWidgets
-        guard let from = current.firstIndex(of: widget) else { return }
+    private func reorderedWidgets(_ widget: PinnedWidget, at location: CGPoint) -> [PinnedWidget]? {
+        guard location.x.isFinite, location.y.isFinite else { return nil }
+        let current = dragStartOrder
+        guard let from = current.firstIndex(of: widget) else { return nil }
 
         let itemFrames = current.enumerated().compactMap { index, widget in
-            widgetFrames[widget].map { WidgetGridItemFrame(index: index, frame: $0) }
+            dragStartFrames[widget].map { WidgetGridItemFrame(index: index, frame: $0) }
         }
+        guard itemFrames.count == current.count else { return nil }
         guard let target = WidgetGridLayout.targetIndex(at: location, in: itemFrames),
-              target != from else { return }
+              target != from else { return nil }
 
-        withAnimation(DN.transition) {
-            viewModel.settings.pinnedWidgets = WidgetGridLayout.reorder(
-                current,
-                movingFrom: from,
-                to: target
-            )
-        }
+        return WidgetGridLayout.reorder(current, movingFrom: from, to: target)
     }
 
     private func finishDrag(widget: PinnedWidget, at location: CGPoint) {
-        // Commit only once, after the drag ends. Reordering during onChanged
-        // invalidates the preference frames while SwiftUI is still animating
-        // them, which can make subsequent hit tests jump between stale rows.
-        attemptGridReorder(widget, at: location)
-        cancelDrag()
+        let originalOrder = dragStartOrder
+        let reordered = reorderedWidgets(widget, at: location)
+        cancelDrag(animated: false)
+
+        guard let reordered else { return }
+        // Let SwiftUI tear down the gesture and floating overlay before
+        // changing ForEach structure. This avoids an AttributeGraph update
+        // cycle when a widget moves between one- and two-column rows.
+        DispatchQueue.main.async {
+            guard viewModel.settings.pinnedWidgets == originalOrder else { return }
+            withAnimation(DN.transition) {
+                viewModel.settings.pinnedWidgets = reordered
+            }
+        }
     }
 
-    private func cancelDrag() {
+    private func cancelDrag(animated: Bool = true) {
         viewModel.isDraggingWidget = false
-        withAnimation(DN.transition) {
+        let reset = {
             draggingWidget = nil
             dragLocation = nil
             dragGrabOffset = .zero
+            dragStartFrames = [:]
+            dragStartOrder = []
+        }
+        if animated {
+            withAnimation(DN.transition) {
+                reset()
+            }
+        } else {
+            reset()
         }
     }
 
@@ -327,7 +375,7 @@ private struct TodayPage: View {
 
     private var composer: some View {
         HStack(spacing: 10) {
-            ChatModelSelectorView(viewModel: viewModel, maxWidth: 122)
+            ChatModelSelectorView(viewModel: viewModel)
 
             TextField(
                 "Ask Perch anything…",
@@ -410,7 +458,12 @@ private struct TodayClockCard: View {
                 Text(viewModel.dateString)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
-                editButton
+                HStack(spacing: 4) {
+                    if isEditMode {
+                        resetLayoutButton
+                    }
+                    editButton
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -435,6 +488,33 @@ private struct TodayClockCard: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private var resetLayoutButton: some View {
+        Button {
+            let selected = Set(viewModel.settings.pinnedWidgets)
+            let defaultOrder = PinnedWidget.allCases.filter { selected.contains($0) }
+            withAnimation(DN.transition) {
+                viewModel.settings.widgetSizes = [:]
+                viewModel.settings.pinnedWidgets = defaultOrder
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 8, weight: .semibold))
+                Text("Reset")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(Color.white.opacity(0.55))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.07))
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Reset widget order and sizes")
     }
 }
 

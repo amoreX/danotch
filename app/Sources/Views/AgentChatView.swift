@@ -330,7 +330,7 @@ struct AgentChatView: View {
 
     private var inputBar: some View {
         HStack(spacing: 10) {
-            ChatModelSelectorView(viewModel: viewModel, maxWidth: 122)
+            ChatModelSelectorView(viewModel: viewModel)
 
             TextField(
                 "Message agent",

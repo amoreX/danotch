@@ -7,7 +7,7 @@ struct QuickPromptView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            ChatModelSelectorView(viewModel: viewModel, maxWidth: 112)
+            ChatModelSelectorView(viewModel: viewModel)
 
             TextField(
                 "Ask Perch anything…",

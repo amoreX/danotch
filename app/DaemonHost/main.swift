@@ -513,7 +513,22 @@ private func run() throws {
     _ = umask(0o077)
     try secureDaemonDirectories()
     let store = try KeychainStore(appBundle: layout.appBundle)
-    var installationSecret = try store.installationSecret()
+    var installationSecret: Data
+#if DEBUG
+    if let developmentValue = ProcessInfo.processInfo.environment[
+        "PERCH_DEV_INSTALLATION_SECRET"
+    ] {
+        let developmentData = Data(developmentValue.utf8)
+        guard KeychainStore.isValidInstallationSecret(developmentData) else {
+            throw HostError.invalidRequest("development installation secret")
+        }
+        installationSecret = developmentData
+    } else {
+        installationSecret = try store.installationSecret()
+    }
+#else
+    installationSecret = try store.installationSecret()
+#endif
     defer { installationSecret.resetBytes(in: 0..<installationSecret.count) }
     var installationSecretString = String(data: installationSecret, encoding: .utf8)
     guard installationSecretString != nil else {

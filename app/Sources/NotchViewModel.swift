@@ -65,29 +65,30 @@ class NotchSettings: ObservableObject {
     private static let configDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".danotch")
     private static let configFile = configDir.appendingPathComponent("settings.json")
     private static let onboardingConfigFile = configDir.appendingPathComponent("onboarding.json")
+    private var isLoading = true
 
     // Chat behavior
-    @Published var openChatOnSend: Bool        { didSet { save() } }
-    @Published var restoreLastView: Bool       { didSet { save() } }
-    @Published var keepOpenInChat: Bool        { didSet { save() } }
-    @Published var selectedDefaultModel: String { didSet { save() } }
-    @Published var userName: String            { didSet { save() } }
+    @Published var openChatOnSend: Bool        { didSet { saveIfReady() } }
+    @Published var restoreLastView: Bool       { didSet { saveIfReady() } }
+    @Published var keepOpenInChat: Bool        { didSet { saveIfReady() } }
+    @Published var selectedDefaultModel: String { didSet { saveIfReady() } }
+    @Published var userName: String            { didSet { saveIfReady() } }
 
     // Display — pinned widgets
-    @Published var pinnedWidgets: [PinnedWidget] { didSet { save() } }
-    @Published var showBattery: Bool           { didSet { save() } }
+    @Published var pinnedWidgets: [PinnedWidget] { didSet { saveIfReady() } }
+    @Published var showBattery: Bool           { didSet { saveIfReady() } }
 
     // Agents
-    @Published var showAgentLiveState: Bool    { didSet { save() } }
-    @Published var compactAgentRows: Bool      { didSet { save() } }
+    @Published var showAgentLiveState: Bool    { didSet { saveIfReady() } }
+    @Published var compactAgentRows: Bool      { didSet { saveIfReady() } }
 
     // Privacy / local access
-    @Published var agentMonitoringEnabled: Bool { didSet { save() } }
-    @Published var musicControlsEnabled: Bool   { didSet { save() } }
-    @Published var systemNotificationsEnabled: Bool { didSet { save() } }
+    @Published var agentMonitoringEnabled: Bool { didSet { saveIfReady() } }
+    @Published var musicControlsEnabled: Bool   { didSet { saveIfReady() } }
+    @Published var systemNotificationsEnabled: Bool { didSet { saveIfReady() } }
 
     // Widget sizing: rawValue → "half" | "full"
-    @Published var widgetSizes: [String: String] = [:] { didSet { save() } }
+    @Published var widgetSizes: [String: String] = [:] { didSet { saveIfReady() } }
 
     func widgetIsFullWidth(_ widget: PinnedWidget) -> Bool {
         widgetSizes[widget.rawValue] == "full"
@@ -130,7 +131,7 @@ class NotchSettings: ObservableObject {
     }
 
     // UI state (persisted across restarts)
-    @Published var collapsedGroups: Set<String> { didSet { save() } }
+    @Published var collapsedGroups: Set<String> { didSet { saveIfReady() } }
 
     static let defaultAnthropicModel = "claude-haiku-4-5"
 
@@ -153,6 +154,17 @@ class NotchSettings: ObservableObject {
 
         // Then load from file
         load()
+        isLoading = false
+        save()
+    }
+
+    private func saveIfReady() {
+        guard !isLoading else { return }
+        save()
+    }
+
+    func flush() {
+        save()
     }
 
     private func save() {
@@ -175,9 +187,13 @@ class NotchSettings: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: Self.configDir, withIntermediateDirectories: true, attributes: nil)
             let json = try JSONSerialization.data(withJSONObject: data, options: [.prettyPrinted, .sortedKeys])
-            try json.write(to: Self.configFile)
+            try json.write(to: Self.configFile, options: [.atomic])
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o600))],
+                ofItemAtPath: Self.configFile.path
+            )
         } catch {
-            // Silent fail
+            print("[Perch] Settings save failed: \(error.localizedDescription)")
         }
     }
 
@@ -191,7 +207,10 @@ class NotchSettings: ObservableObject {
         if let v = json["selectedDefaultModel"] as? String, !v.isEmpty { selectedDefaultModel = v }
         if let v = json["userName"] as? String { userName = v }
         if let v = json["pinnedWidgets"] as? [String] {
-            pinnedWidgets = v.compactMap { PinnedWidget(rawValue: $0) }
+            var seen = Set<PinnedWidget>()
+            pinnedWidgets = v.compactMap(PinnedWidget.init(rawValue:)).filter {
+                seen.insert($0).inserted
+            }
         } else {
             // Migrate from old settings
             var migrated: [PinnedWidget] = []
@@ -211,7 +230,12 @@ class NotchSettings: ObservableObject {
         if let v = json["systemNotificationsEnabled"] as? Bool { systemNotificationsEnabled = v }
         migrateOnboardingPrivacySettingsIfNeeded(currentSettings: json)
         if let v = json["collapsedGroups"] as? [String] { collapsedGroups = Set(v) }
-        if let v = json["widgetSizes"] as? [String: String] { widgetSizes = v }
+        if let v = json["widgetSizes"] as? [String: String] {
+            widgetSizes = v.filter {
+                PinnedWidget(rawValue: $0.key) != nil
+                    && ($0.value == "half" || $0.value == "full")
+            }
+        }
     }
 
     private func migrateOnboardingPrivacySettingsIfNeeded(currentSettings: [String: Any]) {

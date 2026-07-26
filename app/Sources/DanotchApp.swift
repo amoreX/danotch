@@ -194,6 +194,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         NotificationCenter.default.removeObserver(self)
+        viewModel.settings.flush()
         viewModel.interruptInProgressConversations()
         viewModel.cancelDaemonConnection()
     }
