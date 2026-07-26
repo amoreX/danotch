@@ -43,7 +43,7 @@ struct ChatModelSelectorView: View {
                 } label: {
                     HStack {
                         if model.id == viewModel.settings.selectedDefaultModel {
-                            Image(systemName: "check")
+                            Image(systemName: "checkmark")
                         }
                         Text(model.displayName)
                         if let context = model.contextLength {
@@ -76,6 +76,10 @@ struct ChatModelSelectorView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(DN.success)
 
                 if viewModel.isLoadingModels {
                     ProgressView()

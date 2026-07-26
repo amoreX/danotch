@@ -15,6 +15,8 @@ class AgentMonitor: ObservableObject {
     }
 
     private var timer: Timer?
+    private let refreshLock = NSLock()
+    private var refreshInFlight = false
 
     init(enabled: Bool = true) {
         if enabled {
@@ -44,9 +46,23 @@ class AgentMonitor: ObservableObject {
 
     func refresh() {
         guard timer != nil else { return }
+        refreshLock.lock()
+        guard !refreshInFlight else {
+            refreshLock.unlock()
+            return
+        }
+        refreshInFlight = true
+        refreshLock.unlock()
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            defer {
+                self.refreshLock.lock()
+                self.refreshInFlight = false
+                self.refreshLock.unlock()
+            }
             let detected = Self.scanAgents()
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 guard self?.timer != nil else { return }
                 withAnimation(.easeOut(duration: 0.2)) {
                     self?.agents = detected

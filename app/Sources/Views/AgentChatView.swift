@@ -143,17 +143,21 @@ struct AgentChatView: View {
             }
             .onChange(of: task.chatHistory.count) { _, _ in
                 autoScroll = true
-                scrollToBottom(proxy)
+                scrollToBottom(proxy, animated: true)
             }
             .onChange(of: task.streamingText) { _, _ in
-                if autoScroll { scrollToBottom(proxy) }
+                if autoScroll { scrollToBottom(proxy, animated: false) }
             }
-            .onAppear { scrollToBottom(proxy) }
+            .onAppear { scrollToBottom(proxy, animated: false) }
         }
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.18)) {
+    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
+        if animated {
+            withAnimation(.easeOut(duration: 0.18)) {
+                proxy.scrollTo(bottomAnchorId, anchor: .bottom)
+            }
+        } else {
             proxy.scrollTo(bottomAnchorId, anchor: .bottom)
         }
     }
@@ -575,28 +579,23 @@ private struct StreamingMessage: View {
 // MARK: - Thinking bubble
 
 private struct ThinkingBubble: View {
-    @State private var phase = 0
-
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(0..<3, id: \.self) { i in
-                Circle()
-                    .fill(.white)
-                    .frame(width: 5, height: 5)
-                    .opacity(phase == i ? 1 : 0.3)
-                    .scaleEffect(phase == i ? 1.0 : 0.85)
+        TimelineView(.periodic(from: .now, by: 0.35)) { context in
+            let phase = Int(context.date.timeIntervalSinceReferenceDate / 0.35) % 3
+            HStack(spacing: 6) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 5, height: 5)
+                        .opacity(phase == i ? 1 : 0.3)
+                        .scaleEffect(phase == i ? 1.0 : 0.85)
+                }
             }
+            .animation(.easeInOut(duration: 0.25), value: phase)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .perchGlass(in: Capsule())
-        .onAppear {
-            Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { _ in
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    phase = (phase + 1) % 3
-                }
-            }
-        }
     }
 }
 

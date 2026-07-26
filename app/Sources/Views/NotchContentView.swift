@@ -1110,6 +1110,8 @@ class NowPlayingMonitor: ObservableObject {
 
     private var timer: Timer?
     private var lastTrackKey: String?
+    private let pollLock = NSLock()
+    private var pollInFlight = false
     private static let artPath = "/tmp/perch_art.png"
 
     var progress: Double { duration > 0 ? position / duration : 0 }
@@ -1179,7 +1181,21 @@ class NowPlayingMonitor: ObservableObject {
     }
 
     func poll() {
+        pollLock.lock()
+        guard !pollInFlight else {
+            pollLock.unlock()
+            return
+        }
+        pollInFlight = true
+        pollLock.unlock()
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            defer {
+                self.pollLock.lock()
+                self.pollInFlight = false
+                self.pollLock.unlock()
+            }
             // Cheap native check first (NSWorkspace, no subprocess) — most of the
             // time neither app is running, so this avoids two osascript spawns
             // every 2 seconds forever. Each osascript spawn is heavier than a
@@ -1192,14 +1208,14 @@ class NowPlayingMonitor: ObservableObject {
 
             guard musicRunning || spotifyRunning else {
                 DispatchQueue.main.async {
-                    guard self?.timer != nil else { return }
-                    guard self?.track != nil || self?.source != nil else { return }
-                    self?.source = nil
-                    self?.track = nil
-                    self?.artist = nil
-                    self?.isPlaying = false
-                    self?.artworkImage = nil
-                    self?.lastTrackKey = nil
+                    guard self.timer != nil else { return }
+                    guard self.track != nil || self.source != nil else { return }
+                    self.source = nil
+                    self.track = nil
+                    self.artist = nil
+                    self.isPlaying = false
+                    self.artworkImage = nil
+                    self.lastTrackKey = nil
                 }
                 return
             }
@@ -1211,8 +1227,8 @@ class NowPlayingMonitor: ObservableObject {
             let chosen = Self.pick(music: music, spotify: spotify)
 
             let trackKey = chosen.result.track.map { "\(chosen.source?.rawValue ?? "_")|\($0)" }
-            let trackChanged = trackKey != self?.lastTrackKey
-            var artwork: NSImage? = self?.artworkImage
+            let trackChanged = trackKey != self.lastTrackKey
+            var artwork: NSImage? = self.artworkImage
 
             if trackChanged, let src = chosen.source, chosen.result.track != nil {
                 artwork = Self.fetchArtwork(for: src, artworkURL: chosen.result.artworkURL)
@@ -1220,15 +1236,15 @@ class NowPlayingMonitor: ObservableObject {
             if chosen.result.track == nil { artwork = nil }
 
             DispatchQueue.main.async {
-                guard self?.timer != nil else { return }
-                self?.source = chosen.source
-                self?.track = chosen.result.track
-                self?.artist = chosen.result.artist
-                self?.isPlaying = chosen.result.playing
-                self?.position = chosen.result.position
-                self?.duration = chosen.result.duration
-                self?.lastTrackKey = trackKey
-                if trackChanged { self?.artworkImage = artwork }
+                guard self.timer != nil else { return }
+                self.source = chosen.source
+                self.track = chosen.result.track
+                self.artist = chosen.result.artist
+                self.isPlaying = chosen.result.playing
+                self.position = chosen.result.position
+                self.duration = chosen.result.duration
+                self.lastTrackKey = trackKey
+                if trackChanged { self.artworkImage = artwork }
             }
         }
     }

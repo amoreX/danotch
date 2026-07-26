@@ -309,6 +309,8 @@ class NotchViewModel: ObservableObject {
     private var settingsCancellable: AnyCancellable?
     private var cancellables: Set<AnyCancellable> = []
     private var selectedExecutionWorkspaces: [String: URL] = [:]
+    private var pendingStreamingChunks: [String: [String]] = [:]
+    private var streamingUpdateTasks: [String: Task<Void, Never>] = [:]
 
     var timeString: String { CachedFormatters.time.string(from: currentTime) }
     var periodString: String { CachedFormatters.period.string(from: currentTime) }
@@ -382,6 +384,14 @@ class NotchViewModel: ObservableObject {
         daemonConnection.onEvent = { [weak self] installationID, event in
             guard let self, self.installationID == installationID else { return }
             self.processEvent(event)
+        }
+    }
+
+    deinit {
+        clockTimer?.invalidate()
+        shimmerTimer?.invalidate()
+        for task in streamingUpdateTasks.values {
+            task.cancel()
         }
     }
 
@@ -1709,11 +1719,17 @@ class NotchViewModel: ObservableObject {
             return
         }
         let progressType = data["type"] as? String ?? ""
+        if progressType == "token", let text = data["text"] as? String {
+            tasks[idx].status = .running
+            enqueueStreamingText(text, sessionId: sessionId)
+            return
+        }
+        if progressType == "text_flush" || progressType == "thinking_complete" {
+            discardPendingStreamingText(sessionId: sessionId)
+        }
         withAnimation(.snappy(duration: 0.2)) {
             tasks[idx].status = .running
             switch progressType {
-            case "token":
-                if let text = data["text"] as? String { tasks[idx].streamingText += text }
             case "text_flush":
                 if let text = data["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     tasks[idx].chatHistory.append(ChatMessage(
@@ -1751,8 +1767,38 @@ class NotchViewModel: ObservableObject {
         }
     }
 
+    private func enqueueStreamingText(_ text: String, sessionId: String) {
+        guard !text.isEmpty else { return }
+        pendingStreamingChunks[sessionId, default: []].append(text)
+        guard streamingUpdateTasks[sessionId] == nil else { return }
+
+        streamingUpdateTasks[sessionId] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+            self?.flushPendingStreamingText(sessionId: sessionId)
+        }
+    }
+
+    private func flushPendingStreamingText(sessionId: String) {
+        streamingUpdateTasks[sessionId] = nil
+        guard let chunks = pendingStreamingChunks.removeValue(forKey: sessionId),
+              let idx = tasks.firstIndex(where: { $0.id == sessionId }) else { return }
+
+        let combined = tasks[idx].streamingText + chunks.joined()
+        // The final full response arrives in text_flush/done. Keep only a
+        // bounded live preview so long generations cannot grow and reparse an
+        // unlimited Markdown tree on every display update.
+        tasks[idx].streamingText = String(combined.suffix(32_768))
+    }
+
+    private func discardPendingStreamingText(sessionId: String) {
+        streamingUpdateTasks.removeValue(forKey: sessionId)?.cancel()
+        pendingStreamingChunks.removeValue(forKey: sessionId)
+    }
+
     private func handleDone(sessionId: String, data: [String: Any]) {
         guard let idx = tasks.firstIndex(where: { $0.id == sessionId }) else { return }
+        discardPendingStreamingText(sessionId: sessionId)
         let statusStr = data["status"] as? String ?? "completed"
         withAnimation(.snappy(duration: 0.3)) {
             tasks[idx].status = TaskStatus(rawValue: statusStr) ?? .completed
