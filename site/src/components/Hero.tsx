@@ -9,6 +9,7 @@ import {
 } from 'framer-motion';
 import Button from './Button';
 import { CurrentAppPreview } from './Features';
+import { SITE } from './site-config';
 
 function AppleIcon() {
   return (
@@ -193,18 +194,18 @@ export default function Hero({ ready = true }: { ready?: boolean }) {
             in your notch.
           </motion.h1>
 
-          {/* Source install CTA */}
+          {/* GitHub CTA */}
           <motion.div
             className="mt-8 sm:mt-16"
             initial={false}
             animate={{ opacity: ready ? 1 : 0, y: ready ? 0 : 18 }}
             transition={reduceMotion ? { duration: 0 } : { duration: 0.55, delay: 0.36, ease: [0.16, 1, 0.3, 1] }}
           >
-            <Button href="#download" size="xl">
+            <Button href={SITE.repositoryUrl} size="xl" external>
               <span className="[&_svg]:size-4">
                 <AppleIcon />
               </span>
-              Install from source
+              Get Perch for Mac
             </Button>
           </motion.div>
 

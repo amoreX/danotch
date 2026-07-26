@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import Button from './Button';
+import { SITE } from './site-config';
 
 const NAV_SECTIONS = [
   { id: 'home', label: 'Home', href: '#home' },
   { id: 'features', label: 'Features', href: '#features' },
-  { id: 'download', label: 'Install', href: '#download' },
+  { id: 'download', label: 'Download', href: '#download' },
   { id: 'contact', label: 'Contact', href: '#contact' },
 ];
 
@@ -13,6 +14,14 @@ function AppleIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98l-.09.06c-.22.15-2.19 1.3-2.17 3.88.03 3.08 2.71 4.12 2.75 4.13-.05.13-.42 1.45-1.33 2.56M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z" />
+    </svg>
+  );
+}
+
+function GitHubIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z" />
     </svg>
   );
 }
@@ -143,6 +152,7 @@ function NotchRailShoulder({ side }: { side: 'left' | 'right' }) {
 export default function Navbar({ ready = true }: { ready?: boolean }) {
   const reduceMotion = useReducedMotion();
   const [activeSection, setActiveSection] = useState(NAV_SECTIONS[0].id);
+  const [repositoryStars, setRepositoryStars] = useState<number | null>(null);
   const sectionRefs = useRef<Array<HTMLAnchorElement | null>>([]);
   const scrollLockRef = useRef<string | null>(null);
   const scrollSettleTimerRef = useRef<number | null>(null);
@@ -158,6 +168,28 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
     .slice(0, activeIndex)
     .reduce((total, width) => total + width, 0);
   const sectionRowWidth = sectionWidths.reduce((total, width) => total + width, 0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch('https://api.github.com/repos/unordinarytech/perch', {
+      headers: { Accept: 'application/vnd.github+json' },
+      signal: controller.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error('GitHub request failed');
+        return response.json() as Promise<{ stargazers_count?: unknown }>;
+      })
+      .then((repository) => {
+        if (typeof repository.stargazers_count === 'number') {
+          setRepositoryStars(repository.stargazers_count);
+        }
+      })
+      .catch(() => {
+        // Keep the compact fallback when GitHub is unavailable or rate-limited.
+      });
+
+    return () => controller.abort();
+  }, []);
 
   useLayoutEffect(() => {
     const measureSectionWidths = () => {
@@ -252,12 +284,12 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
             Features
           </a>
           <a href="#download" className="rounded-full px-3 py-2 text-xs text-white/65 no-underline">
-            Install
+            Download
           </a>
         </nav>
         <a
           href="#download"
-          aria-label="Install Perch from source"
+          aria-label="Download Perch"
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#7b6af0] text-white no-underline"
         >
           <AppleIcon />
@@ -375,20 +407,27 @@ export default function Navbar({ ready = true }: { ready?: boolean }) {
         <NotchRailShoulder side="right" />
         <Button href="#download" size="lg">
           <AppleIcon />
-          Install
+          Download
         </Button>
         <a
-          href="#contact"
-          aria-label="Contact"
-          className="h-10 w-10 inline-flex items-center justify-center rounded-full bg-white/10 text-white no-underline transition-colors hover:bg-white/15"
+          href={SITE.repositoryUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={
+            repositoryStars === null
+              ? 'View Perch on GitHub'
+              : `${repositoryStars} GitHub ${repositoryStars === 1 ? 'star' : 'stars'}`
+          }
+          className="h-10 min-w-10 gap-1.5 inline-flex items-center justify-center rounded-full bg-white/10 px-3 text-white no-underline transition-colors hover:bg-white/15"
           style={{
             fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
-            fontSize: 15,
+            fontSize: 13,
             fontWeight: 600,
             lineHeight: 1,
           }}
         >
-          ?
+          <GitHubIcon />
+          <span>{repositoryStars ?? '—'}</span>
         </a>
       </div>
       </div>

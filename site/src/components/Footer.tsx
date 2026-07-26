@@ -1,12 +1,3 @@
-import { SITE } from './site-config';
-
-const FOOTER_LINKS = [
-  { label: 'Install', href: '#download' },
-  { label: 'Changelog', href: SITE.changelogUrl },
-  { label: 'Security', href: SITE.securityArchitectureUrl },
-  { label: 'Contact', href: `mailto:${SITE.supportEmail}` },
-];
-
 const FOOTER_SURFACE = '#111111';
 const FOOTER_BAR_HEIGHT = 112;
 const FOOTER_SHOULDER_SIZE = 34;
@@ -76,26 +67,15 @@ export default function Footer() {
     <footer id="contact" className="bg-white pt-12 md:pt-20">
       <div className="mx-1 rounded-t-[28px] bg-[#111111] px-5 pb-8 pt-10 md:hidden">
         <p className="m-0 text-[clamp(52px,18vw,84px)] leading-none text-white">Perch</p>
-        <div className="mt-12 flex flex-col gap-6 border-t border-white/10 pt-6">
-          <p className="m-0 text-xs leading-relaxed text-white/65">
-            Questions?{' '}
-            <a href={`mailto:${SITE.supportEmail}`} className="text-white/80 no-underline hover:text-white">
-              {SITE.supportEmail}
-            </a>
-          </p>
-          <nav className="flex flex-wrap items-center gap-5" aria-label="Footer navigation">
-            {FOOTER_LINKS.map((link) => (
-              <a
-                key={link.label}
-                href={link.href}
-                target={link.href.startsWith('http') ? '_blank' : undefined}
-                rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-                className="text-xs text-white/70 no-underline"
-              >
-                {link.label}
-              </a>
-            ))}
-          </nav>
+        <div className="mt-12 border-t border-white/10 pt-6">
+          <a
+            href="https://www.unordinary.software/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-white/70 no-underline hover:text-white"
+          >
+            Contact us
+          </a>
         </div>
       </div>
 
@@ -145,30 +125,15 @@ export default function Footer() {
             paddingRight: CONTAINER_ALIGN,
           }}
         >
-          <p
-            className="m-0 max-w-md text-white/65"
+          <a
+            href="https://www.unordinary.software/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-white/70 no-underline transition-colors hover:text-white"
             style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, lineHeight: 1.7, letterSpacing: '-0.02em' }}
           >
-            Questions?{' '}
-            <a href={`mailto:${SITE.supportEmail}`} className="text-white/80 no-underline hover:text-white">
-              {SITE.supportEmail}
-            </a>
-          </p>
-
-          <nav className="flex flex-wrap items-center gap-x-5 gap-y-2" aria-label="Footer navigation">
-            {FOOTER_LINKS.map((link) => (
-              <a
-                key={link.label}
-                href={link.href}
-                target={link.href.startsWith('http') ? '_blank' : undefined}
-                rel={link.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-                className="text-white/70 no-underline transition-colors hover:text-white"
-                style={{ fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontSize: 13, letterSpacing: '-0.02em' }}
-              >
-                {link.label}
-              </a>
-            ))}
-          </nav>
+            Contact us
+          </a>
         </div>
       </div>
     </footer>
