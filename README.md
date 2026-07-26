@@ -3,7 +3,7 @@
 Perch is a free, open-source macOS notch assistant for developers. It keeps AI
 tools, coding-agent activity, scheduled work, and useful Mac controls one hover
 away.
-
+<img width="1512" height="860" alt="image" src="https://github.com/user-attachments/assets/0a961042-fb4f-45c8-85b2-92228a4b5b59" />
 
 
 ## Features
