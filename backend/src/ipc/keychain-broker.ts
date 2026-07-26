@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { createReadStream, createWriteStream, fstatSync } from 'node:fs';
 import { createInterface, type Interface } from 'node:readline';
 
 export const CREDENTIALS = [
@@ -39,19 +38,15 @@ export class KeychainBroker implements SecretBroker {
   private readonly writer?: NodeJS.WritableStream;
   private readonly pending = new Map<string, Pending>();
 
-  constructor(fd = 4, private readonly timeoutMs = 10_000) {
+  constructor(private readonly timeoutMs = 10_000) {
     if (this.nativeHost) return;
 
-    let input: NodeJS.ReadableStream;
-    try {
-      fstatSync(fd);
-      input = createReadStream('', { fd, autoClose: false });
-      this.writer = createWriteStream('', { fd, autoClose: false });
-    } catch {
-      input = process.stdin;
-      this.writer = process.stdout;
-    }
-    this.reader = createInterface({ input, crlfDelay: Infinity });
+    // PerchDaemonHost explicitly connects the daemon's stdin/stdout to its
+    // framed credential channel. Never guess an inherited descriptor: Node
+    // commonly owns fd 4 for an unrelated internal pipe, which silently
+    // black-holes Keychain requests.
+    this.writer = process.stdout;
+    this.reader = createInterface({ input: process.stdin, crlfDelay: Infinity });
     this.reader.on('line', (line) => this.receive(line));
     this.reader.on('close', () => this.failAll(new Error('Native credential channel closed')));
   }
@@ -99,9 +94,15 @@ export class KeychainBroker implements SecretBroker {
   ): Promise<string | undefined> {
     if (!this.writer) return Promise.reject(new Error('Native credential channel unavailable'));
     const id = randomUUID();
+    const startedAt = Date.now();
+    console.error(`[perch-keychain] request id=${id} operation=${operation} credential=${credential}`);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        console.error(
+          `[perch-keychain] timeout id=${id} operation=${operation} credential=${credential}`
+          + ` elapsed_ms=${Date.now() - startedAt}`,
+        );
         reject(new Error('Native credential operation timed out'));
       }, this.timeoutMs);
       timer.unref();
@@ -132,8 +133,13 @@ export class KeychainBroker implements SecretBroker {
     if (!pending) return;
     this.pending.delete(message.id);
     clearTimeout(pending.timer);
-    if (!message.ok) pending.reject(new Error('Native credential operation failed'));
-    else pending.resolve(message.value);
+    if (!message.ok) {
+      console.error(`[perch-keychain] response id=${message.id} ok=false`);
+      pending.reject(new Error('Native credential operation failed'));
+    } else {
+      console.error(`[perch-keychain] response id=${message.id} ok=true`);
+      pending.resolve(message.value);
+    }
   }
 
   private failAll(error: Error): void {

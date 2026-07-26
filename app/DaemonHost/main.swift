@@ -411,7 +411,8 @@ private final class JSONLineChannel {
             guard buffer.count <= HostConstants.maxLineBytes else {
                 throw HostError.invalidRequest("line too large")
             }
-            guard let chunk = try reader.read(upToCount: 4096), !chunk.isEmpty else {
+            let chunk = reader.availableData
+            guard !chunk.isEmpty else {
                 guard buffer.isEmpty else {
                     throw HostError.invalidRequest("unterminated line")
                 }
@@ -532,7 +533,41 @@ private func run() throws {
     // Validate last, immediately before launch. Strict resource validation
     // covers the sealed Node runtime and entry shim in Contents/Resources.
     try validateStaticSignature(of: layout.appBundle)
+
+    // Process children do not automatically die when this host receives a
+    // development-stack SIGINT/SIGTERM. Forward both signals so a stopped
+    // stack cannot leave an orphan daemon with a dead Keychain RPC channel.
+    signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
+    let interruptSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+    let terminateSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+    let stopChild = {
+        if process.isRunning {
+            process.terminate()
+            let childPID = process.processIdentifier
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1) {
+                if process.isRunning {
+                    _ = Darwin.kill(childPID, SIGKILL)
+                }
+            }
+        }
+    }
+    interruptSource.setEventHandler(handler: stopChild)
+    terminateSource.setEventHandler(handler: stopChild)
+    var signalSourcesResumed = false
+    defer {
+        if !signalSourcesResumed {
+            interruptSource.resume()
+            terminateSource.resume()
+        }
+        interruptSource.cancel()
+        terminateSource.cancel()
+    }
+
     try process.run()
+    interruptSource.resume()
+    terminateSource.resume()
+    signalSourcesResumed = true
 
     let channel = JSONLineChannel(
         reader: childOutput.fileHandleForReading,
@@ -546,6 +581,7 @@ private func run() throws {
     installationSecretString = nil
 
     do {
+        FileHandle.standardError.write(Data("[perch-keychain-host] credential loop ready\n".utf8))
         while let object = try channel.nextObject() {
             let request: RPCRequest
             do {
@@ -562,7 +598,15 @@ private func run() throws {
                 ])
                 continue
             }
-            try channel.send(response(for: request, store: store))
+            FileHandle.standardError.write(Data(
+                "[perch-keychain-host] request id=\(request.id) operation=\(request.operation) credential=\(request.credential)\n".utf8
+            ))
+            let result = response(for: request, store: store)
+            let succeeded = result["ok"] as? Bool == true
+            FileHandle.standardError.write(Data(
+                "[perch-keychain-host] response id=\(request.id) ok=\(succeeded)\n".utf8
+            ))
+            try channel.send(result)
         }
     } catch {
         if process.isRunning {

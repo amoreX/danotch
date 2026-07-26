@@ -118,12 +118,37 @@ function credentialRequest(operation, credential, value) {
   }
 
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    process.stdout.write(encoded, 'utf8', (error) => {
-      if (error) {
-        pending.delete(id);
+    const startedAt = Date.now();
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      console.error(
+        `[perch-native-shim] timeout id=${id} operation=${operation}`
+        + ` credential=${credential} elapsed_ms=${Date.now() - startedAt}`,
+      );
+      reject(new Error('native credential operation timed out'));
+    }, 10_000);
+    timer.unref();
+    console.error(`[perch-native-shim] request id=${id} operation=${operation} credential=${credential}`);
+    pending.set(id, {
+      resolve(value) {
+        clearTimeout(timer);
+        console.error(`[perch-native-shim] response id=${id} ok=true`);
+        resolve(value);
+      },
+      reject(error) {
+        clearTimeout(timer);
+        console.error(`[perch-native-shim] response id=${id} ok=false`);
         reject(error);
+      },
+    });
+    process.stdout.write(encoded, 'utf8', (error) => {
+      if (!error) {
+        console.error(`[perch-native-shim] write_complete id=${id}`);
+        return;
       }
+      const request = pending.get(id);
+      pending.delete(id);
+      request?.reject(error);
     });
   });
 }

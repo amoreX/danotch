@@ -153,11 +153,15 @@ export function createApp(deps: AppDependencies): Express {
   app.put('/v1/config/providers', async (req, res) => {
     let credential: Credential | undefined;
     let previous: string | undefined;
+    const startedAt = Date.now();
     try {
       const input = await localProviderInput(req.body, true);
       credential = providerCredential(input.externalProvider);
+      console.error(`[perch-provider] save_start provider=${input.externalProvider}`);
       previous = await deps.broker.getCredential(credential);
+      console.error(`[perch-provider] keychain_read provider=${input.externalProvider}`);
       await deps.broker.setCredential(credential, input.apiKey!);
+      console.error(`[perch-provider] keychain_write provider=${input.externalProvider}`);
       const provider = repos.saveProvider({
         id: input.externalProvider,
         provider: input.provider,
@@ -166,8 +170,16 @@ export function createApp(deps: AppDependencies): Express {
         keychainAccount: credential,
         active: true,
       });
+      console.error(
+        `[perch-provider] save_complete provider=${input.externalProvider}`
+        + ` elapsed_ms=${Date.now() - startedAt}`,
+      );
       res.json({ provider: providerPayload(provider), saved: true });
     } catch (error) {
+      console.error(
+        `[perch-provider] save_failed credential=${credential ?? 'unresolved'}`
+        + ` elapsed_ms=${Date.now() - startedAt} error=${publicError(error)}`,
+      );
       if (credential) {
         try {
           if (previous !== undefined) await deps.broker.setCredential(credential, previous);

@@ -1206,8 +1206,8 @@ struct ProviderRow: View {
     private var isActive: Bool { config?.isActive ?? false }
     private var isConfigured: Bool { config != nil }
     private var isVerifying: Bool { viewModel.providerVerifying[providerType] ?? false }
-    private var isVerified: Bool {
-        (viewModel.providerVerified[providerType] ?? false) || (config?.isVerified ?? false)
+    private var isCurrentInputVerified: Bool {
+        viewModel.providerVerified[providerType] == true
     }
     private var error: String? { viewModel.providerError[providerType] ?? nil }
 
@@ -1301,7 +1301,7 @@ struct ProviderRow: View {
                     }
 
                     HStack(spacing: 8) {
-                        Button(isVerifying ? "Verifying…" : (isVerified && apiKey.isEmpty ? "Verified" : "Verify")) {
+                        Button(isVerifying ? "Verifying…" : (isCurrentInputVerified ? "Verified" : "Verify")) {
                             guard !apiKey.isEmpty else { return }
                             let model = modelId.isEmpty ? defaultModel : modelId
                             viewModel.verifyProviderKey(
@@ -1314,9 +1314,14 @@ struct ProviderRow: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.clear)
-                        .disabled(apiKey.isEmpty || isVerifying)
+                        .disabled(
+                            apiKey.isEmpty
+                                || isVerifying
+                                || isCurrentInputVerified
+                                || (providerType == "custom" && baseURL.isEmpty)
+                        )
 
-                        Button(isConfigured ? "Update & Use" : "Save & Use") {
+                        Button("Save") {
                             guard !apiKey.isEmpty else { return }
                             let model = modelId.isEmpty ? defaultModel : modelId
                             viewModel.saveProviderConfig(
@@ -1324,14 +1329,17 @@ struct ProviderRow: View {
                                 apiKey: apiKey,
                                 modelId: model,
                                 baseURL: baseURL.isEmpty ? nil : baseURL
-                            )
-                            apiKey = ""
+                            ) { saved in
+                                if saved {
+                                    apiKey = ""
+                                }
+                            }
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(DN.activeAccent)
                         .foregroundStyle(.white)
-                        .disabled(apiKey.isEmpty)
+                        .disabled(apiKey.isEmpty || !isCurrentInputVerified)
 
                         Spacer()
 
@@ -1378,6 +1386,15 @@ struct ProviderRow: View {
                 isExpanded = true
                 modelId = config?.modelId ?? defaultModel
             }
+        }
+        .onChange(of: apiKey) { _, _ in
+            viewModel.providerVerified[providerType] = false
+        }
+        .onChange(of: modelId) { _, _ in
+            viewModel.providerVerified[providerType] = false
+        }
+        .onChange(of: baseURL) { _, _ in
+            viewModel.providerVerified[providerType] = false
         }
     }
 }

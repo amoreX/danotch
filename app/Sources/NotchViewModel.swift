@@ -1170,6 +1170,7 @@ class NotchViewModel: ObservableObject {
             completion?(false)
             return
         }
+        print("[Perch] Provider save started: \(provider)")
         Task {
             do {
                 var body: [String: Any] = [
@@ -1190,11 +1191,13 @@ class NotchViewModel: ObservableObject {
                         self.activeModelProvider = provider
                         self.settings.selectedDefaultModel = modelId
                     }
+                    print("[Perch] Provider save completed: \(provider), saved=\(saved)")
                     self.loadProviderConfigs()
                     completion?(saved)
                 }
             } catch {
                 await MainActor.run {
+                    print("[Perch] Provider save failed: \(provider): \(error.localizedDescription)")
                     self.providerError[provider] = error.localizedDescription
                     completion?(false)
                 }

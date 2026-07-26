@@ -549,11 +549,29 @@ final class LocalDaemonConnection: ObservableObject {
         method: String = "GET",
         json: [String: Any]? = nil
     ) async throws -> Data {
+        guard descriptor != nil, sessionToken != nil else {
+            throw LocalDaemonError.daemonUnavailable
+        }
+        let response = try await performRequest(path, method: method, json: json)
+        if response.status == 401 {
+            try await renewSessionToken()
+            let retried = try await performRequest(path, method: method, json: json)
+            return try validatedData(from: retried)
+        }
+        return try validatedData(from: response)
+    }
+
+    private func performRequest(
+        _ path: String,
+        method: String,
+        json: [String: Any]?
+    ) async throws -> (data: Data, status: Int) {
         guard let descriptor, let sessionToken else {
             throw LocalDaemonError.daemonUnavailable
         }
         let normalized = path.hasPrefix("/") ? String(path.dropFirst()) : path
         var request = URLRequest(url: descriptor.baseURL.appendingPathComponent(normalized))
+        request.timeoutInterval = 15
         request.httpMethod = method
         request.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
         request.setValue("perch://app", forHTTPHeaderField: "Origin")
@@ -563,14 +581,33 @@ final class LocalDaemonConnection: ObservableObject {
         }
         let (data, response) = try await urlSession.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard (200...299).contains(status) else {
-            let payload = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        return (data, status)
+    }
+
+    private func validatedData(from response: (data: Data, status: Int)) throws -> Data {
+        guard (200...299).contains(response.status) else {
+            let payload = (
+                try? JSONSerialization.jsonObject(with: response.data) as? [String: Any]
+            ) ?? [:]
             throw LocalDaemonError.requestFailed(
-                status,
+                response.status,
                 payload["error"] as? String ?? "Local daemon request failed."
             )
         }
-        return data
+        return response.data
+    }
+
+    private func renewSessionToken() async throws {
+        guard let descriptor else { throw LocalDaemonError.daemonUnavailable }
+        let identity = try identities.loadOrCreate()
+        let renewed = try await sessions.establish(
+            descriptor: descriptor,
+            installation: identity
+        )
+        // The existing event socket remains valid after its handshake. This
+        // exchange is only for a fresh HTTP bearer token.
+        renewed.socket.cancel()
+        sessionToken = renewed.token
     }
 
     func send(type: String, payload: [String: Any]) async throws {

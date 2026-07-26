@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, rmSync } from 'node:fs';
 import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir, platform, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -16,8 +16,10 @@ const backendDirectory = join(root, 'backend');
 const siteDirectory = join(root, 'site');
 const appBundle = join(appDirectory, 'Perch.app');
 const daemonHost = join(appBundle, 'Contents', 'Helpers', 'PerchDaemonHost');
+const stackLockDirectory = join(homedir(), 'Library', 'Caches', 'Perch', 'development', 'stack.lock');
 const children = new Set();
 let stopping = false;
+let ownsStackLock = false;
 
 function fail(message) {
   console.error(`ERROR: ${message}`);
@@ -163,6 +165,35 @@ async function ensurePinnedNode() {
   process.exit(result.status ?? 1);
 }
 
+async function acquireStackLock() {
+  await mkdir(dirname(stackLockDirectory), { recursive: true, mode: 0o700 });
+  try {
+    await mkdir(stackLockDirectory, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+    const owner = Number.parseInt(
+      await readFile(join(stackLockDirectory, 'pid'), 'utf8').catch(() => ''),
+      10,
+    );
+    let ownerIsRunning = false;
+    if (Number.isSafeInteger(owner) && owner > 1) {
+      try {
+        process.kill(owner, 0);
+        ownerIsRunning = true;
+      } catch {
+        ownerIsRunning = false;
+      }
+    }
+    if (ownerIsRunning) {
+      fail(`another Perch development stack is already running (pid ${owner}).`);
+    }
+    await rm(stackLockDirectory, { recursive: true, force: true });
+    await mkdir(stackLockDirectory, { mode: 0o700 });
+  }
+  await writeFile(join(stackLockDirectory, 'pid'), `${process.pid}\n`, { mode: 0o600 });
+  ownsStackLock = true;
+}
+
 function stop(exitCode = 0) {
   if (stopping) return;
   stopping = true;
@@ -192,6 +223,10 @@ if (platform() !== 'darwin' || machineArchitecture !== 'arm64') {
   fail('development requires macOS 26+ on Apple Silicon.');
 }
 await ensurePinnedNode();
+await acquireStackLock();
+process.on('exit', () => {
+  if (ownsStackLock) rmSync(stackLockDirectory, { recursive: true, force: true });
+});
 
 requireCommand('swift', 'Swift 6.2 or newer is required through Xcode Command Line Tools.');
 requireCommand('codesign', 'codesign is required through Xcode Command Line Tools.');

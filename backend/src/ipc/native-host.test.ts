@@ -27,7 +27,7 @@ test('native-host shim is preferred without touching inherited fd channels', asy
 
   try {
     assert.deepEqual(await readInstallationSecret(), secret);
-    const broker = new KeychainBroker(-1);
+    const broker = new KeychainBroker();
     await broker.setCredential('provider.anthropic', 'transient-key');
     assert.equal(await broker.getCredential('provider.anthropic'), 'transient-key');
     await broker.deleteCredential('provider.anthropic');
