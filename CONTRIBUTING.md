@@ -7,7 +7,7 @@ Apache License 2.0.
 
 - Use an issue or discussion for substantial behavior, protocol, migration, or
   security-design changes.
-- Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+- Report vulnerabilities privately to the maintainers.
 - Never commit credentials, tokens, private URLs, user data, signing keys, or
   generated local databases.
 - Keep local-first boundaries intact: the daemon binds only to `127.0.0.1`,
@@ -22,7 +22,7 @@ Requirements are macOS 26+, Apple Silicon, Xcode 26+, Swift, XcodeGen, and Node
 cd backend && npm ci && npm test && npm run build
 cd ../app && swift test && swift build
 cd ../site && npm ci && npm run lint && npm run build
-cd .. && bash -n install.sh update.sh uninstall.sh scripts/lib/perch-common.sh
+cd .. && bash -n install.sh scripts/update.sh scripts/uninstall.sh scripts/lib/perch-common.sh
 ```
 
 Distribution changes must also pass ShellCheck. Changes to SQLite migrations

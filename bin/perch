@@ -22,15 +22,15 @@ EOF
 case "${1:-help}" in
   update)
     shift
-    [[ -x "$SOURCE_DIR/update.sh" ]] ||
+    [[ -x "$SOURCE_DIR/scripts/update.sh" ]] ||
       { printf 'ERROR: installed updater is missing; clone the repository and run ./install.sh to repair.\n' >&2; exit 1; }
-    exec "$SOURCE_DIR/update.sh" "$@"
+    exec "$SOURCE_DIR/scripts/update.sh" "$@"
     ;;
   uninstall)
     shift
-    [[ -x "$SOURCE_DIR/uninstall.sh" ]] ||
-      { printf 'ERROR: installed uninstaller is missing; use the repository uninstall.sh.\n' >&2; exit 1; }
-    exec "$SOURCE_DIR/uninstall.sh" "$@"
+    [[ -x "$SOURCE_DIR/scripts/uninstall.sh" ]] ||
+      { printf 'ERROR: installed uninstaller is missing; use ./scripts/uninstall.sh from the repository.\n' >&2; exit 1; }
+    exec "$SOURCE_DIR/scripts/uninstall.sh" "$@"
     ;;
   status)
     if [[ -f "$STATE_DIR/install/version" ]]; then

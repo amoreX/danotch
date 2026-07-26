@@ -4,8 +4,9 @@
 set -euo pipefail
 
 SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+REPOSITORY_ROOT="$(cd "$SCRIPT_ROOT/.." && pwd)"
 # shellcheck source=scripts/lib/perch-common.sh
-source "$SCRIPT_ROOT/scripts/lib/perch-common.sh"
+source "$SCRIPT_ROOT/lib/perch-common.sh"
 
 REQUESTED_TAG=""
 CLEAN_REINSTALL=0
@@ -30,12 +31,12 @@ perch_require_host
 command -v gpg >/dev/null 2>&1 ||
   perch_die "GnuPG is required to verify release tags. Install it from https://gnupg.org/download/ before updating."
 
-TRUSTED_KEYS="$SCRIPT_ROOT/release/maintainer-gpg-fingerprints.txt"
+TRUSTED_KEYS="$REPOSITORY_ROOT/release/maintainer-gpg-fingerprints.txt"
 [[ -f "$TRUSTED_KEYS" ]] || perch_die "Installed maintainer key allowlist is missing; repair from a reviewed clone."
 grep -Eq '^[A-Fa-f0-9]{40,64}$' "$TRUSTED_KEYS" ||
   perch_die "No trusted maintainer release key is configured; updates remain disabled."
 
-if [[ -d "$SCRIPT_ROOT/.git" ]] && [[ -n "$(git -C "$SCRIPT_ROOT" status --porcelain)" ]] &&
+if [[ -d "$REPOSITORY_ROOT/.git" ]] && [[ -n "$(git -C "$REPOSITORY_ROOT" status --porcelain)" ]] &&
   ((CLEAN_REINSTALL == 0)); then
   perch_die "The source tree has uncommitted changes. Commit/stash them, or pass --clean-reinstall to update from a fresh verified clone."
 fi

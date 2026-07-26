@@ -28,6 +28,9 @@ perch update
 perch uninstall
 ```
 
+From a source checkout, the equivalent maintenance scripts are
+`./scripts/update.sh` and `./scripts/uninstall.sh`.
+
 `perch uninstall` preserves local data and Keychain credentials. Permanent
 deletion requires `perch uninstall --purge` and typing `DELETE PERCH`.
 

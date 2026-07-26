@@ -22,8 +22,8 @@ jobs:
         run: brew install shellcheck
       - name: Check shell and Python scripts
         run: |
-          bash -n install.sh update.sh uninstall.sh bin/perch scripts/lib/perch-common.sh
-          shellcheck install.sh update.sh uninstall.sh bin/perch scripts/lib/perch-common.sh
+          bash -n install.sh scripts/update.sh scripts/uninstall.sh bin/perch scripts/lib/perch-common.sh
+          shellcheck install.sh scripts/update.sh scripts/uninstall.sh bin/perch scripts/lib/perch-common.sh
           python3 -m py_compile scripts/verify-local-health.py
       - name: Verify pinned Node runtime manifest
         run: |

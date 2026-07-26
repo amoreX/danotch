@@ -5,13 +5,13 @@ set -euo pipefail
 
 SCRIPT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/lib/perch-common.sh
-source "$SCRIPT_ROOT/scripts/lib/perch-common.sh"
+source "$SCRIPT_ROOT/lib/perch-common.sh"
 
 PURGE=0
 if [[ "${1:-}" == "--purge" && $# -eq 1 ]]; then
   PURGE=1
 elif [[ $# -ne 0 ]]; then
-  perch_die "Usage: ./uninstall.sh [--purge]"
+  perch_die "Usage: ./scripts/uninstall.sh [--purge]"
 fi
 
 if ((PURGE == 1)); then
