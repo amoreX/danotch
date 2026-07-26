@@ -4,13 +4,12 @@ Perch is a free, open-source macOS notch assistant for developers. It keeps AI
 tools, coding-agent activity, scheduled work, and useful Mac controls one hover
 away.
 
-Learn more at [perch.unordinary.software](https://perch.unordinary.software/).
+
 
 ## Features
 
 - Chat with Anthropic, OpenAI, OpenRouter, DeepSeek, or a custom
   OpenAI-compatible provider.
-- Monitor local coding-agent sessions and jump back into their terminals.
 - Run approval-gated local tools and connect Gmail, Google Calendar,
   Google Docs, and GitHub.
 - Create scheduled AI tasks with native notifications.
